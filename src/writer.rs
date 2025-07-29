@@ -28,6 +28,34 @@ impl<W: Write, F: Framer> StreamWriter<W, F> {
         }
     }
 
+    /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
+    ///
+    /// This constructor is useful for advanced allocation strategies, like arena allocation.
+    /// It allows users to configure the builder with custom allocators (e.g., bumpalo)
+    /// for extreme performance scenarios where system allocations must be eliminated.
+    ///
+    /// # Example
+    /// ```rust
+    /// use flatbuffers::FlatBufferBuilder;
+    /// use flatstream_rs::{StreamWriter, DefaultFramer};
+    /// use std::io::Cursor;
+    ///
+    /// // Create a custom builder (could be configured with arena allocation)
+    /// let builder = FlatBufferBuilder::new();
+    /// let mut buffer = Vec::new();
+    /// let mut writer = StreamWriter::with_builder(Cursor::new(&mut buffer), DefaultFramer, builder);
+    ///
+    /// // Use the custom builder for writing
+    /// writer.write(&"data with custom builder").unwrap();
+    /// ```
+    pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'static>) -> Self {
+        Self {
+            writer,
+            framer,
+            builder,
+        }
+    }
+
     /// Writes a single serializable item to the stream.
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
         // 1. Reset the internal builder for efficiency.
@@ -179,5 +207,22 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
         assert!(writer.flush().is_ok());
+    }
+
+    #[test]
+    fn test_with_builder() {
+        let mut buffer = Vec::new();
+        let framer = DefaultFramer;
+        
+        // Create a custom builder (simulating arena allocation)
+        let builder = FlatBufferBuilder::new();
+        let mut writer = StreamWriter::with_builder(Cursor::new(&mut buffer), framer, builder);
+
+        assert!(writer.write(&"test data with custom builder").is_ok());
+
+        let data = buffer;
+        assert!(!data.is_empty());
+        // Should have: 4 bytes (length) + payload (no checksum)
+        assert!(data.len() >= 4);
     }
 }
