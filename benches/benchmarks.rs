@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatstream_rs::checksum::Checksum;
 use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
+use flatbuffers::FlatBufferBuilder;
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -57,9 +58,13 @@ fn bench_writer<C: Checksum + Default + Copy>(
                 let checksum = C::default();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+                let mut builder = FlatBufferBuilder::new();
 
                 for message in msgs {
-                    writer.write(message).unwrap();
+                    builder.reset();
+                    let data = builder.create_string(message);
+                    builder.finish(data, None);
+                    writer.write(&mut builder).unwrap();
                 }
 
                 black_box(buffer);
@@ -82,9 +87,13 @@ fn bench_reader<C: Checksum + Default + Copy>(
         let checksum = C::default();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let mut builder = FlatBufferBuilder::new();
         let messages = create_test_messages(SMALL_MESSAGE_COUNT);
         for message in &messages {
-            writer.write(message).unwrap();
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
         }
     }
 
@@ -98,10 +107,15 @@ fn bench_reader<C: Checksum + Default + Copy>(
             b.iter(|| {
                 let checksum = C::default();
                 let deframer = ChecksumDeframer::new(checksum);
-                let reader = StreamReader::new(Cursor::new(data), deframer);
+                let mut reader = StreamReader::new(Cursor::new(data), deframer);
 
-                // Count all messages
-                let count = reader.count();
+                // Count all messages using process_all
+                let mut count = 0;
+                reader.process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                }).unwrap();
+
                 black_box(count);
             });
         },
@@ -130,15 +144,23 @@ fn bench_write_read_cycle<C: Checksum + Default + Copy>(
                 let checksum = C::default();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+                let mut builder = FlatBufferBuilder::new();
 
                 for message in msgs {
-                    writer.write(message).unwrap();
+                    builder.reset();
+                    let data = builder.create_string(message);
+                    builder.finish(data, None);
+                    writer.write(&mut builder).unwrap();
                 }
 
                 // Read phase
                 let deframer = ChecksumDeframer::new(checksum);
-                let reader = StreamReader::new(Cursor::new(&buffer), deframer);
-                let count = reader.count();
+                let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
+                let mut count = 0;
+                reader.process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                }).unwrap();
 
                 black_box((buffer, count));
             });
@@ -215,9 +237,13 @@ fn benchmark_write_default_framer(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
             for message in &messages {
-                writer.write(message).unwrap();
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -233,21 +259,25 @@ fn benchmark_read_default_deframer(c: &mut Criterion) {
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let mut builder = FlatBufferBuilder::new();
         let messages = create_test_messages(SMALL_MESSAGE_COUNT);
         for message in &messages {
-            writer.write(message).unwrap();
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
         }
     }
 
     c.bench_function("read_default_deframer_100_messages", |b| {
         b.iter(|| {
             let deframer = DefaultDeframer;
-            let reader = StreamReader::new(Cursor::new(&buffer), deframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            for result in reader {
-                black_box(result.unwrap());
+            reader.process_all(|_payload| {
                 count += 1;
-            }
+                Ok(())
+            }).unwrap();
             black_box(count);
         });
     });
@@ -261,9 +291,13 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let mut builder = FlatBufferBuilder::new();
         let messages = create_test_messages(SMALL_MESSAGE_COUNT);
         for message in &messages {
-            writer.write(message).unwrap();
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
         }
     }
 
@@ -274,8 +308,9 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
             let mut count = 0;
             let mut total_size = 0;
 
-            // High-performance zero-allocation pattern
-            while let Some(payload_slice) = reader.read_message().unwrap() {
+            // High-performance zero-allocation pattern using messages()
+            let mut messages = reader.messages();
+            while let Some(payload_slice) = messages.next().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
@@ -293,9 +328,13 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
         let checksum = XxHash64::new();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let mut builder = FlatBufferBuilder::new();
         let messages = create_test_messages(SMALL_MESSAGE_COUNT);
         for message in &messages {
-            writer.write(message).unwrap();
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
         }
     }
 
@@ -307,8 +346,9 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
             let mut count = 0;
             let mut total_size = 0;
 
-            // High-performance zero-allocation pattern
-            while let Some(payload_slice) = reader.read_message().unwrap() {
+            // High-performance zero-allocation pattern using messages()
+            let mut messages = reader.messages();
+            while let Some(payload_slice) = messages.next().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
@@ -323,28 +363,19 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
 fn benchmark_write_batch_vs_iterative(c: &mut Criterion) {
     let messages = create_test_messages(SMALL_MESSAGE_COUNT);
 
-    c.bench_function("write_batch_100_messages", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            let framer = DefaultFramer;
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-            // Call the new batch method
-            writer.write_batch(&messages).unwrap();
-
-            black_box(buffer);
-        });
-    });
-
     c.bench_function("write_iterative_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
-            // Call the old iterative method
+            // Explicit for loop (v2.5 pattern)
             for message in &messages {
-                writer.write(message).unwrap();
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -356,14 +387,21 @@ fn benchmark_write_batch_vs_iterative(c: &mut Criterion) {
 fn benchmark_write_batch_with_checksum(c: &mut Criterion) {
     let messages = create_test_messages(SMALL_MESSAGE_COUNT);
 
-    c.bench_function("write_batch_xxhash64_100_messages", |b| {
+    c.bench_function("write_iterative_xxhash64_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
-            writer.write_batch(&messages).unwrap();
+            // Explicit for loop with checksum
+            for message in &messages {
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
+            }
 
             black_box(buffer);
         });
@@ -373,6 +411,8 @@ fn benchmark_write_batch_with_checksum(c: &mut Criterion) {
 // === END-TO-END BENCHMARKS ===
 
 fn benchmark_write_read_cycle_default(c: &mut Criterion) {
+    let messages = create_test_messages(LARGE_MESSAGE_COUNT);
+
     c.bench_function("write_read_cycle_default_50_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -381,21 +421,24 @@ fn benchmark_write_read_cycle_default(c: &mut Criterion) {
             {
                 let framer = DefaultFramer;
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let messages = create_test_messages(LARGE_MESSAGE_COUNT);
+                let mut builder = FlatBufferBuilder::new();
                 for message in &messages {
-                    writer.write(message).unwrap();
+                    builder.reset();
+                    let data = builder.create_string(message);
+                    builder.finish(data, None);
+                    writer.write(&mut builder).unwrap();
                 }
             }
 
             // Read
             {
                 let deframer = DefaultDeframer;
-                let reader = StreamReader::new(Cursor::new(&buffer), deframer);
+                let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
-                for result in reader {
-                    black_box(result.unwrap());
+                reader.process_all(|_payload| {
                     count += 1;
-                }
+                    Ok(())
+                }).unwrap();
                 black_box(count);
             }
         });
@@ -413,9 +456,13 @@ fn benchmark_write_read_cycle_with_checksum(c: &mut Criterion) {
                 let checksum = XxHash64::new();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+                let mut builder = FlatBufferBuilder::new();
                 let messages = create_test_messages(LARGE_MESSAGE_COUNT);
                 for message in &messages {
-                    writer.write(message).unwrap();
+                    builder.reset();
+                    let data = builder.create_string(message);
+                    builder.finish(data, None);
+                    writer.write(&mut builder).unwrap();
                 }
             }
 
@@ -423,12 +470,12 @@ fn benchmark_write_read_cycle_with_checksum(c: &mut Criterion) {
             {
                 let checksum = XxHash64::new();
                 let deframer = ChecksumDeframer::new(checksum);
-                let reader = StreamReader::new(Cursor::new(&buffer), deframer);
+                let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
-                for result in reader {
-                    black_box(result.unwrap());
+                reader.process_all(|_payload| {
                     count += 1;
-                }
+                    Ok(())
+                }).unwrap();
                 black_box(count);
             }
         });
@@ -445,9 +492,15 @@ fn benchmark_high_frequency_telemetry(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
-            // Simulate high-frequency telemetry writing
-            writer.write_batch(&messages).unwrap();
+            // Simulate high-frequency telemetry writing with explicit for loop
+            for message in &messages {
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
+            }
 
             black_box(buffer);
         });
@@ -460,8 +513,14 @@ fn benchmark_high_frequency_reading(c: &mut Criterion) {
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let mut builder = FlatBufferBuilder::new();
         let messages = create_test_messages(HIGH_FREQUENCY_COUNT);
-        writer.write_batch(&messages).unwrap();
+        for message in &messages {
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
+        }
     }
 
     c.bench_function("high_frequency_reading_1000_messages", |b| {
@@ -472,7 +531,8 @@ fn benchmark_high_frequency_reading(c: &mut Criterion) {
             let mut total_size = 0;
 
             // High-performance zero-allocation pattern for high-frequency scenarios
-            while let Some(payload_slice) = reader.read_message().unwrap() {
+            let mut messages = reader.messages();
+            while let Some(payload_slice) = messages.next().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
@@ -492,9 +552,13 @@ fn benchmark_large_messages(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
             for message in &messages {
-                writer.write(message).unwrap();
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -512,9 +576,13 @@ fn benchmark_large_messages_with_checksum(c: &mut Criterion) {
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
             for message in &messages {
-                writer.write(message).unwrap();
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -532,9 +600,15 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
-            // Measure memory usage during batch write
-            writer.write_batch(&messages).unwrap();
+            // Measure memory usage during explicit for loop
+            for message in &messages {
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
+            }
 
             let buffer_size = buffer.len();
             black_box((buffer, buffer_size));
@@ -591,7 +665,13 @@ fn benchmark_comparative_formats(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            writer.write_batch(black_box(&data)).unwrap();
+            let mut builder = FlatBufferBuilder::new();
+            for item in black_box(&data) {
+                builder.reset();
+                let data = builder.create_string(&item.device_id);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
+            }
         });
     });
 
@@ -637,10 +717,14 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
             // Write many small messages to detect dispatch overhead
             for message in &messages {
-                writer.write(message).unwrap();
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -653,14 +737,14 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            let mut builder = FlatBufferBuilder::new();
 
             // Mix different operations to test compiler optimization boundaries
             for (i, message) in messages.iter().enumerate() {
-                if i % 2 == 0 {
-                    writer.write(message).unwrap();
-                } else {
-                    writer.write_batch(&[message.clone()]).unwrap();
-                }
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                writer.write(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -676,7 +760,13 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             for _ in 0..10 {
                 let framer = DefaultFramer;
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                writer.write_batch(&messages[..10]).unwrap();
+                let mut builder = FlatBufferBuilder::new();
+                for message in &messages[..10] {
+                    builder.reset();
+                    let data = builder.create_string(message);
+                    builder.finish(data, None);
+                    writer.write(&mut builder).unwrap();
+                }
             }
 
             black_box(buffer);
@@ -688,8 +778,8 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
 
 // Benchmark Categories and Coverage:
 //
-// 1. **Write Performance**: Default framer, XXHash64, CRC32 checksums
-// 2. **Read Performance**: Default deframer, XXHash64, CRC32 checksums
+// 1. **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
+// 2. **Read Performance**: Default deframer, XXHash64, CRC32, CRC16 checksums
 // 3. **Zero-Allocation Reading**: High-performance pattern comparison
 // 4. **Write Batching**: Batch vs iterative performance comparison
 // 5. **End-to-End Cycles**: Complete write-read cycle performance

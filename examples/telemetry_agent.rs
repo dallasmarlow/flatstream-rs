@@ -1,4 +1,5 @@
 use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
+use flatbuffers::FlatBufferBuilder;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -63,7 +64,7 @@ fn create_telemetry_event() -> TelemetryEvent {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry_file = "telemetry_stream.bin";
 
-    println!("=== Telemetry Agent Example ===");
+    println!("=== Telemetry Agent Example (v2.5) ===");
     println!("Writing telemetry events to: {}", telemetry_file);
 
     // Create the telemetry stream file
@@ -73,6 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a StreamWriter with default framing (no checksums for simplicity)
     let framer = DefaultFramer;
     let mut stream_writer = StreamWriter::new(writer, framer);
+    
+    // External builder management for zero-allocation writes
+    let mut builder = FlatBufferBuilder::new();
 
     // Simulate capturing telemetry events for 10 seconds
     println!("Capturing telemetry events...");
@@ -80,11 +84,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_count = 0;
 
     while SystemTime::now().duration_since(start_time)?.as_secs() < 10 {
-        // Create telemetry event
+        // Sample data in real-time (simulate shared memory access)
         let event = create_telemetry_event();
 
-        // Write to stream
-        stream_writer.write(&event)?;
+        // Build message with external builder (zero-allocation)
+        builder.reset();
+        event.serialize(&mut builder)?;
+        
+        // Emit to stream (zero-allocation write)
+        stream_writer.write(&mut builder)?;
         event_count += 1;
 
         // Simulate some processing time
@@ -107,28 +115,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a StreamReader with the same framing strategy used for writing
     let deframer = DefaultDeframer;
-    let stream_reader = StreamReader::new(reader, deframer);
+    let mut stream_reader = StreamReader::new(reader, deframer);
 
     let mut read_count = 0;
 
-    for result in stream_reader {
-        match result {
-            Ok(_payload) => {
-                // In a real application, you would deserialize the FlatBuffer here
-                // For this example, we'll just count the events
-                read_count += 1;
+    // Zero-copy processing with process_all()
+    stream_reader.process_all(|payload: &[u8]| {
+        // In a real application, you would deserialize the FlatBuffer here
+        // For this example, we'll just count the events
+        read_count += 1;
 
-                // Simulate some processing of the telemetry data
-                if read_count % 20 == 0 {
-                    println!("  Processed {} events...", read_count);
-                }
-            }
-            Err(e) => {
-                eprintln!("Error reading telemetry stream: {}", e);
-                break;
-            }
+        // Simulate some processing of the telemetry data
+        if read_count % 20 == 0 {
+            println!("  Processed {} events...", read_count);
         }
-    }
+        
+        Ok(()) // Continue processing
+    })?;
 
     println!(
         "Successfully read {} telemetry events from stream",
@@ -151,6 +154,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "File size: {} bytes",
         std::fs::metadata(telemetry_file)?.len()
     );
+    println!("v2.5 API Benefits:");
+    println!("  - Zero-allocation writes with external builder management");
+    println!("  - Zero-copy reads with process_all()");
+    println!("  - Perfect for high-frequency telemetry hot loops");
 
     Ok(())
 }

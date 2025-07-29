@@ -1168,6 +1168,89 @@ The v2 architecture makes these extensions straightforward:
 6. **Arena Allocation**: External builder support enables zero-allocation performance for extreme scenarios
 7. **Graceful Degradation**: Optional features can fail without breaking core functionality
 
+## **v2.5: The Processor API - Perfecting the Design**
+
+### **The Evolution to Focused Excellence**
+
+The v2.5 design represents the culmination of the v2 architectural philosophy - a refinement that perfects the API for its intended purpose. After extensive development and real-world usage, it became clear that the library's primary use case is high-frequency telemetry processing. This singular focus enabled a bold design decision: **make the "fast path" the only path**.
+
+### **Why v2.5 Over Generalized v3**
+
+The decision to pursue the focused v2.5 "Processor API" design over a more generalized v3 approach was driven by several key insights:
+
+1. **Production Reality**: The library's sole production use case is high-frequency telemetry, requiring zero-copy, zero-allocation performance
+2. **Developer Experience**: Junior engineers need an API that guides them to correct usage patterns without fail
+3. **Performance Guarantees**: The "fast path" should be the default, not an opt-in optimization
+4. **Simplicity**: A focused API is easier to understand, use, and maintain than a generalized one
+
+### **Core Design Philosophy: The Processor Pattern**
+
+The v2.5 design introduces the "Processor API" pattern, which refactors the library into pure, focused engines:
+
+#### **StreamWriter: Pure I/O Engine**
+- **Removes internal builder management** - forces explicit lifecycle control
+- **Eliminates `write_batch()`** - simple for loops are more flexible and explicit
+- **External builder pattern** - enables arena allocation and builder reuse
+- **Perfect for hot loops** - matches the "sample-build-emit" telemetry pattern
+
+#### **StreamReader: Zero-Copy Processor**
+- **`process_all()`** - Simple, safe abstraction that guarantees zero-copy
+- **`messages()`** - Expert path with explicit control
+- **Borrow checker guarantees** - Compile-time safety for zero-copy slices
+- **Closure-based processing** - Idiomatic Rust pattern
+
+### **Breaking Changes and Migration Strategy**
+
+The v2.5 design introduces breaking changes that are necessary to achieve the performance and safety goals:
+
+#### **StreamWriter Changes**
+```rust
+// v2 API (deprecated)
+let mut writer = StreamWriter::new(file, DefaultFramer);
+writer.write(&message)?;  // Internal builder management
+
+// v2.5 API (new)
+let mut builder = FlatBufferBuilder::new();
+let mut writer = StreamWriter::new(file, DefaultFramer);
+// ... build message in builder ...
+writer.write(&mut builder)?;  // External builder management
+```
+
+#### **StreamReader Changes**
+```rust
+// v2 API (deprecated)
+let mut reader = StreamReader::new(file, DefaultDeframer);
+for result in reader {
+    let payload = result?;  // Allocating Vec<u8>
+    // ... process payload ...
+}
+
+// v2.5 API (new)
+let mut reader = StreamReader::new(file, DefaultDeframer);
+reader.process_all(|payload: &[u8]| {
+    // ... process zero-copy payload ...
+    Ok(())
+})?;
+```
+
+### **Performance and Safety Guarantees**
+
+The v2.5 design provides compile-time guarantees for performance and safety:
+
+1. **Zero-Allocation Writes**: External builder management makes zero-allocation the default
+2. **Zero-Copy Reads**: Borrow checker enforces zero-copy slice usage
+3. **Arena Allocation**: Natural support for custom allocators
+4. **Hot Loop Optimization**: Perfect for high-frequency telemetry patterns
+
+### **Migration Benefits**
+
+The breaking changes in v2.5 provide significant benefits:
+
+1. **Performance**: Zero-allocation and zero-copy become the default patterns
+2. **Safety**: Compile-time guarantees prevent common errors
+3. **Simplicity**: Focused API is easier to understand and use correctly
+4. **Flexibility**: External builder management enables advanced optimizations
+
 ### **CRC64 Implementation Lessons**
 
 The CRC64 implementation attempt provided valuable insights:
@@ -1180,19 +1263,14 @@ The CRC64 implementation attempt provided valuable insights:
 
 ## Conclusion
 
-The evolution from v1 to v2 represents a significant maturation of the `flatstream-rs` library. The new architecture provides:
+The evolution from v1 to v2 to v2.5 represents a complete maturation of the `flatstream-rs` library. The v2.5 "Processor API" design perfects the architectural foundation established in v2 by:
 
-- **Better Extensibility**: Users can implement custom strategies
-- **Improved Maintainability**: Clear separation of concerns
-- **Enhanced Performance**: Feature-gated dependencies and high-performance optimizations
-- **Stronger Type Safety**: Compile-time guarantees
-- **Simpler API**: Harder to use incorrectly
-- **High-Throughput Capabilities**: Write batching and zero-allocation reading for demanding use cases
-- **Sized Checksums**: Flexible checksum selection based on message characteristics
-- **Arena Allocation**: External builder support for zero-allocation performance
-- **Graceful Degradation**: Optional features can fail without breaking core functionality
+- **Making performance the default**: Zero-allocation and zero-copy patterns are now the only patterns
+- **Guaranteeing safety**: Compile-time enforcement of correct usage patterns
+- **Simplifying the API**: Focused design that guides users to optimal usage
+- **Enabling advanced optimizations**: External builder management supports arena allocation and other performance techniques
 
-This evolution demonstrates the power of Rust's trait system for building composable, extensible libraries while maintaining high performance and type safety. The lessons learned from this refactoring, including the CRC64 implementation challenge and benchmark suite evolution, provide valuable insights for future library design and evolution.
+This evolution demonstrates the power of iterative design refinement - recognizing that while the v2 architecture was excellent, the v2.5 focused design is perfect for the library's intended purpose. The breaking changes are justified by the significant improvements in performance, safety, and developer experience.
 
 ### **Key Achievements**
 
@@ -1203,7 +1281,8 @@ This evolution demonstrates the power of Rust's trait system for building compos
 5. **Technical Resilience**: Demonstrated graceful handling of dependency failures
 6. **Comprehensive Documentation**: Complete historical record of development process
 7. **Benchmark Suite Refactoring**: Transformed sprawling benchmark code into elegant parameterized design with 70% code reduction
+8. **Focused Design Evolution**: v2.5 Processor API perfects the architecture for high-frequency telemetry use case
 
 ---
 
-*This document serves as both a historical record of the design evolution and a guide for future development. The v2 architecture provides a solid foundation for continued innovation while maintaining backward compatibility and performance. The CRC64 implementation attempt, while not successful, provided valuable lessons about dependency management and technical challenges that will inform future development. The benchmark suite refactoring demonstrates how the v2 architecture enables elegant, maintainable solutions to complex problems.* 
+*This document serves as both a historical record of the design evolution and a guide for future development. The v2.5 architecture represents the culmination of the design philosophy - a focused, performance-first API that makes the "fast path" the only path. The breaking changes introduced in v2.5 are justified by the significant improvements in performance, safety, and developer experience. The CRC64 implementation attempt, while not successful, provided valuable lessons about dependency management and technical challenges that will inform future development. The benchmark suite refactoring demonstrates how the v2 architecture enables elegant, maintainable solutions to complex problems.* 
