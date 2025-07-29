@@ -458,6 +458,148 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
     });
 }
 
+// === COMPARATIVE BENCHMARKS (vs Bincode and Protobuf) ===
+
+// Note: These benchmarks require additional dependencies that would need to be added to Cargo.toml
+// For now, we'll create the structure but comment out the actual implementations
+// to avoid breaking the build without the dependencies.
+
+/*
+// This would require adding to Cargo.toml:
+// [dev-dependencies]
+// serde = { version = "1.0", features = ["derive"] }
+// bincode = "1.3"
+// prost = "0.12"
+
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+struct TelemetryData {
+    timestamp: u64,
+    device_id: String,
+    value: f64,
+    is_critical: bool,
+}
+
+impl StreamSerialize for TelemetryData {
+    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
+        let device_id = builder.create_string(&self.device_id);
+        builder.finish(device_id, None);
+        Ok(())
+    }
+}
+
+fn benchmark_comparative_formats(c: &mut Criterion) {
+    let data: Vec<_> = (0..100)
+        .map(|i| TelemetryData {
+            timestamp: i * 1000,
+            device_id: format!("device-{}", i),
+            value: i as f64 * 1.5,
+            is_critical: i % 10 == 0,
+        })
+        .collect();
+
+    let mut group = c.benchmark_group("Comparative: Write 100 Messages");
+
+    // Benchmark flatstream-rs
+    group.bench_function("flatstream", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+            writer.write_batch(black_box(&data)).unwrap();
+        });
+    });
+
+    // Benchmark bincode with manual framing
+    group.bench_function("bincode", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            for item in black_box(&data) {
+                let encoded: Vec<u8> = bincode::serialize(item).unwrap();
+                let len = encoded.len() as u32;
+                buffer.write_all(&len.to_le_bytes()).unwrap();
+                buffer.write_all(&encoded).unwrap();
+            }
+        });
+    });
+
+    // Benchmark protobuf
+    group.bench_function("protobuf", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            for item in black_box(&data) {
+                item.encode_length_delimited(&mut buffer).unwrap();
+            }
+        });
+    });
+
+    group.finish();
+}
+*/
+
+// === REGRESSION DETECTION BENCHMARKS ===
+
+// These benchmarks are specifically designed to detect performance regressions
+// by focusing on the most sensitive operations that could be affected by
+// architectural changes.
+
+fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
+    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+
+    // Test 1: Small message writing (most sensitive to dispatch overhead)
+    c.bench_function("regression_small_messages", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+            // Write many small messages to detect dispatch overhead
+            for message in &messages {
+                writer.write(message).unwrap();
+            }
+
+            black_box(buffer);
+        });
+    });
+
+    // Test 2: Monomorphization stress test
+    c.bench_function("regression_monomorphization", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+            // Mix different operations to test compiler optimization boundaries
+            for (i, message) in messages.iter().enumerate() {
+                if i % 2 == 0 {
+                    writer.write(message).unwrap();
+                } else {
+                    writer.write_batch(&[message.clone()]).unwrap();
+                }
+            }
+
+            black_box(buffer);
+        });
+    });
+
+    // Test 3: Instruction cache pressure test
+    c.bench_function("regression_instruction_cache", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            
+            // Create multiple writers to test instruction cache pressure
+            for _ in 0..10 {
+                let framer = DefaultFramer;
+                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+                writer.write_batch(&messages[..10]).unwrap();
+            }
+
+            black_box(buffer);
+        });
+    });
+}
+
 // === BENCHMARK SUMMARY ===
 
 // Benchmark Categories and Coverage:
@@ -470,15 +612,20 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
 // 6. **High-Frequency Telemetry**: 1000 message scenarios
 // 7. **Large Messages**: Real-world message size simulation
 // 8. **Memory Efficiency**: Memory usage analysis
+// 9. **Regression Detection**: Performance regression sensitive tests
+// 10. **Comparative Analysis**: vs Bincode and Protobuf (structure ready)
 // 
 // **Feature Coverage**:
 // - Default framing (always available)
 // - XXHash64 checksums (feature-gated)
 // - CRC32 checksums (feature-gated)
 // - All performance optimizations
+// - Regression detection capabilities
 
 // === MAIN BENCHMARK CONFIGURATION ===
 
+// Define benchmark groups based on enabled features
+#[cfg(not(any(feature = "xxhash", feature = "crc32")))]
 criterion_group!(
     benches,
     benchmark_write_default_framer,
@@ -490,7 +637,60 @@ criterion_group!(
     benchmark_high_frequency_reading,
     benchmark_large_messages,
     benchmark_memory_efficiency,
-    // Feature-gated benchmarks
+    benchmark_regression_sensitive_operations,
+);
+
+#[cfg(all(feature = "xxhash", not(feature = "crc32")))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_write_xxhash64_checksum,
+    benchmark_read_xxhash64_checksum,
+    benchmark_zero_allocation_reading_with_checksum,
+    benchmark_write_batch_with_checksum,
+    benchmark_write_read_cycle_with_checksum,
+    benchmark_large_messages_with_checksum,
+);
+
+#[cfg(all(not(feature = "xxhash"), feature = "crc32"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_write_crc32_checksum,
+    benchmark_read_crc32_checksum,
+);
+
+#[cfg(all(feature = "xxhash", feature = "crc32"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
     benchmark_write_xxhash64_checksum,
     benchmark_read_xxhash64_checksum,
     benchmark_zero_allocation_reading_with_checksum,

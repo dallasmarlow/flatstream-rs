@@ -281,6 +281,11 @@ cargo test                     # Run all tests
 cargo test --release          # Release mode tests
 ```
 
+**Comprehensive Benchmarking:**
+- See `BENCHMARKING_GUIDE.md` for detailed regression detection and comparative benchmarking
+- Includes performance analysis methodologies and CI/CD integration
+- Covers 10 benchmark categories with feature-gated testing
+
 ---
 
 ## 🚀 Integration Guide
@@ -535,8 +540,8 @@ flatstream-rs/
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User documentation
 ├── DEVELOPMENT.md          # Implementation guide and benchmarks
+├── BENCHMARKING_GUIDE.md   # Comprehensive benchmarking strategy
 └── DESIGN_EVOLUTION.md     # Architecture evolution documentation
-```
 
 ### Related Projects
 - **FlatBuffers**: https://flatbuffers.dev/
