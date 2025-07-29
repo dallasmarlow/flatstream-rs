@@ -8,24 +8,29 @@ This document details the architectural evolution of `flatstream-rs` from a mono
 
 1. [Motivation for Change](#motivation-for-change)
 2. [Architectural Comparison](#architectural-comparison)
-3. [Core Design Changes](#core-design-changes)
-4. [Implementation Details](#implementation-details)
-5. [Migration Guide](#migration-guide)
-6. [Performance Analysis](#performance-analysis)
-7. [Lessons Learned](#lessons-learned)
-8. [Future Extensibility](#future-extensibility)
+3. [Design Trade-Offs](#design-trade-offs)
+4. [Core Design Changes](#core-design-changes)
+5. [Implementation Details](#implementation-details)
+6. [Migration Guide](#migration-guide)
+7. [Performance Analysis](#performance-analysis)
+8. [Lessons Learned](#lessons-learned)
+9. [Future Extensibility](#future-extensibility)
 
 ## Motivation for Change
 
-### v1 Limitations
+### v1 Limitations as Engineering Risks
 
-The original v1 design, while functional, exhibited several limitations that hindered extensibility and maintainability:
+The original v1 design, while functional, exhibited several limitations that posed significant engineering and business risks:
 
-1. **Monolithic Design**: All functionality was tightly coupled within a few large components
-2. **Enum-Based Configuration**: Limited extensibility for new checksum algorithms or framing strategies
-3. **API Complexity**: Builder lifecycle management was error-prone and confusing
-4. **Feature Bloat**: All dependencies were always included, even when not needed
-5. **Testing Complexity**: Difficult to test individual components in isolation
+1. **Monolithic Design (Risk of High Maintenance Cost)**: The tight coupling in v1 meant that a small change in one area (e.g., adding a checksum) required modifying and re-testing large, critical components, increasing development time and risk. This architectural debt would compound over time, making the library increasingly difficult to maintain and extend.
+
+2. **Enum-Based Configuration (Risk of Limited Extensibility)**: The hard-coded enum approach for checksum types created a fundamental limitation: adding new checksum algorithms required modifying the core library code. This forced users to either fork the library or wait for upstream changes, creating vendor lock-in and reducing user autonomy.
+
+3. **API Complexity (Risk of User Errors)**: Builder lifecycle management was error-prone and confusing, leading to runtime panics and data corruption. This created a high barrier to entry and increased support burden as users struggled with the complex API.
+
+4. **Feature Bloat (Risk of Performance Degradation)**: All dependencies were always included, even when not needed. This increased binary size, compilation time, and memory usage for users who only needed basic functionality, creating unnecessary overhead.
+
+5. **Testing Complexity (Risk of Quality Issues)**: The monolithic design made it difficult to test individual components in isolation. This increased the risk of regressions and made it harder to achieve comprehensive test coverage, potentially leading to production issues.
 
 ### v2 Goals
 
@@ -36,6 +41,7 @@ The v2 redesign aimed to address these limitations through:
 3. **API Simplicity**: Make the API hard to use incorrectly
 4. **Performance**: Maintain high performance while improving flexibility
 5. **Maintainability**: Reduce coupling and improve testability
+6. **Risk Mitigation**: Eliminate the engineering risks identified in v1
 
 ## Architectural Comparison
 
@@ -98,6 +104,32 @@ The v2 redesign aimed to address these limitations through:
 - Trait-based interfaces enable extensibility
 - Loose coupling through generic parameters
 - Feature-gated dependencies
+- Risk mitigation through better architecture
+
+## Design Trade-Offs
+
+Every architectural decision involves trade-offs. Understanding these trade-offs is crucial for making informed decisions about when to use v1 vs v2 patterns.
+
+### v1 Trade-Offs
+
+**Advantage: Explicitness**
+The primary advantage of the v1 design was its explicitness. A developer could read `writer.rs` and see the entire sequence of I/O operations in one place. This simplicity came at the cost of flexibility.
+
+**Disadvantage: Inflexibility**
+The monolithic design made it impossible to customize behavior without modifying core library code. This created a fundamental tension between simplicity and extensibility.
+
+### v2 Trade-Offs
+
+**Advantage: Composability**
+The v2 design prioritizes flexibility and elegance. The trade-off is a slight increase in conceptual complexity; a developer must now understand the roles of `Framer`, `Deframer`, and `StreamSerialize` to grasp the full picture. We believe this is a worthwhile trade-off for the significant gains in extensibility and API safety.
+
+**Disadvantage: Learning Curve**
+New users face a steeper initial learning curve as they need to understand the trait system and composition patterns. However, this investment pays dividends in long-term maintainability and flexibility.
+
+### When to Choose Each Approach
+
+- **Choose v1 patterns** when building simple, single-purpose tools where extensibility is not a concern
+- **Choose v2 patterns** when building libraries or applications that need to evolve over time or support multiple use cases
 
 ## Core Design Changes
 
@@ -228,6 +260,8 @@ pub trait StreamSerialize {
 
 **Purpose:** Defines how user types serialize to FlatBuffers
 **Benefits:** Encapsulates serialization logic, eliminates builder lifecycle errors
+
+**Built-in Implementations:** The library provides implementations for `&str` and `String` out-of-the-box, serving as both convenience functions and canonical examples for users implementing the trait for their own types.
 
 #### Framer
 ```rust
@@ -361,14 +395,10 @@ for result in reader {
 ```rust
 use flatstream_rs::*;
 
-// Define your serializable type
-impl StreamSerialize for &str {
-    fn serialize(&self, builder: &mut FlatBufferBuilder) -> Result<()> {
-        let data = builder.create_string(self);
-        builder.finish(data, None);
-        Ok(())
-    }
-}
+// The library provides StreamSerialize implementations for &str and String out-of-the-box
+// This serves as both a convenience for simple use cases and a canonical example for 
+// developers implementing the trait for their own complex types.
+writer.write(&"hello")?; // Works immediately with built-in implementation
 
 // Use composable components
 let checksum = XxHash64::new();
@@ -512,6 +542,54 @@ match result {
 
 ## Future Extensibility
 
+The v2 architecture makes it trivial to add new functionality without modifying core code. Here's a concrete example of adding CRC32 checksum support:
+
+### **Real-World Example: Adding CRC32 Support**
+
+**Step 1: Add Dependency**
+```toml
+# Cargo.toml
+[features]
+crc32 = ["crc32fast"]
+
+[dependencies.crc32fast]
+version = "1.4"
+optional = true
+```
+
+**Step 2: Implement the Trait**
+```rust
+// src/checksum.rs
+#[cfg(feature = "crc32")]
+pub struct Crc32;
+
+#[cfg(feature = "crc32")]
+impl Checksum for Crc32 {
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        crc32fast::hash(payload) as u64
+    }
+}
+```
+
+**Step 3: Export the Type**
+```rust
+// src/lib.rs
+#[cfg(feature = "crc32")]
+pub use checksum::Crc32;
+```
+
+**Step 4: Use Immediately**
+```rust
+use flatstream_rs::{Crc32, ChecksumFramer, StreamWriter};
+
+let checksum_alg = Crc32::new();
+let framer = ChecksumFramer::new(checksum_alg);
+let mut writer = StreamWriter::new(file, framer);
+writer.write(&"my data")?; // Works immediately!
+```
+
+**Result:** Users can now use CRC32 checksums by simply enabling the `crc32` feature, with zero changes to core library code.
+
 ### Planned Extensions
 
 1. **Compression Support**
@@ -544,13 +622,44 @@ impl<E: Encryptor> Framer for EncryptedFramer<E> {
 
 3. **Async Support**
 ```rust
+use async_trait::async_trait;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+
+#[async_trait]
 pub trait AsyncFramer {
-    async fn frame_and_write<W: AsyncWrite>(&self, writer: &mut W, payload: &[u8]) -> Result<()>;
+    async fn frame_and_write<W: AsyncWriteExt + Unpin + Send>(
+        &self,
+        writer: &mut W,
+        payload: &[u8]
+    ) -> Result<()>;
 }
 
 pub struct AsyncStreamWriter<W: AsyncWrite, F: AsyncFramer> {
     writer: W,
     framer: F,
+}
+
+// Example async implementation
+pub struct AsyncChecksumFramer<C: Checksum + Send + Sync> {
+    checksum_alg: C,
+}
+
+#[async_trait]
+impl<C: Checksum + Send + Sync> AsyncFramer for AsyncChecksumFramer<C> {
+    async fn frame_and_write<W: AsyncWriteExt + Unpin + Send>(
+        &self,
+        writer: &mut W,
+        payload: &[u8]
+    ) -> Result<()> {
+        let payload_len = payload.len() as u32;
+        let checksum = self.checksum_alg.calculate(payload);
+        
+        writer.write_all(&payload_len.to_le_bytes()).await?;
+        writer.write_all(&checksum.to_le_bytes()).await?;
+        writer.write_all(payload).await?;
+        
+        Ok(())
+    }
 }
 ```
 

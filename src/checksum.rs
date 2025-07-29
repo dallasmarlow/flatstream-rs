@@ -37,6 +37,26 @@ impl Checksum for XxHash64 {
     }
 }
 
+/// Provides an implementation of the CRC32c (Castagnoli) checksum algorithm.
+#[cfg(feature = "crc32")]
+#[derive(Default, Clone, Copy)]
+pub struct Crc32;
+
+#[cfg(feature = "crc32")]
+impl Crc32 {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "crc32")]
+impl Checksum for Crc32 {
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        // crc32fast returns a u32, so we cast it to u64 for trait compatibility.
+        crc32fast::hash(payload) as u64
+    }
+}
+
 // For backward compatibility, we can provide a "None" checksum implementation
 /// A no-op checksum implementation for when checksums are not needed.
 #[derive(Default, Clone, Copy)]

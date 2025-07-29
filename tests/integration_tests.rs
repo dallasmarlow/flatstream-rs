@@ -9,6 +9,12 @@ use tempfile::NamedTempFile;
 #[cfg(feature = "checksum")]
 use flatstream_rs::{ChecksumDeframer, ChecksumFramer, XxHash64};
 
+// Conditionally import CRC32 components when the feature is enabled
+#[cfg(feature = "crc32")]
+use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+#[cfg(feature = "crc32")]
+use flatstream_rs::Crc32;
+
 #[test]
 fn test_write_read_cycle_default() {
     let temp_file = NamedTempFile::new().unwrap();
@@ -180,5 +186,33 @@ fn test_mismatched_framing_strategies() {
         let payload = result.unwrap().unwrap();
         // The payload should contain the checksum bytes followed by the actual data
         assert!(payload.len() > 8); // Should be longer than just the checksum
+    }
+}
+
+#[test]
+#[cfg(feature = "crc32")]
+fn test_write_read_cycle_with_crc32() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write with Crc32 checksum
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = ChecksumFramer::new(Crc32::new());
+        let mut stream_writer = StreamWriter::new(writer, framer);
+        stream_writer.write(&"data with crc32").unwrap();
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = ChecksumDeframer::new(Crc32::new());
+        let stream_reader = StreamReader::new(reader, deframer);
+
+        // Ensure we can read one valid message
+        assert_eq!(stream_reader.count(), 1);
     }
 }

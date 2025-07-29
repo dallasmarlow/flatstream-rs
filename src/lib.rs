@@ -91,3 +91,6 @@ pub use writer::StreamWriter;
 pub use checksum::XxHash64;
 #[cfg(feature = "checksum")]
 pub use framing::{ChecksumDeframer, ChecksumFramer};
+
+#[cfg(feature = "crc32")]
+pub use checksum::Crc32;
