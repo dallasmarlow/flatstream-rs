@@ -1,0 +1,29 @@
+[package]
+name = "flatstream-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dallas Marlow <dallas@example.com>"]
+description = "High-performance FlatBuffers streaming with data integrity"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dallasmarlow/flatstream-rs"
+keywords = ["flatbuffers", "streaming", "serialization", "checksum", "telemetry"]
+categories = ["encoding", "data-structures"]
+publish = false  # Initially for private repo
+
+[dependencies]
+flatbuffers = "24.3.25"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[features]
+default = []
+async = ["tokio"]
