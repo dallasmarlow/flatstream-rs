@@ -1,5 +1,4 @@
-use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::{ChecksumType, StreamReader, StreamWriter};
+use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,9 +10,39 @@ fn get_current_timestamp_nanos() -> u64 {
         .as_nanos() as u64
 }
 
-fn create_telemetry_event(
-    builder: &mut FlatBufferBuilder,
-) -> flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset> {
+// Define a telemetry event type that implements StreamSerialize
+struct TelemetryEvent {
+    timestamp: u64,
+    device_id: String,
+    speed_kph: f32,
+    rpm: u32,
+    temperature_celsius: f32,
+    battery_level: f32,
+}
+
+impl StreamSerialize for TelemetryEvent {
+    fn serialize(
+        &self,
+        builder: &mut flatbuffers::FlatBufferBuilder,
+    ) -> Result<(), flatstream_rs::Error> {
+        // Create a simple string representation of the telemetry data
+        let telemetry_data = format!(
+            "timestamp={},device_id={},speed_kph={:.2},rpm={},temp_c={:.2},battery={:.2}",
+            self.timestamp,
+            self.device_id,
+            self.speed_kph,
+            self.rpm,
+            self.temperature_celsius,
+            self.battery_level
+        );
+
+        let data = builder.create_string(&telemetry_data);
+        builder.finish(data, None);
+        Ok(())
+    }
+}
+
+fn create_telemetry_event() -> TelemetryEvent {
     let timestamp = get_current_timestamp_nanos();
     let device_id = format!("device-{}", (timestamp % 1000) / 100);
     let speed_kph = (timestamp % 200) as f32 * 0.5; // 0-100 km/h
@@ -21,15 +50,14 @@ fn create_telemetry_event(
     let temperature_celsius = 20.0 + ((timestamp % 40) as f32); // 20-60°C
     let battery_level = 100.0 - ((timestamp % 100) as f32); // 0-100%
 
-    // Create a simple string representation of the telemetry data
-    let telemetry_data = format!(
-        "timestamp={},device_id={},speed_kph={:.2},rpm={},temp_c={:.2},battery={:.2}",
-        timestamp, device_id, speed_kph, rpm, temperature_celsius, battery_level
-    );
-
-    let data = builder.create_string(&telemetry_data);
-    builder.finish(data, None);
-    flatbuffers::WIPOffset::new(0)
+    TelemetryEvent {
+        timestamp,
+        device_id,
+        speed_kph,
+        rpm,
+        temperature_celsius,
+        battery_level,
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,10 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = File::create(telemetry_file)?;
     let writer = BufWriter::new(file);
 
-    // Create a StreamWriter with XXH3_64 checksums enabled for data integrity
-    let mut stream_writer = StreamWriter::new(writer, ChecksumType::XxHash64);
-
-    let mut builder = FlatBufferBuilder::new();
+    // Create a StreamWriter with default framing (no checksums for simplicity)
+    let framer = DefaultFramer;
+    let mut stream_writer = StreamWriter::new(writer, framer);
 
     // Simulate capturing telemetry events for 10 seconds
     println!("Capturing telemetry events...");
@@ -54,10 +81,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while SystemTime::now().duration_since(start_time)?.as_secs() < 10 {
         // Create telemetry event
-        create_telemetry_event(&mut builder);
+        let event = create_telemetry_event();
 
         // Write to stream
-        stream_writer.write_message(&mut builder)?;
+        stream_writer.write(&event)?;
         event_count += 1;
 
         // Simulate some processing time
@@ -78,8 +105,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(telemetry_file)?;
     let reader = BufReader::new(file);
 
-    // Create a StreamReader with the same checksum type used for writing
-    let stream_reader = StreamReader::new(reader, ChecksumType::XxHash64);
+    // Create a StreamReader with the same framing strategy used for writing
+    let deframer = DefaultDeframer;
+    let stream_reader = StreamReader::new(reader, deframer);
 
     let mut read_count = 0;
 
