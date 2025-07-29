@@ -55,15 +55,16 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] } # If using xxh3_64
 
 The library supports several optional features to customize functionality:
 
-- **`xxhash`**: Enables XXHash64 checksum support (default: disabled)
-- **`crc32`**: Enables CRC32 checksum support (default: disabled)
+- **`xxhash`**: Enables XXHash64 checksum support (8 bytes, default: disabled)
+- **`crc32`**: Enables CRC32 checksum support (4 bytes, default: disabled)
+- **`crc16`**: Enables CRC16 checksum support (2 bytes, default: disabled)
 - **`all_checksums`**: Enables all available checksum algorithms for testing and development
 - **`async`**: Enables async I/O support with tokio (default: disabled)
 
 Example with multiple features:
 ```toml
 [dependencies]
-flatstream-rs = { version = "0.1.0", features = ["xxhash", "crc32"] }
+flatstream-rs = { version = "0.1.0", features = ["xxhash", "crc32", "crc16"] }
 ```
 
 For comprehensive testing with all checksums enabled:
@@ -71,3 +72,13 @@ For comprehensive testing with all checksums enabled:
 cargo test --features all_checksums
 cargo bench --features all_checksums  # Run comprehensive benchmarks
 ```
+
+## Sized Checksums
+
+The library supports checksums of different sizes to optimize for different use cases:
+
+- **CRC16 (2 bytes)**: Perfect for high-frequency small messages (75% less overhead than XXHash64)
+- **CRC32 (4 bytes)**: Good balance for medium-sized messages (50% less overhead than XXHash64)  
+- **XXHash64 (8 bytes)**: Best for large, critical messages (maximum integrity)
+
+All checksums are pluggable and composable, allowing you to choose the optimal size for your specific use case.

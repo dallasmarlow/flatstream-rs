@@ -94,3 +94,8 @@ pub use framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "crc32")]
 pub use checksum::Crc32;
+
+#[cfg(feature = "crc16")]
+pub use checksum::Crc16;
+
+

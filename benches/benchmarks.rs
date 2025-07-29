@@ -11,7 +11,9 @@ use flatstream_rs::Crc32;
 
 // Test data generation utilities
 fn create_test_messages(count: usize) -> Vec<String> {
-    (0..count).map(|i| format!("benchmark message number {}", i)).collect()
+    (0..count)
+        .map(|i| format!("benchmark message number {}", i))
+        .collect()
 }
 
 fn create_large_messages(count: usize) -> Vec<String> {
@@ -27,7 +29,7 @@ const HIGH_FREQUENCY_COUNT: usize = 1000;
 
 fn benchmark_write_default_framer(c: &mut Criterion) {
     let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-    
+
     c.bench_function("write_default_framer_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -46,7 +48,7 @@ fn benchmark_write_default_framer(c: &mut Criterion) {
 #[cfg(feature = "xxhash")]
 fn benchmark_write_xxhash64_checksum(c: &mut Criterion) {
     let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-    
+
     c.bench_function("write_xxhash64_checksum_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -66,7 +68,7 @@ fn benchmark_write_xxhash64_checksum(c: &mut Criterion) {
 #[cfg(feature = "crc32")]
 fn benchmark_write_crc32_checksum(c: &mut Criterion) {
     let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-    
+
     c.bench_function("write_crc32_checksum_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -189,13 +191,13 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             let mut total_size = 0;
-            
+
             // High-performance zero-allocation pattern
             while let Some(payload_slice) = reader.read_message().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
-            
+
             black_box((count, total_size));
         });
     });
@@ -222,13 +224,13 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             let mut total_size = 0;
-            
+
             // High-performance zero-allocation pattern
             while let Some(payload_slice) = reader.read_message().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
-            
+
             black_box((count, total_size));
         });
     });
@@ -386,13 +388,13 @@ fn benchmark_high_frequency_reading(c: &mut Criterion) {
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             let mut total_size = 0;
-            
+
             // High-performance zero-allocation pattern for high-frequency scenarios
             while let Some(payload_slice) = reader.read_message().unwrap() {
                 total_size += payload_slice.len();
                 count += 1;
             }
-            
+
             black_box((count, total_size));
         });
     });
@@ -451,7 +453,7 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
 
             // Measure memory usage during batch write
             writer.write_batch(&messages).unwrap();
-            
+
             let buffer_size = buffer.len();
             black_box((buffer, buffer_size));
         });
@@ -587,7 +589,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     c.bench_function("regression_instruction_cache", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
-            
+
             // Create multiple writers to test instruction cache pressure
             for _ in 0..10 {
                 let framer = DefaultFramer;
@@ -603,9 +605,9 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
 // === BENCHMARK SUMMARY ===
 
 // Benchmark Categories and Coverage:
-// 
+//
 // 1. **Write Performance**: Default framer, XXHash64, CRC32 checksums
-// 2. **Read Performance**: Default deframer, XXHash64, CRC32 checksums  
+// 2. **Read Performance**: Default deframer, XXHash64, CRC32 checksums
 // 3. **Zero-Allocation Reading**: High-performance pattern comparison
 // 4. **Write Batching**: Batch vs iterative performance comparison
 // 5. **End-to-End Cycles**: Complete write-read cycle performance
@@ -614,7 +616,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
 // 8. **Memory Efficiency**: Memory usage analysis
 // 9. **Regression Detection**: Performance regression sensitive tests
 // 10. **Comparative Analysis**: vs Bincode and Protobuf (structure ready)
-// 
+//
 // **Feature Coverage**:
 // - Default framing (always available)
 // - XXHash64 checksums (feature-gated)

@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Write};
 use tempfile::NamedTempFile;
 
-// Import framing types once (available when either checksum feature is enabled)
-#[cfg(any(feature = "xxhash", feature = "crc32"))]
+// Import framing types once (available when any checksum feature is enabled)
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
 // Conditionally import checksum components when the feature is enabled
@@ -16,6 +16,12 @@ use flatstream_rs::XxHash64;
 // Conditionally import CRC32 components when the feature is enabled
 #[cfg(feature = "crc32")]
 use flatstream_rs::Crc32;
+
+// Conditionally import CRC16 components when the feature is enabled
+#[cfg(feature = "crc16")]
+use flatstream_rs::Crc16;
+
+
 
 #[test]
 fn test_write_read_cycle_default() {
@@ -218,3 +224,33 @@ fn test_write_read_cycle_with_crc32() {
         assert_eq!(stream_reader.count(), 1);
     }
 }
+
+#[test]
+#[cfg(feature = "crc16")]
+fn test_write_read_cycle_with_crc16() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write with Crc16 checksum
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = ChecksumFramer::new(Crc16::new());
+        let mut stream_writer = StreamWriter::new(writer, framer);
+        stream_writer.write(&"data with crc16").unwrap();
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = ChecksumDeframer::new(Crc16::new());
+        let stream_reader = StreamReader::new(reader, deframer);
+
+        // Ensure we can read one valid message
+        assert_eq!(stream_reader.count(), 1);
+    }
+}
+
+

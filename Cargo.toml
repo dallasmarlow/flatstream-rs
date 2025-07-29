@@ -20,9 +20,9 @@ default = []
 async = ["tokio"]
 xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
-
+crc16 = ["dep:crc16"]
 # Meta-feature to enable all checksum algorithms for testing and development
-all_checksums = ["xxhash", "crc32"]
+all_checksums = ["xxhash", "crc32", "crc16"]
 
 [dependencies.xxhash-rust]
 version = "0.8"
@@ -32,6 +32,12 @@ optional = true
 [dependencies.crc32fast]
 version = "1.4"
 optional = true
+
+[dependencies.crc16]
+version = "0.4"
+optional = true
+
+
 
 [dev-dependencies]
 tempfile = "3.8"

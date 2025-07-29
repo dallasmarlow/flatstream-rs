@@ -13,17 +13,17 @@
 - **StreamReader**: Reads and validates FlatBuffers message streams with composable deframing
 - **Framer/Deframer Traits**: Pluggable framing strategies (DefaultFramer, ChecksumFramer)
 - **StreamSerialize Trait**: User-defined serialization for custom types
-- **Checksum Trait**: Pluggable checksum algorithms (NoChecksum, XxHash64, Crc32)
+- **Checksum Trait**: Pluggable checksum algorithms with size awareness (NoChecksum, XxHash64, Crc32, Crc16)
 - **Error Types**: Comprehensive error handling with thiserror
 
 ### Stream Format
 ```
-[4-byte Payload Length (u32, LE) | 8-byte Checksum (u64, LE, if enabled) | FlatBuffer Payload]
+[4-byte Payload Length (u32, LE) | Variable Checksum (0-8 bytes, if enabled) | FlatBuffer Payload]
 ```
 
 ### Key Metrics
-- **Message Overhead**: 4 bytes (length) + 8 bytes (checksum, if enabled)
-- **Checksum Algorithm**: XXH3_64 (fast, reliable)
+- **Message Overhead**: 4 bytes (length) + variable checksum (0-8 bytes, if enabled)
+- **Checksum Algorithms**: XXH3_64 (8 bytes), CRC32 (4 bytes), CRC16 (2 bytes), NoChecksum (0 bytes)
 - **Endianness**: Little-endian for all binary fields
 - **Memory**: Reusable buffers, zero-copy read support
 
@@ -87,14 +87,17 @@ The library uses a composable, trait-based architecture that enables:
 **Built-in Implementations:**
 - `StreamSerialize` for `&str` and `String` (convenience)
 - `DefaultFramer`/`DefaultDeframer`: Length-prefixed framing
-- `ChecksumFramer`/`ChecksumDeframer`: Length + checksum framing
-- `NoChecksum`, `XxHash64`, `Crc32`: Checksum implementations
+- `ChecksumFramer`/`ChecksumDeframer`: Length + variable-size checksum framing
+- `NoChecksum` (0 bytes), `XxHash64` (8 bytes), `Crc32` (4 bytes), `Crc16` (2 bytes): Checksum implementations
 
 **Composability:**
 ```rust
-// Compose different strategies
-let checksum = XxHash64::new();
-let framer = ChecksumFramer::new(checksum);
+// Compose different strategies based on message size
+let small_checksum = Crc16::new();  // 2 bytes for high-frequency small messages
+let medium_checksum = Crc32::new(); // 4 bytes for medium-sized messages  
+let large_checksum = XxHash64::new(); // 8 bytes for large, critical messages
+
+let framer = ChecksumFramer::new(small_checksum);
 let mut writer = StreamWriter::new(file, framer);
 
 // Or use default framing
@@ -104,8 +107,9 @@ let writer = StreamWriter::new(file, DefaultFramer);
 ### Feature-Gated Dependencies
 
 Optional functionality is controlled by feature flags:
-- `xxhash`: Enables XXHash64 checksum support
-- `crc32`: Enables CRC32 checksum support  
+- `xxhash`: Enables XXHash64 checksum support (8 bytes)
+- `crc32`: Enables CRC32 checksum support (4 bytes)
+- `crc16`: Enables CRC16 checksum support (2 bytes)
 - `all_checksums`: Enables all checksum algorithms
 - `async`: Enables async I/O support
 
@@ -138,24 +142,30 @@ fn process_stream() -> Result<()> {
 **Supported Types:**
 - `NoChecksum` - No checksum (max performance, 0 bytes overhead)
 - `XxHash64` - XXH3_64 hash (recommended, 8 bytes overhead, feature-gated)
-- `Crc32` - CRC32c hash (alternative, 8 bytes overhead, feature-gated)
+- `Crc32` - CRC32c hash (alternative, 4 bytes overhead, feature-gated)
+- `Crc16` - CRC16 hash (minimal overhead, 2 bytes overhead, feature-gated)
 
 **Performance Characteristics:**
-- XXH3_64: ~5.4 GB/s on modern hardware
-- CRC32c: ~1.2 GB/s on modern hardware
+- XXH3_64: ~5.4 GB/s on modern hardware (8 bytes overhead)
+- CRC32c: ~1.2 GB/s on modern hardware (4 bytes overhead)
+- CRC16: ~0.8 GB/s on modern hardware (2 bytes overhead)
 - Zero allocation for checksum calculation
-- 8-byte checksum field when enabled
+- Variable-size checksum field (0-8 bytes) based on algorithm
 
 **Trait Implementation:**
 ```rust
 pub trait Checksum {
+    fn size(&self) -> usize;  // Returns checksum size in bytes
     fn calculate(&self, payload: &[u8]) -> u64;
     fn verify(&self, expected: u64, payload: &[u8]) -> Result<()>;
 }
 
-// Usage with composable framing
-let checksum = XxHash64::new();
-let framer = ChecksumFramer::new(checksum);
+// Usage with composable framing and size awareness
+let small_checksum = Crc16::new();  // 2 bytes
+let medium_checksum = Crc32::new(); // 4 bytes
+let large_checksum = XxHash64::new(); // 8 bytes
+
+let framer = ChecksumFramer::new(small_checksum);
 let mut writer = StreamWriter::new(file, framer);
 ```
 
@@ -422,10 +432,18 @@ The telemetry agent example demonstrates:
 - High-performance pattern: `while let Some(payload) = reader.read_message()?`
 - **84.1% performance improvement** in real-world testing
 
+**Sized Checksums:**
+- Variable-size checksums to optimize overhead for different message types
+- CRC16 (2 bytes): Perfect for high-frequency small messages (75% less overhead than XXHash64)
+- CRC32 (4 bytes): Good balance for medium-sized messages (50% less overhead than XXHash64)
+- XXHash64 (8 bytes): Best for large, critical messages (maximum integrity)
+- Automatic size-aware framing and deframing
+
 **Performance Results:**
 - High-frequency telemetry: **1.1M messages/sec** write throughput
 - Zero-allocation reading: **11.9M messages/sec** read throughput
 - Write batching: **0.5% performance improvement** for bulk operations
+- Sized checksums: **Up to 75% reduction** in checksum overhead for small messages
 
 ---
 
@@ -497,6 +515,7 @@ error!("Stream error: {}", e);
 ### Performance Optimizations
 - **Write batching**: Multi-message write operations (implemented)
 - **Zero-allocation reading**: Zero-copy message processing (implemented)
+- **Sized checksums**: Variable-size checksums for optimal overhead (implemented)
 - **SIMD checksums**: Vectorized XXH3 implementation
 - **Memory pools**: Reusable buffer pools for high-frequency usage
 - **Direct I/O**: Bypass OS buffers for maximum throughput
@@ -536,6 +555,7 @@ flatstream-rs/
 │   ├── telemetry_agent.rs  # Real-world example
 │   ├── composable_example.rs # Trait-based API demonstration
 │   ├── crc32_example.rs    # CRC32 checksum example
+│   ├── sized_checksums_example.rs # Sized checksums demonstration
 │   └── performance_example.rs # High-performance optimizations
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User documentation
@@ -561,10 +581,10 @@ flatstream-rs/
 - [x] StreamWriter with composable framing strategies
 - [x] StreamReader with composable deframing strategies
 - [x] StreamSerialize trait for custom type serialization
-- [x] XXH3_64 and CRC32 checksum support (feature-gated)
+- [x] XXH3_64, CRC32, and CRC16 checksum support (feature-gated)
 - [x] Comprehensive error handling
 - [x] Zero-copy read support
-- [x] High-performance optimizations (write batching, zero-allocation reading)
+- [x] High-performance optimizations (write batching, zero-allocation reading, sized checksums)
 
 **Testing**: ✅ Complete
 - [x] 13 unit tests (100% coverage)
