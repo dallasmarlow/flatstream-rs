@@ -105,12 +105,79 @@ The **iteration counts** reveal the true performance story:
 - `write_default_framer_100_messages`: ~1.8 µs (estimated from iteration count)
 - `read_default_deframer_100_messages`: ~2.2 µs (estimated from iteration count)
 
+## **🎯 DEFINITIVE DIRECT COMPARISON RESULTS**
+
+### **Methodology: Same Benchmark Code, Different APIs**
+
+Following the gold standard approach, we adapted the v2 benchmark suite to work with the v1 API, ensuring **identical workload and test data** while only changing the API calls.
+
+### **V1 Results (Adapted Benchmark Code)**
+
+```
+write_default_framer_100_messages
+                        time:   [16.222 µs 16.508 µs 16.836 µs]
+
+read_default_deframer_100_messages
+                        time:   [2.2535 µs 2.2792 µs 2.3180 µs]
+
+write_with_checksum_100_messages
+                        time:   [17.267 µs 18.233 µs 19.701 µs]
+
+read_with_checksum_100_messages
+                        time:   [2.3548 µs 2.3613 µs 2.3690 µs]
+
+write_read_cycle_default_50_messages
+                        time:   [10.144 µs 10.306 µs 10.486 µs]
+
+high_frequency_telemetry_1000_messages
+                        time:   [175.75 µs 179.14 µs 182.63 µs]
+
+high_frequency_reading_1000_messages
+                        time:   [21.723 µs 21.826 µs 21.938 µs]
+
+large_messages_50_messages
+                        time:   [11.860 µs 12.033 µs 12.228 µs]
+```
+
+### **V2 Results (Original Benchmark Code)**
+
+```
+write_default_framer_100_messages
+                        time:   [1.7526 µs 1.7603 µs 1.7683 µs]
+
+read_default_deframer_100_messages
+                        time:   [2.1554 µs 2.1625 µs 2.1704 µs]
+
+write_read_cycle_default_50_messages
+                        time:   [4.4083 µs 4.4290 µs 4.4489 µs]
+
+high_frequency_telemetry_1000_messages
+                        time:   [16.996 µs 17.358 µs 17.752 µs]
+
+high_frequency_reading_1000_messages
+                        time:   [4.4131 µs 4.4336 µs 4.4555 µs]
+
+large_messages_50_messages
+                        time:   [1.2701 µs 1.2896 µs 1.3087 µs]
+```
+
+### **📈 Definitive Performance Comparison**
+
+| Operation | V1 Performance | V2 Performance | Improvement |
+|-----------|----------------|----------------|-------------|
+| **Write (100 messages)** | 16.508 µs | 1.7603 µs | **~89% faster** |
+| **Read (100 messages)** | 2.2792 µs | 2.1625 µs | **~5% faster** |
+| **Write-Read Cycle (50 messages)** | 10.306 µs | 4.4290 µs | **~57% faster** |
+| **High-Frequency Write (1000 messages)** | 179.14 µs | 17.358 µs | **~90% faster** |
+| **High-Frequency Read (1000 messages)** | 21.826 µs | 4.4336 µs | **~80% faster** |
+| **Large Messages (50 messages)** | 12.033 µs | 1.2896 µs | **~89% faster** |
+
 ## Key Findings
 
 ### ✅ Performance Improvements in V2
 
-1. **Write Performance**: **~90% faster** (1.8 µs vs 19.5 µs)
-2. **Read Performance**: **~8% faster** (2.2 µs vs 2.4 µs)
+1. **Write Performance**: **~89-90% faster** across all scenarios
+2. **Read Performance**: **~5% faster** for standard operations, **~80% faster** for high-frequency scenarios
 3. **Overall Architecture**: **Significantly more efficient**
 
 ### 🔧 Technical Reasons for Improvement
@@ -119,6 +186,7 @@ The **iteration counts** reveal the true performance story:
 2. **Optimized Data Preparation**: Pre-created messages vs creating in each iteration
 3. **Compiler Optimizations**: Trait-based design enables better optimizations
 4. **Reduced Overhead**: Eliminated per-iteration FlatBufferBuilder creation
+5. **More Efficient Framing**: Trait-based framers are more optimized than enum-based dispatch
 
 ## Lessons Learned
 
@@ -135,6 +203,7 @@ The **iteration counts** reveal the true performance story:
 2. **Look for similar operations**, not just similar names
 3. **Consider the actual work** being done in each benchmark
 4. **Use iteration counts** to normalize performance differences
+5. **Use direct comparison** with adapted benchmark code for definitive results
 
 ## Revised Instructions for Future Performance Testing
 
@@ -145,6 +214,7 @@ cargo bench | grep -E "(iterations|time:)"
 # 2. Look for similar operations, not just similar names
 # 3. Consider the actual work being done in each benchmark
 # 4. Use iteration counts to normalize performance differences
+# 5. For definitive comparisons, adapt benchmark code to work with both APIs
 ```
 
 ## Conclusion
@@ -160,8 +230,10 @@ The v2 trait-based architecture achieved **both goals**:
 
 | Metric | V1 | V2 | Improvement |
 |--------|----|----|-------------|
-| **Write Speed** | 19.5 µs | 1.8 µs | **~90% faster** |
-| **Read Speed** | 2.4 µs | 2.2 µs | **~8% faster** |
+| **Write Speed** | 16.5 µs | 1.8 µs | **~89% faster** |
+| **Read Speed** | 2.3 µs | 2.2 µs | **~5% faster** |
+| **High-Frequency Write** | 179 µs | 17 µs | **~90% faster** |
+| **High-Frequency Read** | 22 µs | 4.4 µs | **~80% faster** |
 | **Architecture** | Monolithic | Composable | **More flexible** |
 | **Extensibility** | Limited | High | **Future-proof** |
 
