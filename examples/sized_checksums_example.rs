@@ -5,9 +5,10 @@
 //! - CRC32 (4 bytes) for medium-sized messages
 //! - XXHash64 (8 bytes) for large, critical messages
 
+use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -67,7 +68,7 @@ impl StreamSerialize for LargeMessage {
 }
 
 fn main() -> Result<()> {
-    println!("=== Sized Checksums Example ===\n");
+    println!("=== Sized Checksums Example (v2.5) ===\n");
 
     // Create test messages
     let small_messages = vec![
@@ -98,14 +99,22 @@ fn main() -> Result<()> {
         },
     ];
 
-    let large_messages = vec![LargeMessage {
-        batch_id: "batch-001".to_string(),
-        metadata: "High-precision sensor data from industrial monitoring system".to_string(),
-        data_points: (0..100).map(|i| i as f64 * 0.1).collect(),
-        flags: (0..50).map(|i| i % 2 == 0).collect(),
-    }];
+    let large_messages = vec![
+        LargeMessage {
+            batch_id: "batch-001".to_string(),
+            metadata: "High-precision sensor data".to_string(),
+            data_points: (0..1000).map(|i| i as f64 * 0.1).collect(),
+            flags: (0..100).map(|i| i % 2 == 0).collect(),
+        },
+        LargeMessage {
+            batch_id: "batch-002".to_string(),
+            metadata: "Calibration data".to_string(),
+            data_points: (0..2000).map(|i| i as f64 * 0.05).collect(),
+            flags: (0..200).map(|i| i % 3 == 0).collect(),
+        },
+    ];
 
-    // Demonstrate different checksum sizes for different message types
+    // Demonstrate different checksum sizes
     demonstrate_checksum_sizes(&small_messages, &medium_messages, &large_messages)?;
 
     // Show performance comparison
@@ -116,214 +125,262 @@ fn main() -> Result<()> {
 }
 
 fn demonstrate_checksum_sizes(
-    _small_messages: &[SmallMessage],
-    _medium_messages: &[MediumMessage],
-    _large_messages: &[LargeMessage],
+    small_messages: &[SmallMessage],
+    medium_messages: &[MediumMessage],
+    large_messages: &[LargeMessage],
 ) -> Result<()> {
-    println!("1. Writing messages with different checksum sizes...");
+    println!("1. Checksum Size Comparison...");
 
-    // Write small messages with CRC16 (2 bytes)
+    // External builder management for zero-allocation writes
+    let mut builder = FlatBufferBuilder::new();
+
+    // Small messages with CRC16 (2 bytes)
     #[cfg(feature = "crc16")]
     {
+        println!("   Small messages with CRC16 (2 bytes):");
         let file = File::create("small_messages_crc16.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc16::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = Crc16::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for msg in small_messages {
-            stream_writer.write(msg)?;
+        for message in small_messages {
+            builder.reset();
+            message.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
+        writer.flush()?;
 
         let file_size = std::fs::metadata("small_messages_crc16.bin")?.len();
-        println!("   Small messages (CRC16): {} bytes", file_size);
+        println!("     File size: {} bytes", file_size);
+        println!(
+            "     Overhead: ~{} bytes per message",
+            file_size / small_messages.len() as u64
+        );
     }
 
-    // Write medium messages with CRC32 (4 bytes)
+    // Medium messages with CRC32 (4 bytes)
     #[cfg(feature = "crc32")]
     {
+        println!("   Medium messages with CRC32 (4 bytes):");
         let file = File::create("medium_messages_crc32.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc32::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = Crc32::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for msg in medium_messages {
-            stream_writer.write(msg)?;
+        for message in medium_messages {
+            builder.reset();
+            message.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
+        writer.flush()?;
 
         let file_size = std::fs::metadata("medium_messages_crc32.bin")?.len();
-        println!("   Medium messages (CRC32): {} bytes", file_size);
+        println!("     File size: {} bytes", file_size);
+        println!(
+            "     Overhead: ~{} bytes per message",
+            file_size / medium_messages.len() as u64
+        );
     }
 
-    // Write large messages with XXHash64 (8 bytes)
+    // Large messages with XXHash64 (8 bytes)
     #[cfg(feature = "xxhash")]
     {
+        println!("   Large messages with XXHash64 (8 bytes):");
         let file = File::create("large_messages_xxhash64.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(XxHash64::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = XxHash64::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for msg in large_messages {
-            stream_writer.write(msg)?;
+        for message in large_messages {
+            builder.reset();
+            message.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
+        writer.flush()?;
 
         let file_size = std::fs::metadata("large_messages_xxhash64.bin")?.len();
-        println!("   Large messages (XXHash64): {} bytes", file_size);
+        println!("     File size: {} bytes", file_size);
+        println!(
+            "     Overhead: ~{} bytes per message",
+            file_size / large_messages.len() as u64
+        );
     }
 
-    // Read back and verify
-    println!("\n2. Reading and verifying messages...");
+    // Read back using processor API
+    println!("\n   Reading messages back with processor API:");
 
     #[cfg(feature = "crc16")]
     {
         let file = File::open("small_messages_crc16.bin")?;
         let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(Crc16::new());
-        let stream_reader = StreamReader::new(reader, deframer);
-        let count = stream_reader.count();
-        println!("   Read {} small messages with CRC16 verification", count);
+        let checksum = Crc16::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        reader.process_all(|payload| {
+            count += 1;
+            if let Ok(message) = std::str::from_utf8(payload) {
+                println!("     Small message {}: {}", count, message);
+            }
+            Ok(())
+        })?;
+        println!(
+            "     ✓ Read {} small messages with CRC16 verification",
+            count
+        );
     }
 
     #[cfg(feature = "crc32")]
     {
         let file = File::open("medium_messages_crc32.bin")?;
         let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(Crc32::new());
-        let stream_reader = StreamReader::new(reader, deframer);
-        let count = stream_reader.count();
-        println!("   Read {} medium messages with CRC32 verification", count);
+        let checksum = Crc32::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        reader.process_all(|payload| {
+            count += 1;
+            if let Ok(message) = std::str::from_utf8(payload) {
+                println!("     Medium message {}: {}", count, message);
+            }
+            Ok(())
+        })?;
+        println!(
+            "     ✓ Read {} medium messages with CRC32 verification",
+            count
+        );
     }
 
     #[cfg(feature = "xxhash")]
     {
         let file = File::open("large_messages_xxhash64.bin")?;
         let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(XxHash64::new());
-        let stream_reader = StreamReader::new(reader, deframer);
-        let count = stream_reader.count();
+        let checksum = XxHash64::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        reader.process_all(|payload| {
+            count += 1;
+            if let Ok(message) = std::str::from_utf8(payload) {
+                println!("     Large message {}: {}", count, message);
+            }
+            Ok(())
+        })?;
         println!(
-            "   Read {} large messages with XXHash64 verification",
+            "     ✓ Read {} large messages with XXHash64 verification",
             count
         );
     }
 
+    println!("   ✓ Checksum size comparison completed\n");
     Ok(())
 }
 
 fn demonstrate_performance_comparison() -> Result<()> {
-    println!("\n3. Performance comparison...");
+    println!("2. Performance Comparison...");
 
-    let test_data = "This is a test message for performance comparison";
-    let iterations = 1000;
+    let num_messages = 10_000;
+    let test_message = "performance-test-message";
 
-    // Test with no checksum
+    // External builder management
+    let mut builder = FlatBufferBuilder::new();
+
+    // No checksum (baseline)
     {
-        let start = std::time::Instant::now();
         let file = File::create("performance_no_checksum.bin")?;
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            stream_writer.write(&test_data)?;
+        let start = std::time::Instant::now();
+        for _ in 0..num_messages {
+            builder.reset();
+            let data = builder.create_string(test_message);
+            builder.finish(data, None);
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
-
+        writer.flush()?;
         let duration = start.elapsed();
+
         let file_size = std::fs::metadata("performance_no_checksum.bin")?.len();
-        println!(
-            "   No checksum: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
+        println!("   No checksum: {:?}, {} bytes", duration, file_size);
     }
 
-    // Test with CRC16
+    // CRC16 performance
     #[cfg(feature = "crc16")]
     {
-        let start = std::time::Instant::now();
         let file = File::create("performance_crc16.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc16::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = Crc16::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            stream_writer.write(&test_data)?;
+        let start = std::time::Instant::now();
+        for _ in 0..num_messages {
+            builder.reset();
+            let data = builder.create_string(test_message);
+            builder.finish(data, None);
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
-
+        writer.flush()?;
         let duration = start.elapsed();
+
         let file_size = std::fs::metadata("performance_crc16.bin")?.len();
-        println!(
-            "   CRC16: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
+        println!("   CRC16:      {:?}, {} bytes", duration, file_size);
     }
 
-    // Test with CRC32
+    // CRC32 performance
     #[cfg(feature = "crc32")]
     {
-        let start = std::time::Instant::now();
         let file = File::create("performance_crc32.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc32::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = Crc32::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            stream_writer.write(&test_data)?;
+        let start = std::time::Instant::now();
+        for _ in 0..num_messages {
+            builder.reset();
+            let data = builder.create_string(test_message);
+            builder.finish(data, None);
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
-
+        writer.flush()?;
         let duration = start.elapsed();
+
         let file_size = std::fs::metadata("performance_crc32.bin")?.len();
-        println!(
-            "   CRC32: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
+        println!("   CRC32:      {:?}, {} bytes", duration, file_size);
     }
 
-    // Test with XXHash64
+    // XXHash64 performance
     #[cfg(feature = "xxhash")]
     {
-        let start = std::time::Instant::now();
         let file = File::create("performance_xxhash64.bin")?;
         let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(XxHash64::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let checksum = XxHash64::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            stream_writer.write(&test_data)?;
+        let start = std::time::Instant::now();
+        for _ in 0..num_messages {
+            builder.reset();
+            let data = builder.create_string(test_message);
+            builder.finish(data, None);
+            writer.write(&mut builder)?;
         }
-        stream_writer.flush()?;
-
+        writer.flush()?;
         let duration = start.elapsed();
+
         let file_size = std::fs::metadata("performance_xxhash64.bin")?.len();
-        println!(
-            "   XXHash64: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
+        println!("   XXHash64:   {:?}, {} bytes", duration, file_size);
     }
 
-    println!("\n4. Checksum size comparison:");
-    println!("   No checksum: 0 bytes overhead");
-    #[cfg(feature = "crc16")]
-    println!("   CRC16: 2 bytes overhead per message");
-    #[cfg(feature = "crc32")]
-    println!("   CRC32: 4 bytes overhead per message");
-    #[cfg(feature = "xxhash")]
-    println!("   XXHash64: 8 bytes overhead per message");
-
-    println!("\n💡 Key Benefits:");
-    println!(
-        "   • CRC16: Perfect for high-frequency small messages (75% less overhead than XXHash64)"
-    );
-    println!(
-        "   • CRC32: Good balance for medium-sized messages (50% less overhead than XXHash64)"
-    );
-    println!("   • XXHash64: Best for large, critical messages (maximum integrity)");
-
-    println!("   • All checksums are pluggable and composable");
-
+    println!("   ✓ Performance comparison completed\n");
     Ok(())
 }

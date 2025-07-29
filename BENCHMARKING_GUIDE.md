@@ -4,6 +4,46 @@
 
 This guide covers the comprehensive benchmarking strategy for `flatstream-rs`, including performance regression detection, comparative analysis against other serialization libraries, and detailed performance analysis methodologies.
 
+## **v2.5 Benchmarking Strategy Update**
+
+### **Establishing v2 as the Definitive Performance Baseline**
+
+The comprehensive performance comparison between v1 and v2 has been completed and documented in `BENCHMARK_COMPARISON.md`. The v2 trait-based architecture has been established as the **definitive performance baseline** with significant improvements:
+
+- **Write Performance**: ~89-90% faster than v1
+- **Read Performance**: ~5-80% faster than v1 (depending on scenario)
+- **High-Frequency Operations**: ~80-90% faster than v1
+
+### **v2.5 Benchmarking Goals**
+
+The primary goal of v2.5 benchmarking is to **defend the v2 performance baseline** against regressions while validating that the new "Processor API" design maintains or improves upon v2 performance characteristics.
+
+#### **Key Performance Validation Points**
+
+1. **Zero-Allocation Writes**: Verify that external builder management maintains v2 write performance
+2. **Zero-Copy Reads**: Confirm that `process_all()` and `messages()` maintain v2 read performance
+3. **Hot Loop Performance**: Validate that the new API patterns don't introduce overhead in high-frequency scenarios
+4. **Memory Efficiency**: Ensure that removing internal builder management doesn't impact memory usage
+
+#### **Regression Detection Strategy**
+
+The v2.5 implementation will be measured against the v2 baseline using the same rigorous methodology:
+
+```bash
+# Establish v2 baseline (final v2 performance)
+git checkout main
+cargo bench -- --save-baseline v2_final
+
+# Implement v2.5 changes
+git checkout v2.5-processor-api
+cargo bench -- --save-baseline v2_5_implementation
+
+# Compare results
+critcmp v2_final v2_5_implementation
+```
+
+**Acceptance Criteria**: v2.5 performance should be within ±2% of v2 baseline across all benchmarks.
+
 ## Benchmark Categories
 
 ### 1. Core Performance Benchmarks
@@ -28,7 +68,15 @@ This guide covers the comprehensive benchmarking strategy for `flatstream-rs`, i
 - **vs Bincode**: Length-prefixed serialization comparison
 - **vs Protobuf**: Length-delimited encoding comparison
 
-## Regression Detection Strategy
+### 5. **v2.5-Specific Benchmarks**
+- **External Builder Performance**: Validate zero-allocation write patterns
+- **Processor API Performance**: Measure `process_all()` vs `messages()` performance
+- **Closure Overhead**: Verify that closure-based processing doesn't introduce overhead
+- **Hot Loop Optimization**: Test the new API in high-frequency telemetry scenarios
+
+## **Historical Regression Detection Strategy (Archived)**
+
+*Note: This section documents the original v1 vs v2 comparison methodology for historical reference.*
 
 ### What If the 8% Performance Degradation Was Real?
 

@@ -1,15 +1,17 @@
 use flatstream_rs::*;
-
+use flatbuffers::FlatBufferBuilder;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 
 // Import the framing types directly since we need them for CRC32
 #[cfg(feature = "crc32")]
 use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
 // This example demonstrates how easy it is to add new checksum algorithms
-// to the flatstream-rs library using the v2 trait-based architecture.
+// to the flatstream-rs library using the v2.5 trait-based architecture.
 
 fn main() -> Result<()> {
-    println!("=== CRC32 Checksum Example ===\n");
+    println!("=== CRC32 Checksum Example (v2.5) ===\n");
 
     // This example requires the "crc32" feature to be enabled
     // Run with: cargo run --example crc32_example --features crc32
@@ -25,6 +27,9 @@ fn main() -> Result<()> {
         let framer = ChecksumFramer::new(checksum_alg);
         let mut stream_writer = StreamWriter::new(writer, framer);
 
+        // External builder management for zero-allocation writes
+        let mut builder = FlatBufferBuilder::new();
+
         // Write some test data
         let test_messages = vec![
             "Hello, CRC32!",
@@ -34,7 +39,11 @@ fn main() -> Result<()> {
         ];
 
         for (i, message) in test_messages.iter().enumerate() {
-            stream_writer.write(message)?;
+            // Build and write with external builder
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            stream_writer.write(&mut builder)?;
             println!("  Wrote message {}: '{}'", i + 1, message);
         }
 
@@ -44,32 +53,29 @@ fn main() -> Result<()> {
             test_messages.len()
         );
 
-        // Read back and verify
+        // Read back and verify using processor API
         println!("2. Reading data with CRC32 verification:");
         let file = File::open("crc32_data.bin")?;
         let reader = BufReader::new(file);
 
         let checksum_alg = Crc32::new();
         let deframer = ChecksumDeframer::new(checksum_alg);
-        let stream_reader = StreamReader::new(reader, deframer);
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
         let mut count = 0;
-        for result in stream_reader {
-            match result {
-                Ok(payload) => {
-                    count += 1;
-                    println!(
-                        "  Read message {}: {} bytes (CRC32 verified)",
-                        count,
-                        payload.len()
-                    );
-                }
-                Err(e) => {
-                    eprintln!("  Error reading message: {}", e);
-                    break;
-                }
+        stream_reader.process_all(|payload| {
+            count += 1;
+            if let Ok(message) = std::str::from_utf8(payload) {
+                println!("  Read message {}: '{}' (CRC32 verified)", count, message);
+            } else {
+                println!(
+                    "  Read message {}: {} bytes (CRC32 verified)",
+                    count,
+                    payload.len()
+                );
             }
-        }
+            Ok(())
+        })?;
 
         println!(
             "  ✓ Successfully read {} messages with CRC32 verification\n",
@@ -98,30 +104,27 @@ fn main() -> Result<()> {
                     println!("  ⚠️  Unexpected: corruption not detected!");
                 }
                 Err(e) => {
-                    println!("  ✓ Corruption detected: {}", e);
+                    println!("  ✅ Corruption detected: {}", e);
                 }
             }
         }
 
-        println!("\n=== Example Complete ===");
-        println!("Files created:");
-        println!("  - crc32_data.bin (with CRC32 checksums)");
-        println!("  - crc32_corrupted.bin (for corruption testing)");
-        println!("\nKey benefits demonstrated:");
-        println!("  - Easy addition of new checksum algorithms");
-        println!("  - Clean separation of concerns");
-        println!("  - Composable architecture");
-        println!("  - Feature-gated dependencies");
+        println!("  ✓ CRC32 corruption detection test completed\n");
     }
 
     #[cfg(not(feature = "crc32"))]
     {
-        println!("❌ CRC32 feature not enabled!");
-        println!("To run this example, use:");
+        println!("CRC32 feature not enabled.");
+        println!("To run this example with CRC32 support, use:");
         println!("  cargo run --example crc32_example --features crc32");
-        println!("\nThis demonstrates how the library can be extended");
-        println!("with new checksum algorithms without modifying core code.");
     }
+
+    println!("=== CRC32 Example Complete ===");
+    println!("Key v2.5 features demonstrated:");
+    println!("  • External builder management for zero-allocation writes");
+    println!("  • Processor API for high-performance bulk processing");
+    println!("  • CRC32 checksum for data integrity");
+    println!("  • Zero-copy message processing throughout");
 
     Ok(())
 }

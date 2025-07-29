@@ -41,15 +41,91 @@ Each message in the stream follows this structure:
 * **Checksum:** A hash of the FlatBuffer payload, used for integrity verification. Currently defaults to `xxh3_64` for its speed and reliability.
 * **FlatBuffer Payload:** The raw bytes of the serialized FlatBuffer message.
 
-## Usage Examples (Proposed API)
+## Quick Start
 
 Add `flatstream-rs` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-flatstream-rs = "0.1.0" # Or the latest version
+flatstream-rs = "2.5.0" # Latest version with Processor API
 flatbuffers = "24.3.25" # Or the version you are using
 xxhash-rust = { version = "0.8", features = ["xxh3"] } # If using xxh3_64
+
+### Basic Usage
+
+```rust
+use flatstream_rs::*;
+use flatbuffers::FlatBufferBuilder;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+
+#[derive(StreamSerialize)]
+struct TelemetryEvent {
+    timestamp: u64,
+    value: f64,
+    device_id: String,
+}
+
+fn main() -> Result<()> {
+    // Write messages
+    let file = File::create("telemetry.bin")?;
+    let writer = BufWriter::new(file);
+    let framer = DefaultFramer;
+    let mut stream_writer = StreamWriter::new(writer, framer);
+    let mut builder = FlatBufferBuilder::new();
+
+    for i in 0..100 {
+        let event = TelemetryEvent {
+            timestamp: i * 1000,
+            value: i as f64 * 1.5,
+            device_id: format!("sensor-{}", i % 10),
+        };
+
+        // External builder management for zero-allocation writes
+        builder.reset();
+        event.serialize(&mut builder)?;
+        builder.finish(data, None);
+        stream_writer.write(&mut builder)?;
+    }
+
+    // Read messages with zero-copy processing
+    let file = File::open("telemetry.bin")?;
+    let reader = BufReader::new(file);
+    let deframer = DefaultDeframer;
+    let mut stream_reader = StreamReader::new(reader, deframer);
+
+    let mut count = 0;
+    stream_reader.process_all(|payload| {
+        // Zero-copy access to message data
+        let event = flatbuffers::get_root::<telemetry::Event>(payload)?;
+        println!("Event {}: timestamp={}, value={}", 
+                count, event.timestamp(), event.value());
+        count += 1;
+        Ok(())
+    })?;
+
+    println!("Processed {} events", count);
+    Ok(())
+}
+```
+
+### Advanced Usage
+
+For manual iteration control and early termination:
+
+```rust
+let mut messages = stream_reader.messages();
+while let Some(payload) = messages.next()? {
+    let event = flatbuffers::get_root::<telemetry::Event>(payload)?;
+    
+    if event.value() > 100.0 {
+        println!("High value detected, stopping early");
+        break;
+    }
+    
+    process_event(event)?;
+}
+```
 
 ## Available Features
 
