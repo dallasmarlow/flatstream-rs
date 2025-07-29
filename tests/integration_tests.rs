@@ -6,11 +6,11 @@ use std::io::{BufReader, BufWriter, Cursor, Write};
 use tempfile::NamedTempFile;
 
 // Import framing types once (available when either checksum feature is enabled)
-#[cfg(any(feature = "checksum", feature = "crc32"))]
+#[cfg(any(feature = "xxhash", feature = "crc32"))]
 use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
 // Conditionally import checksum components when the feature is enabled
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 use flatstream_rs::XxHash64;
 
 // Conditionally import CRC32 components when the feature is enabled
@@ -52,7 +52,7 @@ fn test_write_read_cycle_default() {
 }
 
 #[test]
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 fn test_write_read_cycle_with_checksum() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
@@ -78,7 +78,7 @@ fn test_write_read_cycle_with_checksum() {
 }
 
 #[test]
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 fn test_corruption_detection_with_checksum() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
@@ -163,7 +163,7 @@ fn test_partial_file_read() {
 }
 
 #[test]
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 fn test_mismatched_framing_strategies() {
     let mut buffer = Vec::new();
 

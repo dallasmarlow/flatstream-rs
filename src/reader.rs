@@ -63,7 +63,7 @@ mod tests {
     use crate::framing::DefaultFramer;
     use crate::writer::StreamWriter;
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     use crate::{ChecksumDeframer, ChecksumFramer, XxHash64};
     use std::io::Cursor;
 
@@ -86,7 +86,7 @@ mod tests {
         assert!(!payload.is_empty());
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_read_message_with_checksum_feature() {
         // Write a message first
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_read_multiple_messages_with_checksum() {
         // Write multiple messages
@@ -188,7 +188,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_checksum_mismatch() {
         // Write a message with checksum

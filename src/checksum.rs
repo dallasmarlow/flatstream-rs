@@ -18,19 +18,19 @@ pub trait Checksum {
     }
 }
 
-#[cfg(feature = "checksum")]
 /// Provides an implementation of the XXH3 64-bit hash algorithm.
+#[cfg(feature = "xxhash")]
 #[derive(Default, Clone, Copy)]
 pub struct XxHash64;
 
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 impl XxHash64 {
     pub fn new() -> Self {
         Self
     }
 }
 
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 impl Checksum for XxHash64 {
     fn calculate(&self, payload: &[u8]) -> u64 {
         xxhash_rust::xxh3::xxh3_64(payload)
@@ -83,7 +83,7 @@ impl Checksum for NoChecksum {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_xxhash64_checksum() {
         let checksum = XxHash64::new();
@@ -104,7 +104,7 @@ mod tests {
         assert!(checksum.verify(123, payload).is_ok()); // Always succeeds
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_checksum_consistency() {
         let checksum = XxHash64::new();

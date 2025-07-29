@@ -111,7 +111,7 @@ fn main() -> Result<()> {
     }
 
     // Example 2: Using checksums (if feature is enabled)
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     {
         println!("2. Using checksums for data integrity:");
         let file = File::create("system_events.bin")?;
@@ -162,10 +162,10 @@ fn main() -> Result<()> {
         );
     }
 
-    #[cfg(not(feature = "checksum"))]
+    #[cfg(not(feature = "xxhash"))]
     {
         println!("2. Checksum feature not enabled - skipping checksum example");
-        println!("   To enable, run: cargo run --example composable_example --features checksum\n");
+        println!("   To enable, run: cargo run --example composable_example --features xxhash\n");
     }
 
     // Example 3: Demonstrating the composability
@@ -216,7 +216,7 @@ fn main() -> Result<()> {
     println!("Files created:");
     println!("  - sensor_data.bin");
     println!("  - string_data.bin");
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     println!("  - system_events.bin");
 
     Ok(())

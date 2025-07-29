@@ -87,9 +87,9 @@ pub use reader::StreamReader;
 pub use traits::StreamSerialize;
 pub use writer::StreamWriter;
 
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 pub use checksum::XxHash64;
-#[cfg(feature = "checksum")]
+#[cfg(any(feature = "xxhash", feature = "crc32"))]
 pub use framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "crc32")]

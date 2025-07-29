@@ -60,7 +60,7 @@ mod tests {
     use super::*;
     use crate::framing::DefaultFramer;
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     use crate::{ChecksumFramer, XxHash64};
     use std::io::Cursor;
 
@@ -78,7 +78,7 @@ mod tests {
         assert!(data.len() >= 4);
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_write_with_checksum_feature() {
         let mut buffer = Vec::new();
@@ -122,7 +122,7 @@ mod tests {
         assert!(!data.is_empty());
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_multiple_messages_with_checksum() {
         let mut buffer = Vec::new();

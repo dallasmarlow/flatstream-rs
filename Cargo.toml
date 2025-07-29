@@ -18,11 +18,11 @@ tokio = { version = "1", features = ["full"], optional = true }
 [features]
 default = []
 async = ["tokio"]
-checksum = ["xxhash-rust"]
+xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
 
 # Meta-feature to enable all checksum algorithms for testing and development
-all_checksums = ["checksum", "crc32"]
+all_checksums = ["xxhash", "crc32"]
 
 [dependencies.xxhash-rust]
 version = "0.8"
