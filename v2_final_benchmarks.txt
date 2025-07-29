@@ -1,0 +1,187 @@
+warning: unused imports: `BenchmarkId` and `Throughput`
+ --> benches/benchmarks.rs:1:61
+  |
+1 | use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+  |                                                             ^^^^^^^^^^^             ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `flatstream_rs::checksum::Checksum`
+ --> benches/benchmarks.rs:2:5
+  |
+2 | use flatstream_rs::checksum::Checksum;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `flatstream-rs` (bench "benchmarks") generated 2 warnings (run `cargo fix --bench "benchmarks"` to apply 2 suggestions)
+    Finished `bench` profile [optimized] target(s) in 0.60s
+     Running unittests src/lib.rs (target/release/deps/flatstream_rs-2dfed9f93b10be80)
+
+running 12 tests
+test checksum::tests::test_checksum_sizes ... ignored
+test checksum::tests::test_no_checksum ... ignored
+test reader::tests::test_read_empty_stream ... ignored
+test reader::tests::test_read_message_with_checksum ... ignored
+test reader::tests::test_read_message_without_checksum ... ignored
+test reader::tests::test_read_multiple_messages ... ignored
+test writer::tests::test_flush ... ignored
+test writer::tests::test_multiple_messages ... ignored
+test writer::tests::test_with_builder ... ignored
+test writer::tests::test_write_batch ... ignored
+test writer::tests::test_write_with_checksum ... ignored
+test writer::tests::test_write_without_checksum ... ignored
+
+test result: ok. 0 passed; 0 failed; 12 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches/benchmarks.rs (target/release/deps/benchmarks-1dfa061b29ac7f2e)
+Gnuplot not found, using plotters backend
+Benchmarking write_default_framer_100_messages
+Benchmarking write_default_framer_100_messages: Warming up for 3.0000 s
+Benchmarking write_default_framer_100_messages: Collecting 100 samples in estimated 5.0017 s (2.8M iterations)
+Benchmarking write_default_framer_100_messages: Analyzing
+write_default_framer_100_messages
+                        time:   [1.7569 µs 1.7681 µs 1.7802 µs]
+                        change: [-0.4861% +0.2571% +0.9987%] (p = 0.50 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking read_default_deframer_100_messages
+Benchmarking read_default_deframer_100_messages: Warming up for 3.0000 s
+Benchmarking read_default_deframer_100_messages: Collecting 100 samples in estimated 5.0083 s (2.3M iterations)
+Benchmarking read_default_deframer_100_messages: Analyzing
+read_default_deframer_100_messages
+                        time:   [2.1668 µs 2.1901 µs 2.2197 µs]
+                        change: [+1.0773% +2.0954% +3.4628%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+
+Benchmarking zero_allocation_reading_100_messages
+Benchmarking zero_allocation_reading_100_messages: Warming up for 3.0000 s
+Benchmarking zero_allocation_reading_100_messages: Collecting 100 samples in estimated 5.0010 s (10M iterations)
+Benchmarking zero_allocation_reading_100_messages: Analyzing
+zero_allocation_reading_100_messages
+                        time:   [487.18 ns 489.72 ns 492.70 ns]
+                        change: [-6.8478% -4.2413% -1.9972%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 14 outliers among 100 measurements (14.00%)
+  2 (2.00%) low mild
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+
+Benchmarking write_batch_100_messages
+Benchmarking write_batch_100_messages: Warming up for 3.0000 s
+Benchmarking write_batch_100_messages: Collecting 100 samples in estimated 5.0015 s (2.6M iterations)
+Benchmarking write_batch_100_messages: Analyzing
+write_batch_100_messages
+                        time:   [1.8488 µs 1.8600 µs 1.8720 µs]
+                        change: [-0.0803% +0.9522% +1.9503%] (p = 0.06 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking write_iterative_100_messages
+Benchmarking write_iterative_100_messages: Warming up for 3.0000 s
+Benchmarking write_iterative_100_messages: Collecting 100 samples in estimated 5.0050 s (2.8M iterations)
+Benchmarking write_iterative_100_messages: Analyzing
+write_iterative_100_messages
+                        time:   [1.7711 µs 1.7833 µs 1.7958 µs]
+                        change: [-0.1731% +0.5493% +1.3196%] (p = 0.16 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking write_read_cycle_default_50_messages
+Benchmarking write_read_cycle_default_50_messages: Warming up for 3.0000 s
+Benchmarking write_read_cycle_default_50_messages: Collecting 100 samples in estimated 5.0087 s (1.1M iterations)
+Benchmarking write_read_cycle_default_50_messages: Analyzing
+write_read_cycle_default_50_messages
+                        time:   [4.3937 µs 4.4247 µs 4.4632 µs]
+                        change: [-0.2522% +0.8349% +2.2004%] (p = 0.17 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+
+Benchmarking high_frequency_telemetry_1000_messages
+Benchmarking high_frequency_telemetry_1000_messages: Warming up for 3.0000 s
+Benchmarking high_frequency_telemetry_1000_messages: Collecting 100 samples in estimated 5.0636 s (263k iterations)
+Benchmarking high_frequency_telemetry_1000_messages: Analyzing
+high_frequency_telemetry_1000_messages
+                        time:   [18.416 µs 18.677 µs 18.933 µs]
+                        change: [+5.8346% +8.4132% +11.079%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking high_frequency_reading_1000_messages
+Benchmarking high_frequency_reading_1000_messages: Warming up for 3.0000 s
+Benchmarking high_frequency_reading_1000_messages: Collecting 100 samples in estimated 5.0214 s (1.1M iterations)
+Benchmarking high_frequency_reading_1000_messages: Analyzing
+high_frequency_reading_1000_messages
+                        time:   [4.4377 µs 4.4568 µs 4.4765 µs]
+                        change: [-0.6103% +0.1682% +0.9242%] (p = 0.67 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking large_messages_50_messages
+Benchmarking large_messages_50_messages: Warming up for 3.0000 s
+Benchmarking large_messages_50_messages: Collecting 100 samples in estimated 5.0010 s (3.9M iterations)
+Benchmarking large_messages_50_messages: Analyzing
+large_messages_50_messages
+                        time:   [1.2449 µs 1.2622 µs 1.2803 µs]
+                        change: [+1.3081% +2.9603% +4.4810%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+Benchmarking memory_efficiency_write_100_messages
+Benchmarking memory_efficiency_write_100_messages: Warming up for 3.0000 s
+Benchmarking memory_efficiency_write_100_messages: Collecting 100 samples in estimated 5.0039 s (2.6M iterations)
+Benchmarking memory_efficiency_write_100_messages: Analyzing
+memory_efficiency_write_100_messages
+                        time:   [1.9184 µs 1.9339 µs 1.9542 µs]
+                        change: [+1.3569% +4.9301% +11.436%] (p = 0.04 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking regression_small_messages
+Benchmarking regression_small_messages: Warming up for 3.0000 s
+Benchmarking regression_small_messages: Collecting 100 samples in estimated 5.0010 s (2.7M iterations)
+Benchmarking regression_small_messages: Analyzing
+regression_small_messages
+                        time:   [1.8285 µs 1.8370 µs 1.8459 µs]
+                        change: [-0.6086% +0.2968% +1.1553%] (p = 0.52 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+
+Benchmarking regression_monomorphization
+Benchmarking regression_monomorphization: Warming up for 3.0000 s
+Benchmarking regression_monomorphization: Collecting 100 samples in estimated 5.0071 s (1.8M iterations)
+Benchmarking regression_monomorphization: Analyzing
+regression_monomorphization
+                        time:   [2.7061 µs 2.7220 µs 2.7387 µs]
+                        change: [-3.0280% -2.2286% -1.3753%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+
+Benchmarking regression_instruction_cache
+Benchmarking regression_instruction_cache: Warming up for 3.0000 s
+Benchmarking regression_instruction_cache: Collecting 100 samples in estimated 5.0000 s (1.6M iterations)
+Benchmarking regression_instruction_cache: Analyzing
+regression_instruction_cache
+                        time:   [3.2237 µs 3.2525 µs 3.2815 µs]
+                        change: [-2.6546% -1.1249% +0.2357%] (p = 0.14 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+

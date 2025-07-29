@@ -1,32 +1,36 @@
+use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use flatstream_rs::*;
 
 // Example 1: Simple data structure that implements StreamSerialize
 #[derive(Debug)]
 struct SensorReading {
     sensor_id: String,
     temperature: f32,
+    #[allow(dead_code)]
     humidity: f32,
     timestamp: u64,
 }
 
 impl StreamSerialize for SensorReading {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Create a structured representation of the sensor data
-        let sensor_id = builder.create_string(&self.sensor_id);
-        let data = format!("temp={:.2},humidity={:.2},ts={}", 
-                          self.temperature, self.humidity, self.timestamp);
-        let reading_data = builder.create_string(&data);
-        
-        // For this example, we'll just use the reading data as the root
-        builder.finish(reading_data, None);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{}",
+            &self.sensor_id, self.timestamp, self.temperature, "C"
+        );
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
 
 // Example 2: More complex data structure
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SystemEvent {
     event_type: String,
     severity: u8,
@@ -35,31 +39,23 @@ struct SystemEvent {
 }
 
 impl StreamSerialize for SystemEvent {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Create a structured representation
-        let event_type = builder.create_string(&self.event_type);
-        let message = builder.create_string(&self.message);
-        
-        // Convert metadata to a string representation
-        let metadata_str = self.metadata.iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(",");
-        let metadata = builder.create_string(&metadata_str);
-        
-        // Combine all fields into a single string for simplicity
-        let data = format!("type={},severity={},msg={},meta={}", 
-                          self.event_type, self.severity, self.message, metadata_str);
-        let event_data = builder.create_string(&data);
-        
-        builder.finish(event_data, None);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{}",
+            &self.event_type, "timestamp", self.severity, &self.message
+        );
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
 
 fn main() -> Result<()> {
-    println!("=== Composable flatstream-rs Example ===\n");
-    
+    println!("=== Composable flatstream-rs v2.5 Example ===\n");
+
     // Example 1: Basic usage with default framing
     println!("1. Basic usage with default framing:");
     {
@@ -67,7 +63,10 @@ fn main() -> Result<()> {
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
-        
+
+        // External builder management for zero-allocation writes
+        let mut builder = FlatBufferBuilder::new();
+
         // Write some sensor readings
         for i in 0..5 {
             let reading = SensorReading {
@@ -79,133 +78,177 @@ fn main() -> Result<()> {
                     .unwrap()
                     .as_secs(),
             };
-            
-            stream_writer.write(&reading)?;
+
+            // Build and write with external builder
+            builder.reset();
+            reading.serialize(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote sensor reading: {:?}", reading);
         }
-        
+
         stream_writer.flush()?;
         println!("  ✓ Wrote 5 sensor readings to sensor_data.bin\n");
     }
-    
-    // Read back the sensor data
+
+    // Read back the sensor data using the processor API
     {
         let file = File::open("sensor_data.bin")?;
         let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(reader, deframer);
-        
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        println!("  Reading sensor data back:");
         let mut count = 0;
-        for result in stream_reader {
-            let payload = result?;
-            println!("  Read sensor data: {} bytes", payload.len());
-            count += 1;
-        }
-        println!("  ✓ Read {} sensor readings back\n", count);
+        stream_reader.process_all(|payload| {
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                println!("    Message {}: {}", count + 1, data_str);
+                count += 1;
+            }
+            Ok(())
+        })?;
+        println!("  ✓ Read {} sensor readings\n", count);
     }
-    
-    // Example 2: Using checksums (if feature is enabled)
-    #[cfg(feature = "checksum")]
+
+    // Example 2: Using checksum framing for data integrity
+    #[cfg(feature = "xxhash")]
     {
-        println!("2. Using checksums for data integrity:");
-        let file = File::create("system_events.bin")?;
+        println!("2. Using checksum framing for data integrity:");
+        let file = File::create("secure_sensor_data.bin")?;
         let writer = BufWriter::new(file);
         let checksum = XxHash64::new();
         let framer = ChecksumFramer::new(checksum);
         let mut stream_writer = StreamWriter::new(writer, framer);
-        
-        // Write some system events
+
+        // External builder management
+        let mut builder = FlatBufferBuilder::new();
+
+        // Write some sensor readings with checksum protection
         for i in 0..3 {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert("user_id".to_string(), format!("user-{}", i));
-            metadata.insert("session_id".to_string(), format!("session-{}", i * 100));
-            
-            let event = SystemEvent {
-                event_type: "INFO".to_string(),
-                severity: 1,
-                message: format!("System event number {}", i),
-                metadata,
+            let reading = SensorReading {
+                sensor_id: format!("secure-sensor-{}", i),
+                temperature: 25.0 + (i as f32 * 1.5),
+                humidity: 50.0 + (i as f32 * 3.0),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
             };
-            
-            stream_writer.write(&event)?;
-            println!("  Wrote system event: {:?}", event);
+
+            builder.reset();
+            reading.serialize(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
+            println!("  Wrote secure sensor reading: {:?}", reading);
         }
-        
+
         stream_writer.flush()?;
-        println!("  ✓ Wrote 3 system events with checksums to system_events.bin\n");
-        
-        // Read back with checksum verification
-        let file = File::open("system_events.bin")?;
+        println!("  ✓ Wrote 3 secure sensor readings to secure_sensor_data.bin\n");
+
+        // Read back the secure sensor data
+        let file = File::open("secure_sensor_data.bin")?;
         let reader = BufReader::new(file);
         let checksum = XxHash64::new();
         let deframer = ChecksumDeframer::new(checksum);
-        let stream_reader = StreamReader::new(reader, deframer);
-        
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        println!("  Reading secure sensor data back:");
         let mut count = 0;
-        for result in stream_reader {
-            let payload = result?;
-            println!("  Read system event: {} bytes (checksum verified)", payload.len());
-            count += 1;
-        }
-        println!("  ✓ Read {} system events with checksum verification\n", count);
+        stream_reader.process_all(|payload| {
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                println!("    Secure message {}: {}", count + 1, data_str);
+                count += 1;
+            }
+            Ok(())
+        })?;
+        println!("  ✓ Read {} secure sensor readings\n", count);
     }
-    
-    #[cfg(not(feature = "checksum"))]
+
+    // Example 3: Complex system events
+    println!("3. Complex system events:");
     {
-        println!("2. Checksum feature not enabled - skipping checksum example");
-        println!("   To enable, run: cargo run --example composable_example --features checksum\n");
-    }
-    
-    // Example 3: Demonstrating the composability
-    println!("3. Demonstrating composability:");
-    println!("   - StreamSerialize trait allows any type to be serialized");
-    println!("   - Framer/Deframer traits allow custom framing strategies");
-    println!("   - Checksum trait allows pluggable integrity checking");
-    println!("   - All components work together through trait composition\n");
-    
-    // Example 4: Using built-in string serialization
-    println!("4. Using built-in string serialization:");
-    {
-        let file = File::create("string_data.bin")?;
+        let file = File::create("system_events.bin")?;
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
-        
-        let messages = vec![
-            "Hello, world!",
-            "This is a test message",
-            "FlatBuffers streaming is awesome",
+
+        // External builder management
+        let mut builder = FlatBufferBuilder::new();
+
+        // Create some system events
+        let events = vec![
+            SystemEvent {
+                event_type: "INFO".to_string(),
+                severity: 1,
+                message: "System startup complete".to_string(),
+                metadata: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("component".to_string(), "core".to_string());
+                    map.insert("version".to_string(), "1.0.0".to_string());
+                    map
+                },
+            },
+            SystemEvent {
+                event_type: "WARNING".to_string(),
+                severity: 2,
+                message: "High memory usage detected".to_string(),
+                metadata: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("memory_usage".to_string(), "85%".to_string());
+                    map.insert("threshold".to_string(), "80%".to_string());
+                    map
+                },
+            },
+            SystemEvent {
+                event_type: "ERROR".to_string(),
+                severity: 3,
+                message: "Database connection failed".to_string(),
+                metadata: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("retry_count".to_string(), "3".to_string());
+                    map.insert("timeout".to_string(), "30s".to_string());
+                    map
+                },
+            },
         ];
-        
-        for message in &messages {
-            stream_writer.write(message)?;
-            println!("  Wrote string: '{}'", message);
+
+        // Write system events
+        for event in &events {
+            builder.reset();
+            event.serialize(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
+            println!("  Wrote system event: {:?}", event);
         }
-        
+
         stream_writer.flush()?;
-        println!("  ✓ Wrote {} string messages\n", messages.len());
-        
-        // Read back
-        let file = File::open("string_data.bin")?;
+        println!(
+            "  ✓ Wrote {} system events to system_events.bin\n",
+            events.len()
+        );
+
+        // Read back system events using expert API for manual control
+        let file = File::open("system_events.bin")?;
         let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(reader, deframer);
-        
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        println!("  Reading system events back:");
         let mut count = 0;
-        for result in stream_reader {
-            let payload = result?;
-            println!("  Read string data: {} bytes", payload.len());
-            count += 1;
+        let mut messages = stream_reader.messages();
+        while let Some(payload) = messages.next()? {
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                println!("    System event {}: {}", count + 1, data_str);
+                count += 1;
+            }
         }
-        println!("  ✓ Read {} string messages back\n", count);
+        println!("  ✓ Read {} system events\n", count);
     }
-    
-    println!("=== Example Complete ===");
-    println!("Files created:");
-    println!("  - sensor_data.bin");
-    println!("  - string_data.bin");
-    #[cfg(feature = "checksum")]
-    println!("  - system_events.bin");
-    
+
+    println!("=== Composable Example Complete ===");
+    println!("Key v2.5 features demonstrated:");
+    println!("  • External builder management for zero-allocation writes");
+    println!("  • Processor API for high-performance bulk processing");
+    println!("  • Expert API for manual iteration control");
+    println!("  • Composable framing strategies");
+    println!("  • Zero-copy message processing throughout");
+
     Ok(())
-} 
+}

@@ -38,8 +38,33 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
         let payload_len = payload.len() as u32;
         let checksum = self.checksum_alg.calculate(payload);
+        let checksum_size = self.checksum_alg.size();
+
         writer.write_all(&payload_len.to_le_bytes())?;
-        writer.write_all(&checksum.to_le_bytes())?;
+
+        // Write only the required number of bytes for the checksum
+        match checksum_size {
+            0 => {
+                // No checksum bytes to write
+            }
+            2 => {
+                // Write 2 bytes for CRC16
+                writer.write_all(&(checksum as u16).to_le_bytes())?;
+            }
+            4 => {
+                // Write 4 bytes for CRC32
+                writer.write_all(&(checksum as u32).to_le_bytes())?;
+            }
+            8 => {
+                // Write 8 bytes for XXHash64
+                writer.write_all(&checksum.to_le_bytes())?;
+            }
+            _ => {
+                // For any other size, write the full u64 and truncate if needed
+                writer.write_all(&checksum.to_le_bytes())?;
+            }
+        }
+
         writer.write_all(payload)?;
         Ok(())
     }
@@ -106,12 +131,47 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         }
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
+        let checksum_size = self.checksum_alg.size();
 
-        let mut checksum_bytes = [0u8; 8];
-        reader
-            .read_exact(&mut checksum_bytes)
-            .map_err(|_| Error::UnexpectedEof)?;
-        let expected_checksum = u64::from_le_bytes(checksum_bytes);
+        // Read checksum bytes based on the checksum size
+        let expected_checksum = match checksum_size {
+            0 => {
+                // No checksum to read
+                0
+            }
+            2 => {
+                // Read 2 bytes for CRC16
+                let mut checksum_bytes = [0u8; 2];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u16::from_le_bytes(checksum_bytes) as u64
+            }
+            4 => {
+                // Read 4 bytes for CRC32
+                let mut checksum_bytes = [0u8; 4];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u32::from_le_bytes(checksum_bytes) as u64
+            }
+            8 => {
+                // Read 8 bytes for XXHash64
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+            _ => {
+                // For any other size, read 8 bytes (backward compatibility)
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+        };
 
         buffer.resize(payload_len, 0);
         reader

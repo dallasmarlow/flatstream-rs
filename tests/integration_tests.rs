@@ -1,80 +1,100 @@
-use flatstream_rs::{DefaultDeframer, DefaultFramer, Error, StreamReader, StreamWriter};
+// tests/integration_tests.rs
+
+use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Cursor, Write};
+use std::io::{BufReader, BufWriter, Write};
 use tempfile::NamedTempFile;
 
 #[test]
-fn test_write_read_cycle_with_checksum() {
+fn test_write_read_cycle_default() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Write messages
+    // Write messages with default framing
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
 
+        // External builder management
+        let mut builder = FlatBufferBuilder::new();
+
         for i in 0..3 {
-            stream_writer.write(&format!("message {}", i)).unwrap();
+            builder.reset();
+            let data = builder.create_string(&format!("message {}", i));
+            builder.finish(data, None);
+            stream_writer.write_finished(&mut builder).unwrap();
         }
         stream_writer.flush().unwrap();
     }
 
-    // Read messages back
+    // Read messages back with default deframer using processor API
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(reader, deframer);
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
         let mut count = 0;
-        for result in stream_reader {
-            assert!(result.is_ok());
-            count += 1;
-        }
-
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(count, 3);
     }
 }
 
 #[test]
-fn test_write_read_cycle_without_checksum() {
+#[cfg(feature = "xxhash")]
+fn test_write_read_cycle_with_checksum() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Write messages
+    // Write with checksum
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
+        let framer = ChecksumFramer::new(XxHash64::new());
         let mut stream_writer = StreamWriter::new(writer, framer);
 
-        for i in 0..2 {
-            stream_writer.write(&format!("no checksum {}", i)).unwrap();
-        }
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("important data");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
-    // Read messages back
+    // Read back and verify using processor API
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(reader, deframer);
+        let deframer = ChecksumDeframer::new(XxHash64::new());
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
         let mut count = 0;
-        for result in stream_reader {
-            assert!(result.is_ok());
-            count += 1;
-        }
-
-        assert_eq!(count, 2);
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
 
 #[test]
-fn test_corruption_detection() {
+#[cfg(feature = "xxhash")]
+fn test_corruption_detection_with_checksum() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
@@ -82,18 +102,22 @@ fn test_corruption_detection() {
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
+        let framer = ChecksumFramer::new(XxHash64::new());
         let mut stream_writer = StreamWriter::new(writer, framer);
 
-        stream_writer.write(&"important data").unwrap();
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("important data");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
-    // Corrupt the file by flipping a bit
+    // Corrupt the file by flipping a bit in the payload
     {
         let mut data = std::fs::read(path).unwrap();
-        if data.len() > 30 {
-            data[30] ^= 1; // Flip a bit in the payload
+        if !data.is_empty() {
+            let last_byte_index = data.len() - 1;
+            data[last_byte_index] ^= 1; // Flip the last bit of the payload
         }
         std::fs::write(path, data).unwrap();
     }
@@ -102,75 +126,278 @@ fn test_corruption_detection() {
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
+        let deframer = ChecksumDeframer::new(XxHash64::new());
         let mut stream_reader = StreamReader::new(reader, deframer);
 
         let result = stream_reader.read_message();
-        // Without checksums, corruption might not be detected
-        // This test just ensures we can read the corrupted data
-        assert!(result.is_ok());
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            Error::ChecksumMismatch { .. } => {
+                // This is the expected outcome
+            }
+            e => panic!("Expected ChecksumMismatch error, got: {:?}", e),
+        }
     }
 }
 
 #[test]
-fn test_large_stream() {
+fn test_mismatched_framing_strategies() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Write messages
+    // Write with default framing
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
 
-        for i in 0..100 {
-            stream_writer
-                .write(&format!("message number {}", i))
-                .unwrap();
-        }
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("a long partial message");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
-    // Read all messages back
+    // Try to read with checksum deframer (should fail gracefully)
+    #[cfg(feature = "xxhash")]
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(reader, deframer);
+        let deframer = ChecksumDeframer::new(XxHash64::new());
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
-        let mut count = 0;
-        for result in stream_reader {
-            assert!(result.is_ok());
-            count += 1;
-        }
-
-        assert_eq!(count, 100);
+        let result = stream_reader.read_message();
+        assert!(result.is_err());
     }
 }
 
 #[test]
-fn test_empty_file() {
+#[cfg(feature = "crc32")]
+fn test_write_read_cycle_with_crc32() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Create an empty file
-    File::create(path).unwrap();
+    // Write with CRC32
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = ChecksumFramer::new(Crc32::new());
+        let mut stream_writer = StreamWriter::new(writer, framer);
 
-    // Try to read from empty file
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("crc32 test data");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = ChecksumDeframer::new(Crc32::new());
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}
+
+#[test]
+#[cfg(feature = "crc16")]
+fn test_write_read_cycle_with_crc16() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write with CRC16
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = ChecksumFramer::new(Crc16::new());
+        let mut stream_writer = StreamWriter::new(writer, framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("crc16 test data");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = ChecksumDeframer::new(Crc16::new());
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}
+
+#[test]
+fn test_comprehensive_data_types() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write various data types
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = DefaultFramer;
+        let mut stream_writer = StreamWriter::new(writer, framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        let messages = vec![
+            "short",
+            "medium length message",
+            "very long message with lots of content",
+        ];
+
+        for message in &messages {
+            builder.reset();
+            let data = builder.create_string(message);
+            builder.finish(data, None);
+            stream_writer.write_finished(&mut builder).unwrap();
+        }
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
         let mut stream_reader = StreamReader::new(reader, deframer);
 
-        let result = stream_reader.read_message().unwrap();
-        assert!(result.is_none());
+        let mut count = 0;
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 3);
     }
 }
 
 #[test]
-fn test_partial_file() {
+fn test_large_stream_stress() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write many messages
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = DefaultFramer;
+        let mut stream_writer = StreamWriter::new(writer, framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        for i in 0..1000 {
+            builder.reset();
+            let data = builder.create_string(&format!("message {}", i));
+            builder.finish(data, None);
+            stream_writer.write_finished(&mut builder).unwrap();
+        }
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 1000);
+    }
+}
+
+#[test]
+fn test_realistic_telemetry_data() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write telemetry-like data
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = DefaultFramer;
+        let mut stream_writer = StreamWriter::new(writer, framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        let telemetry_events = vec![
+            "timestamp=1234567890,device_id=sensor-1,temperature=23.5,humidity=45.2",
+            "timestamp=1234567891,device_id=sensor-2,temperature=24.1,humidity=46.8",
+            "timestamp=1234567892,device_id=sensor-3,temperature=22.8,humidity=44.9",
+        ];
+
+        for event in &telemetry_events {
+            builder.reset();
+            let data = builder.create_string(event);
+            builder.finish(data, None);
+            stream_writer.write_finished(&mut builder).unwrap();
+        }
+        stream_writer.flush().unwrap();
+    }
+
+    // Read back and verify
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        stream_reader
+            .process_all(|payload| {
+                // The payload contains FlatBuffer data, not the raw string
+                // For this test, we just verify we got some data
+                assert!(!payload.is_empty());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 3);
+    }
+}
+
+#[test]
+fn test_partial_file_read() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
@@ -181,26 +408,29 @@ fn test_partial_file() {
         let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
 
-        stream_writer.write(&"partial message").unwrap();
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("a long partial message");
+        builder.finish(data, None);
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
     // Truncate the file to simulate corruption
     {
         let data = std::fs::read(path).unwrap();
-        let truncated_size = data.len() - 10; // Remove last 10 bytes
+        let truncated_size = data.len() - 5; // Remove last 5 bytes
         let mut file = File::create(path).unwrap();
         file.write_all(&data[..truncated_size]).unwrap();
     }
 
-    // Try to read the truncated file
+    // Try to read the truncated file using process_all
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
         let mut stream_reader = StreamReader::new(reader, deframer);
 
-        let result = stream_reader.read_message();
+        let result = stream_reader.process_all(|_payload| Ok(()));
         assert!(result.is_err());
 
         match result.unwrap_err() {
@@ -208,57 +438,21 @@ fn test_partial_file() {
             e => panic!("Expected UnexpectedEof error, got: {:?}", e),
         }
     }
-}
 
-#[test]
-fn test_memory_stream() {
-    let mut buffer = Vec::new();
-
-    // Write to memory
+    // Try to read the truncated file using messages().next()
     {
-        let framer = DefaultFramer;
-        let mut stream_writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        for i in 0..2 {
-            stream_writer.write(&format!("memory test {}", i)).unwrap();
-        }
-    }
-
-    // Read from memory
-    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
         let deframer = DefaultDeframer;
-        let stream_reader = StreamReader::new(Cursor::new(&buffer), deframer);
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
-        let mut count = 0;
-        for result in stream_reader {
-            assert!(result.is_ok());
-            count += 1;
+        let mut messages = stream_reader.messages();
+        let result = messages.next();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            Error::UnexpectedEof => {} // Expected
+            e => panic!("Expected UnexpectedEof error, got: {:?}", e),
         }
-
-        assert_eq!(count, 2);
-    }
-}
-
-#[test]
-fn test_mixed_checksum_types() {
-    // Test that we can't read a file written without checksums using a reader with checksums
-    let mut buffer = Vec::new();
-
-    // Write without checksum
-    {
-        let framer = DefaultFramer;
-        let mut stream_writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        stream_writer.write(&"no checksum").unwrap();
-    }
-
-    // Try to read with checksum (should fail due to format mismatch)
-    {
-        let deframer = DefaultDeframer;
-        let mut stream_reader = StreamReader::new(Cursor::new(&buffer), deframer);
-
-        let result = stream_reader.read_message();
-        // This should work since we're using the same deframer type
-        assert!(result.is_ok());
     }
 }

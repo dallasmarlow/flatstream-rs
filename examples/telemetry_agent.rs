@@ -1,3 +1,4 @@
+use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -21,23 +22,21 @@ struct TelemetryEvent {
 }
 
 impl StreamSerialize for TelemetryEvent {
-    fn serialize(
+    fn serialize<A: flatbuffers::Allocator>(
         &self,
-        builder: &mut flatbuffers::FlatBufferBuilder,
+        builder: &mut FlatBufferBuilder<A>,
     ) -> Result<(), flatstream_rs::Error> {
-        // Create a simple string representation of the telemetry data
-        let telemetry_data = format!(
-            "timestamp={},device_id={},speed_kph={:.2},rpm={},temp_c={:.2},battery={:.2}",
+        let data = format!(
+            "{},{},{},{},{},{}",
+            &self.device_id,
             self.timestamp,
-            self.device_id,
             self.speed_kph,
             self.rpm,
             self.temperature_celsius,
             self.battery_level
         );
-
-        let data = builder.create_string(&telemetry_data);
-        builder.finish(data, None);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -63,7 +62,7 @@ fn create_telemetry_event() -> TelemetryEvent {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry_file = "telemetry_stream.bin";
 
-    println!("=== Telemetry Agent Example ===");
+    println!("=== Telemetry Agent Example (v2.5) ===");
     println!("Writing telemetry events to: {}", telemetry_file);
 
     // Create the telemetry stream file
@@ -74,17 +73,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let framer = DefaultFramer;
     let mut stream_writer = StreamWriter::new(writer, framer);
 
+    // External builder management for zero-allocation writes
+    let mut builder = FlatBufferBuilder::new();
+
     // Simulate capturing telemetry events for 10 seconds
     println!("Capturing telemetry events...");
     let start_time = SystemTime::now();
     let mut event_count = 0;
 
     while SystemTime::now().duration_since(start_time)?.as_secs() < 10 {
-        // Create telemetry event
+        // Sample data in real-time (simulate shared memory access)
         let event = create_telemetry_event();
 
-        // Write to stream
-        stream_writer.write(&event)?;
+        // Build message with external builder (zero-allocation)
+        builder.reset();
+        event.serialize(&mut builder)?;
+
+        // Emit to stream (zero-allocation write)
+        stream_writer.write_finished(&mut builder)?;
         event_count += 1;
 
         // Simulate some processing time
@@ -97,60 +103,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Ensure all data is written to disk
     stream_writer.flush()?;
-    println!("Finished capturing {} telemetry events", event_count);
+    println!("Captured {} telemetry events", event_count);
 
-    // Now demonstrate reading the telemetry stream back
-    println!("\n=== Reading Telemetry Stream ===");
+    // Now demonstrate real-time processing of the telemetry stream
+    println!("\n=== Real-time Telemetry Processing ===");
+    println!("Processing telemetry events with processor API...");
 
     let file = File::open(telemetry_file)?;
     let reader = BufReader::new(file);
-
-    // Create a StreamReader with the same framing strategy used for writing
     let deframer = DefaultDeframer;
-    let stream_reader = StreamReader::new(reader, deframer);
+    let mut stream_reader = StreamReader::new(reader, deframer);
 
-    let mut read_count = 0;
+    let mut processed_count = 0;
+    let mut total_speed = 0.0;
+    let mut total_rpm = 0.0;
+    let mut total_temp = 0.0;
+    let mut total_battery = 0.0;
+    let mut alerts = 0;
 
-    for result in stream_reader {
-        match result {
-            Ok(_payload) => {
-                // In a real application, you would deserialize the FlatBuffer here
-                // For this example, we'll just count the events
-                read_count += 1;
+    // Process all telemetry events with zero-allocation
+    stream_reader.process_all(|payload| {
+        if let Ok(data_str) = std::str::from_utf8(payload) {
+            processed_count += 1;
 
-                // Simulate some processing of the telemetry data
-                if read_count % 20 == 0 {
-                    println!("  Processed {} events...", read_count);
+            // Parse telemetry data (in a real system, you'd deserialize the FlatBuffer)
+            for part in data_str.split(',') {
+                if part.starts_with("speed_kph=") {
+                    if let Ok(speed) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                        total_speed += speed;
+
+                        // Alert for high speed
+                        if speed > 80.0 {
+                            alerts += 1;
+                            println!("  ⚠️  High speed alert: {:.1} km/h", speed);
+                        }
+                    }
+                } else if part.starts_with("rpm=") {
+                    if let Ok(rpm) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                        total_rpm += rpm;
+
+                        // Alert for high RPM
+                        if rpm > 5000.0 {
+                            alerts += 1;
+                            println!("  ⚠️  High RPM alert: {:.0} RPM", rpm);
+                        }
+                    }
+                } else if part.starts_with("temp_c=") {
+                    if let Ok(temp) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                        total_temp += temp;
+
+                        // Alert for high temperature
+                        if temp > 50.0 {
+                            alerts += 1;
+                            println!("  ⚠️  High temperature alert: {:.1}°C", temp);
+                        }
+                    }
+                } else if part.starts_with("battery=") {
+                    if let Ok(battery) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                        total_battery += battery;
+
+                        // Alert for low battery
+                        if battery < 20.0 {
+                            alerts += 1;
+                            println!("  ⚠️  Low battery alert: {:.1}%", battery);
+                        }
+                    }
                 }
             }
-            Err(e) => {
-                eprintln!("Error reading telemetry stream: {}", e);
-                break;
+
+            // Process every 10th event for demonstration
+            if processed_count % 10 == 0 {
+                println!(
+                    "  Processed {} events, {} alerts so far",
+                    processed_count, alerts
+                );
             }
         }
-    }
+        Ok(())
+    })?;
 
-    println!(
-        "Successfully read {} telemetry events from stream",
-        read_count
-    );
-
-    // Verify data integrity
-    if event_count == read_count {
-        println!("✓ Data integrity verified: all events captured and read successfully");
-    } else {
+    // Print final statistics
+    println!("\n=== Telemetry Analysis Complete ===");
+    println!("Total events processed: {}", processed_count);
+    if processed_count > 0 {
         println!(
-            "✗ Data integrity issue: captured {} events, read {} events",
-            event_count, read_count
+            "Average speed: {:.1} km/h",
+            total_speed / processed_count as f32
+        );
+        println!("Average RPM: {:.0}", total_rpm / processed_count as f32);
+        println!(
+            "Average temperature: {:.1}°C",
+            total_temp / processed_count as f32
+        );
+        println!(
+            "Average battery: {:.1}%",
+            total_battery / processed_count as f32
         );
     }
+    println!("Total alerts generated: {}", alerts);
 
-    println!("\n=== Example Complete ===");
-    println!("Telemetry stream file: {}", telemetry_file);
-    println!(
-        "File size: {} bytes",
-        std::fs::metadata(telemetry_file)?.len()
-    );
+    println!("\n=== Telemetry Agent Example Complete ===");
+    println!("Key v2.5 features demonstrated:");
+    println!("  • External builder management for zero-allocation writes");
+    println!("  • Processor API for high-performance bulk processing");
+    println!("  • Real-time telemetry processing with zero-copy access");
+    println!("  • Efficient memory usage throughout the pipeline");
 
     Ok(())
 }

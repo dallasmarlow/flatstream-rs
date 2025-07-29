@@ -4,6 +4,9 @@ use crate::error::{Error, Result};
 
 /// A trait for checksum algorithms.
 pub trait Checksum {
+    /// Returns the size in bytes of the checksum value.
+    fn size(&self) -> usize;
+
     /// Calculates the checksum for the given payload.
     fn calculate(&self, payload: &[u8]) -> u64;
 
@@ -18,22 +21,75 @@ pub trait Checksum {
     }
 }
 
-#[cfg(feature = "checksum")]
 /// Provides an implementation of the XXH3 64-bit hash algorithm.
+#[cfg(feature = "xxhash")]
 #[derive(Default, Clone, Copy)]
 pub struct XxHash64;
 
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 impl XxHash64 {
     pub fn new() -> Self {
         Self
     }
 }
 
-#[cfg(feature = "checksum")]
+#[cfg(feature = "xxhash")]
 impl Checksum for XxHash64 {
+    fn size(&self) -> usize {
+        8 // XXH3 produces a 64-bit (8-byte) hash
+    }
+
     fn calculate(&self, payload: &[u8]) -> u64 {
         xxhash_rust::xxh3::xxh3_64(payload)
+    }
+}
+
+/// Provides an implementation of the CRC32c (Castagnoli) checksum algorithm.
+#[cfg(feature = "crc32")]
+#[derive(Default, Clone, Copy)]
+pub struct Crc32;
+
+#[cfg(feature = "crc32")]
+impl Crc32 {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "crc32")]
+impl Checksum for Crc32 {
+    fn size(&self) -> usize {
+        4 // CRC32 produces a 32-bit (4-byte) hash
+    }
+
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        // crc32fast returns a u32, so we cast it to u64 for trait compatibility.
+        crc32fast::hash(payload) as u64
+    }
+}
+
+/// Provides an implementation of the CRC16 (CCITT) checksum algorithm.
+/// Ideal for extremely small packets where every byte counts.
+#[cfg(feature = "crc16")]
+#[derive(Default, Clone, Copy)]
+pub struct Crc16;
+
+#[cfg(feature = "crc16")]
+impl Crc16 {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "crc16")]
+impl Checksum for Crc16 {
+    fn size(&self) -> usize {
+        2 // CRC16 produces a 16-bit (2-byte) hash
+    }
+
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        // crc16 returns a u16, so we cast it to u64 for trait compatibility.
+        crc16::State::<crc16::XMODEM>::calculate(payload) as u64
     }
 }
 
@@ -49,6 +105,10 @@ impl NoChecksum {
 }
 
 impl Checksum for NoChecksum {
+    fn size(&self) -> usize {
+        0 // No checksum bytes are written
+    }
+
     fn calculate(&self, _payload: &[u8]) -> u64 {
         0
     }
@@ -63,7 +123,7 @@ impl Checksum for NoChecksum {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_xxhash64_checksum() {
         let checksum = XxHash64::new();
@@ -84,7 +144,7 @@ mod tests {
         assert!(checksum.verify(123, payload).is_ok()); // Always succeeds
     }
 
-    #[cfg(feature = "checksum")]
+    #[cfg(feature = "xxhash")]
     #[test]
     fn test_checksum_consistency() {
         let checksum = XxHash64::new();
@@ -92,5 +152,53 @@ mod tests {
         let result1 = checksum.calculate(payload);
         let result2 = checksum.calculate(payload);
         assert_eq!(result1, result2);
+    }
+
+    #[cfg(feature = "crc32")]
+    #[test]
+    fn test_crc32_checksum() {
+        let checksum = Crc32::new();
+        let payload = b"test data";
+        let result = checksum.calculate(payload);
+        assert_ne!(result, 0);
+        assert!(checksum.verify(result, payload).is_ok());
+        assert!(checksum.verify(result + 1, payload).is_err());
+        assert_eq!(checksum.size(), 4);
+    }
+
+    #[cfg(feature = "crc16")]
+    #[test]
+    fn test_crc16_checksum() {
+        let checksum = Crc16::new();
+        let payload = b"test data";
+        let result = checksum.calculate(payload);
+        assert_ne!(result, 0);
+        assert!(checksum.verify(result, payload).is_ok());
+        assert!(checksum.verify(result + 1, payload).is_err());
+        assert_eq!(checksum.size(), 2);
+    }
+
+    #[test]
+    fn test_checksum_sizes() {
+        let no_checksum = NoChecksum::new();
+        assert_eq!(no_checksum.size(), 0);
+
+        #[cfg(feature = "xxhash")]
+        {
+            let xxhash = XxHash64::new();
+            assert_eq!(xxhash.size(), 8);
+        }
+
+        #[cfg(feature = "crc32")]
+        {
+            let crc32 = Crc32::new();
+            assert_eq!(crc32.size(), 4);
+        }
+
+        #[cfg(feature = "crc16")]
+        {
+            let crc16 = Crc16::new();
+            assert_eq!(crc16.size(), 2);
+        }
     }
 }
