@@ -261,7 +261,7 @@ fn test_comprehensive_data_types() {
     let test_data = vec![
         "simple string",
         "string with special chars: éñüß",
-        "", // empty string
+        "",            // empty string
         &large_string, // large string
         "message with\nnewlines\tand\ttabs",
         "message with \"quotes\" and 'apostrophes'",
@@ -349,7 +349,7 @@ fn test_realistic_telemetry_data() {
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
-        
+
         #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
         let framer = {
             #[cfg(feature = "xxhash")]
@@ -365,7 +365,7 @@ fn test_realistic_telemetry_data() {
                 ChecksumFramer::new(Crc16::new())
             }
         };
-        
+
         #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
         let framer = DefaultFramer;
 
@@ -381,7 +381,7 @@ fn test_realistic_telemetry_data() {
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
-        
+
         #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
         let deframer = {
             #[cfg(feature = "xxhash")]
@@ -397,7 +397,7 @@ fn test_realistic_telemetry_data() {
                 ChecksumDeframer::new(Crc16::new())
             }
         };
-        
+
         #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
         let deframer = DefaultDeframer;
 

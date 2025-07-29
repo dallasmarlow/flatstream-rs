@@ -21,6 +21,7 @@ use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
 // Define a high-frequency event type
 #[derive(Debug)]
+#[allow(dead_code)]
 struct HighFrequencyEvent {
     timestamp: u64,
     price: f64,

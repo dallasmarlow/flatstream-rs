@@ -1,6 +1,5 @@
 use flatstream_rs::*;
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
+
 
 // Import the framing types directly since we need them for CRC32
 #[cfg(feature = "crc32")]

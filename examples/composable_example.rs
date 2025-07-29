@@ -14,7 +14,7 @@ struct SensorReading {
 impl StreamSerialize for SensorReading {
     fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
         // Create a structured representation of the sensor data
-        let sensor_id = builder.create_string(&self.sensor_id);
+        let _sensor_id = builder.create_string(&self.sensor_id);
         let data = format!(
             "temp={:.2},humidity={:.2},ts={}",
             self.temperature, self.humidity, self.timestamp
@@ -29,6 +29,7 @@ impl StreamSerialize for SensorReading {
 
 // Example 2: More complex data structure
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SystemEvent {
     event_type: String,
     severity: u8,
@@ -39,8 +40,8 @@ struct SystemEvent {
 impl StreamSerialize for SystemEvent {
     fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
         // Create a structured representation
-        let event_type = builder.create_string(&self.event_type);
-        let message = builder.create_string(&self.message);
+        let _event_type = builder.create_string(&self.event_type);
+        let _message = builder.create_string(&self.message);
 
         // Convert metadata to a string representation
         let metadata_str = self
@@ -49,7 +50,7 @@ impl StreamSerialize for SystemEvent {
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join(",");
-        let metadata = builder.create_string(&metadata_str);
+        let _metadata = builder.create_string(&metadata_str);
 
         // Combine all fields into a single string for simplicity
         let data = format!(

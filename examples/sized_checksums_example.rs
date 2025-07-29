@@ -7,7 +7,7 @@
 
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -15,12 +15,14 @@ use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
 // Define different message types for demonstration
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SmallMessage {
     sensor_id: u8,
     value: f32,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct MediumMessage {
     device_id: String,
     timestamp: u64,
@@ -28,6 +30,7 @@ struct MediumMessage {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct LargeMessage {
     batch_id: String,
     metadata: String,
@@ -57,7 +60,7 @@ impl StreamSerialize for LargeMessage {
     fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
         // Complex serialization for large messages
         let batch_id = builder.create_string(&self.batch_id);
-        let metadata = builder.create_string(&self.metadata);
+        let _metadata = builder.create_string(&self.metadata);
         builder.finish(batch_id, None);
         Ok(())
     }
@@ -113,9 +116,9 @@ fn main() -> Result<()> {
 }
 
 fn demonstrate_checksum_sizes(
-    small_messages: &[SmallMessage],
-    medium_messages: &[MediumMessage],
-    large_messages: &[LargeMessage],
+    _small_messages: &[SmallMessage],
+    _medium_messages: &[MediumMessage],
+    _large_messages: &[LargeMessage],
 ) -> Result<()> {
     println!("1. Writing messages with different checksum sizes...");
 

@@ -225,8 +225,6 @@ fn benchmark_write_default_framer(c: &mut Criterion) {
     });
 }
 
-
-
 // === READ BENCHMARKS ===
 
 fn benchmark_read_default_deframer(c: &mut Criterion) {
@@ -254,10 +252,6 @@ fn benchmark_read_default_deframer(c: &mut Criterion) {
         });
     });
 }
-
-
-
-
 
 // === ZERO-ALLOCATION READING BENCHMARKS ===
 

@@ -96,9 +96,9 @@ fn main() -> Result<()> {
             let mut total_size = 0;
 
             // Use the high-performance while let pattern
-            while let Some(payload_slice) = stream_reader.read_message()? {
+            while let Some(_payload_slice) = stream_reader.read_message()? {
                 // payload_slice is &[u8] - no allocation, just a borrow
-                total_size += payload_slice.len();
+                total_size += _payload_slice.len();
                 count += 1;
             }
             println!(
@@ -182,7 +182,7 @@ fn main() -> Result<()> {
 
         let start = Instant::now();
         let mut count = 0;
-        while let Some(payload_slice) = stream_reader.read_message()? {
+        while let Some(_payload_slice) = stream_reader.read_message()? {
             // Process the sensor data directly from the slice
             // In a real application, you would deserialize the FlatBuffer here
             count += 1;
