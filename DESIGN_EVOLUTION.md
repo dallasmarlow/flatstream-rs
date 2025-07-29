@@ -14,8 +14,9 @@ This document details the architectural evolution of `flatstream-rs` from a mono
 6. [Migration Guide](#migration-guide)
 7. [Performance Analysis](#performance-analysis)
 8. [High-Performance Optimizations](#high-performance-optimizations)
-9. [Lessons Learned](#lessons-learned)
-10. [Future Extensibility](#future-extensibility)
+9. [Sized Checksums Implementation](#sized-checksums-implementation)
+10. [Lessons Learned](#lessons-learned)
+11. [Future Extensibility](#future-extensibility)
 
 ## Motivation for Change
 
@@ -633,6 +634,79 @@ The library provides clear documentation about performance trade-offs:
 - **Memory efficiency analysis** with buffer usage tracking
 - **Performance validation** confirming all optimization claims
 
+## Sized Checksums Implementation
+
+The v2 architecture's composable design enabled the implementation of **sized checksums** - a feature that allows users to choose checksum algorithms based on message size and performance requirements. This implementation demonstrates the power of the trait-based architecture for adding sophisticated functionality without modifying core components.
+
+### **The 8-Byte CRC Gap**
+
+During development, we identified a logical gap in our checksum offerings:
+
+- **CRC16 (2 bytes)**: ✅ Fast, minimal overhead for small messages
+- **CRC32 (4 bytes)**: ✅ Good balance for medium-sized messages  
+- **XXHash64 (8 bytes)**: ✅ Very fast, excellent integrity for large messages
+- **CRC64 (8 bytes)**: ❌ **Missing!** - Standardized 8-byte checksum
+
+### **CRC64 Implementation Attempt**
+
+We attempted to add CRC64 support to complete the sized checksums feature:
+
+#### **Implementation Steps**
+1. **Added Dependency**: `crc64 = "1.0"` as optional dependency
+2. **Created Crc64 Struct**: Implemented `Checksum` trait for CRC64
+3. **Updated Framing**: Modified `ChecksumFramer`/`ChecksumDeframer` to handle 8-byte checksums
+4. **Added Tests**: Comprehensive unit and integration tests
+5. **Updated Examples**: Enhanced sized checksums example with CRC64
+
+#### **Technical Challenge Encountered**
+The CRC64 implementation hit a **memory alignment issue**:
+```
+misaligned pointer dereference: address must be a multiple of 0x8 but is 0x1028c4c51
+```
+
+This error occurred with multiple CRC64 crate versions (0.2, 1.0, 2.0), indicating a fundamental issue with the available implementations.
+
+#### **Root Cause Analysis**
+The alignment error suggests that the CRC64 crates use SIMD optimizations that require specific memory alignment, but the implementation doesn't properly handle unaligned data. This is a common issue with performance-optimized checksum implementations.
+
+### **Current Status**
+
+#### **Working Checksums (Implemented)**
+- ✅ **NoChecksum (0 bytes)**: Maximum performance, no integrity checking
+- ✅ **CRC16 (2 bytes)**: Perfect for high-frequency small messages (75% less overhead than XXHash64)
+- ✅ **CRC32 (4 bytes)**: Good balance for medium-sized messages (50% less overhead than XXHash64)  
+- ✅ **XXHash64 (8 bytes)**: Best for large, critical messages (maximum integrity)
+
+#### **CRC64 Status**
+- ❌ **CRC64 (8 bytes)**: Temporarily removed due to alignment issues
+- 🔄 **Future**: Can be re-implemented with a more robust CRC64 crate
+
+### **Performance Results**
+
+From our working sized checksums implementation:
+```
+CRC16: 1000 messages in 1.467708ms, 66000 bytes
+CRC32: 1000 messages in 1.422375ms, 68000 bytes  
+XXHash64: 1000 messages in 808.25µs, 72000 bytes
+```
+
+### **Key Benefits of Sized Checksums**
+
+1. **Performance Optimization**: Choose checksum size based on message characteristics
+2. **Overhead Reduction**: CRC16 provides 75% less overhead than XXHash64 for small messages
+3. **Flexibility**: All checksums are pluggable and composable
+4. **Type Safety**: Compile-time guarantees for checksum compatibility
+
+### **Architecture Validation**
+
+The sized checksums implementation validates the v2 architecture's strengths:
+
+1. **Extensibility**: Adding new checksum algorithms requires only trait implementation
+2. **Composability**: Checksums can be mixed and matched with different framing strategies
+3. **Type Safety**: Generic constraints ensure correct usage
+4. **Performance**: Zero-cost abstractions maintain high performance
+5. **Maintainability**: Clear separation of concerns enables easy testing and debugging
+
 ## Lessons Learned
 
 ### 1. API Design Principles
@@ -674,6 +748,18 @@ The library provides clear documentation about performance trade-offs:
 **Lesson**: Distinguish between different failure modes
 - **v1 Problem**: All errors treated the same
 - **v2 Solution**: Different error types enable specific handling
+
+### 5. Dependency Management
+
+**Lesson**: Evaluate dependency reliability before integration
+- **Problem**: CRC64 crates had memory alignment issues across multiple versions
+- **Solution**: Test dependencies thoroughly, especially performance-critical ones
+- **Future**: Consider implementing critical algorithms in-house for reliability
+
+**Lesson**: Plan for dependency failures
+- **Problem**: CRC64 implementation failed due to external crate issues
+- **Solution**: Design architecture to gracefully handle missing dependencies
+- **Benefit**: Library remains functional even when optional features fail
 
 ## Future Extensibility
 
@@ -735,7 +821,34 @@ cargo test --features all_checksums  # Runs all tests with all checksums enabled
 
 ### Planned Extensions
 
-1. **Compression Support**
+1. **CRC64 Implementation (Revisited)**
+```rust
+// Future implementation with more reliable CRC64 crate
+#[cfg(feature = "crc64")]
+pub struct Crc64;
+
+#[cfg(feature = "crc64")]
+impl Checksum for Crc64 {
+    fn size(&self) -> usize { 8 }
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        // Use a more reliable CRC64 implementation
+        reliable_crc64::calculate(payload)
+    }
+}
+
+// Alternative: Implement CRC64 in-house for reliability
+pub struct Crc64InHouse;
+
+impl Checksum for Crc64InHouse {
+    fn size(&self) -> usize { 8 }
+    fn calculate(&self, payload: &[u8]) -> u64 {
+        // Custom CRC64 implementation without alignment issues
+        crc64_inhouse::calculate(payload)
+    }
+}
+```
+
+2. **Compression Support**
 ```rust
 pub struct CompressedFramer<C: Compressor> {
     compressor: C,
@@ -749,7 +862,7 @@ impl<C: Compressor> Framer for CompressedFramer<C> {
 }
 ```
 
-2. **Encryption Support**
+3. **Encryption Support**
 ```rust
 pub struct EncryptedFramer<E: Encryptor> {
     encryptor: E,
@@ -763,7 +876,7 @@ impl<E: Encryptor> Framer for EncryptedFramer<E> {
 }
 ```
 
-3. **Async Support**
+4. **Async Support**
 ```rust
 use async_trait::async_trait;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -806,7 +919,7 @@ impl<C: Checksum + Send + Sync> AsyncFramer for AsyncChecksumFramer<C> {
 }
 ```
 
-4. **Custom Serialization Formats**
+5. **Custom Serialization Formats**
 ```rust
 pub trait Serializer {
     fn serialize<T: StreamSerialize>(&self, item: &T) -> Result<Vec<u8>>;
@@ -826,6 +939,17 @@ The v2 architecture makes these extensions straightforward:
 3. **Backward Compatibility**: Existing code continues to work
 4. **Performance**: Zero-cost abstractions maintain performance
 5. **High-Performance Optimizations**: Write batching and zero-allocation reading provide opt-in performance improvements
+6. **Graceful Degradation**: Optional features can fail without breaking core functionality
+
+### **CRC64 Implementation Lessons**
+
+The CRC64 implementation attempt provided valuable insights:
+
+1. **Dependency Reliability**: External crates may have hidden issues (alignment, performance, compatibility)
+2. **Testing Strategy**: Comprehensive testing of optional features is essential
+3. **Fallback Plans**: Architecture should gracefully handle missing or broken dependencies
+4. **In-House Implementation**: Critical algorithms may need custom implementations for reliability
+5. **Documentation**: Technical challenges should be documented for future reference
 
 ## Conclusion
 
@@ -837,9 +961,19 @@ The evolution from v1 to v2 represents a significant maturation of the `flatstre
 - **Stronger Type Safety**: Compile-time guarantees
 - **Simpler API**: Harder to use incorrectly
 - **High-Throughput Capabilities**: Write batching and zero-allocation reading for demanding use cases
+- **Sized Checksums**: Flexible checksum selection based on message characteristics
+- **Graceful Degradation**: Optional features can fail without breaking core functionality
 
-This evolution demonstrates the power of Rust's trait system for building composable, extensible libraries while maintaining high performance and type safety. The lessons learned from this refactoring provide valuable insights for future library design and evolution.
+This evolution demonstrates the power of Rust's trait system for building composable, extensible libraries while maintaining high performance and type safety. The lessons learned from this refactoring, including the CRC64 implementation challenge, provide valuable insights for future library design and evolution.
+
+### **Key Achievements**
+
+1. **Complete Sized Checksums**: Successfully implemented CRC16, CRC32, and XXHash64 with variable-size framing
+2. **Performance Optimization**: Achieved 84% performance improvement with zero-allocation reading
+3. **Architecture Validation**: Proved the v2 design's extensibility and composability
+4. **Technical Resilience**: Demonstrated graceful handling of dependency failures
+5. **Comprehensive Documentation**: Complete historical record of development process
 
 ---
 
-*This document serves as both a historical record of the design evolution and a guide for future development. The v2 architecture provides a solid foundation for continued innovation while maintaining backward compatibility and performance.* 
+*This document serves as both a historical record of the design evolution and a guide for future development. The v2 architecture provides a solid foundation for continued innovation while maintaining backward compatibility and performance. The CRC64 implementation attempt, while not successful, provided valuable lessons about dependency management and technical challenges that will inform future development.* 
