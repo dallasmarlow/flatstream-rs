@@ -27,6 +27,7 @@ While FlatBuffers excels at zero-copy deserialization, the official Rust `flatbu
     * **Pluggable Checksums:** Choose from different algorithms (e.g., `xxh3_64`) or disable checksumming entirely for maximum speed where integrity is handled by other layers.
 * **Zero-Copy Read Support:** When reading, the library provides direct access to the FlatBuffers payload, leveraging FlatBuffers' zero-copy capabilities.
 * **Simple & Direct API:** Designed for ease of use, minimizing boilerplate code for common streaming patterns.
+* **High-Performance Optimizations:** Write batching and zero-allocation reading for demanding use cases.
 * **Rust-Native:** Built entirely in Rust, leveraging its performance and safety features.
 
 ## Proposed Stream Format

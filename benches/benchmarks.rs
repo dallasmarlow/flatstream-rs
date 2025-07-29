@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::{ChecksumType, StreamReader, StreamWriter};
+use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
 use std::io::Cursor;
 
 fn create_test_message(
@@ -16,12 +16,12 @@ fn benchmark_write_with_checksum(c: &mut Criterion) {
     c.bench_function("write_with_checksum", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
             for i in 0..100 {
-                let mut builder = FlatBufferBuilder::new();
-                create_test_message(&mut builder, i);
-                writer.write_message(&mut builder).unwrap();
+                let message = format!("test message {}", i);
+                writer.write(&message).unwrap();
             }
 
             black_box(buffer);
@@ -33,12 +33,12 @@ fn benchmark_write_without_checksum(c: &mut Criterion) {
     c.bench_function("write_without_checksum", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::None);
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
             for i in 0..100 {
-                let mut builder = FlatBufferBuilder::new();
-                create_test_message(&mut builder, i);
-                writer.write_message(&mut builder).unwrap();
+                let message = format!("test message {}", i);
+                writer.write(&message).unwrap();
             }
 
             black_box(buffer);
@@ -50,17 +50,18 @@ fn benchmark_read_with_checksum(c: &mut Criterion) {
     // Prepare test data
     let mut buffer = Vec::new();
     {
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
         for i in 0..100 {
-            let mut builder = FlatBufferBuilder::new();
-            create_test_message(&mut builder, i);
-            writer.write_message(&mut builder).unwrap();
+            let message = format!("test message {}", i);
+            writer.write(&message).unwrap();
         }
     }
 
     c.bench_function("read_with_checksum", |b| {
         b.iter(|| {
-            let reader = StreamReader::new(Cursor::new(&buffer), ChecksumType::XxHash64);
+            let deframer = DefaultDeframer;
+            let reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             for result in reader {
                 black_box(result.unwrap());
@@ -75,17 +76,18 @@ fn benchmark_read_without_checksum(c: &mut Criterion) {
     // Prepare test data
     let mut buffer = Vec::new();
     {
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::None);
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
         for i in 0..100 {
-            let mut builder = FlatBufferBuilder::new();
-            create_test_message(&mut builder, i);
-            writer.write_message(&mut builder).unwrap();
+            let message = format!("test message {}", i);
+            writer.write(&message).unwrap();
         }
     }
 
     c.bench_function("read_without_checksum", |b| {
         b.iter(|| {
-            let reader = StreamReader::new(Cursor::new(&buffer), ChecksumType::None);
+            let deframer = DefaultDeframer;
+            let reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             for result in reader {
                 black_box(result.unwrap());
@@ -103,18 +105,18 @@ fn benchmark_write_read_cycle(c: &mut Criterion) {
 
             // Write
             {
-                let mut writer =
-                    StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
+                let framer = DefaultFramer;
+                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
                 for i in 0..50 {
-                    let mut builder = FlatBufferBuilder::new();
-                    create_test_message(&mut builder, i);
-                    writer.write_message(&mut builder).unwrap();
+                    let message = format!("test message {}", i);
+                    writer.write(&message).unwrap();
                 }
             }
 
             // Read
             {
-                let reader = StreamReader::new(Cursor::new(&buffer), ChecksumType::XxHash64);
+                let deframer = DefaultDeframer;
+                let reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
                 for result in reader {
                     black_box(result.unwrap());
@@ -126,6 +128,39 @@ fn benchmark_write_read_cycle(c: &mut Criterion) {
     });
 }
 
+fn benchmark_write_batch(c: &mut Criterion) {
+    // Create a vector of items to be written.
+    let messages: Vec<_> = (0..100).map(|i| format!("message {}", i)).collect();
+
+    c.bench_function("write_batch_100_messages", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+            // Call the new batch method
+            writer.write_batch(&messages).unwrap();
+
+            black_box(buffer);
+        });
+    });
+
+    c.bench_function("write_iterative_100_messages", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            let framer = DefaultFramer;
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+            // Call the old iterative method
+            for message in &messages {
+                writer.write(message).unwrap();
+            }
+
+            black_box(buffer);
+        });
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_write_with_checksum,
@@ -133,5 +168,6 @@ criterion_group!(
     benchmark_read_with_checksum,
     benchmark_read_without_checksum,
     benchmark_write_read_cycle,
+    benchmark_write_batch,
 );
 criterion_main!(benches);

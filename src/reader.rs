@@ -10,6 +10,29 @@ use std::marker::PhantomData;
 /// This reader is generic over a `Deframer` strategy, which defines how
 /// each message is parsed from the byte stream. It implements `Iterator`
 /// to provide an ergonomic way to process messages.
+///
+/// # Performance: Iterator vs. `read_message()`
+///
+/// This struct implements the `Iterator` trait for ergonomic use in `for` loops.
+/// The `next()` method returns a `Result<Vec<u8>>`, which involves cloning the
+/// message payload from the internal buffer into a new `Vec`. This is safe and
+/// convenient but involves a heap allocation per message.
+///
+/// For performance-critical paths where allocations must be minimized, prefer
+/// using the `read_message()` method directly in a `while let` loop. This method
+/// returns a `Result<Option<&[u8]>>`, which is a zero-copy borrow of the
+/// reader's internal buffer.
+///
+/// ```rust
+/// # use flatstream_rs::{StreamReader, DefaultDeframer, Result};
+/// # use std::io::Cursor;
+/// # let mut reader = StreamReader::new(Cursor::new(vec![]), DefaultDeframer);
+/// // High-performance, zero-allocation read loop
+/// while let Some(payload_slice) = reader.read_message()? {
+///     // Process the payload_slice directly
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct StreamReader<R: Read, D: Deframer> {
     reader: R,
     deframer: D,

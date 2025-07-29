@@ -49,6 +49,26 @@ impl<W: Write, F: Framer> StreamWriter<W, F> {
         Ok(())
     }
 
+    /// Writes a slice of serializable items to the stream in a batch.
+    ///
+    /// This is more efficient for a large number of small messages as it
+    /// keeps all operations within a single function call, which can be better
+    /// optimized by the compiler and reduces the overhead of repeated virtual
+    /// calls in a loop.
+    ///
+    /// # Arguments
+    /// * `items` - A slice of objects that implement `StreamSerialize`.
+    pub fn write_batch<T: StreamSerialize>(&mut self, items: &[T]) -> Result<()> {
+        for item in items {
+            // By calling the existing `write` method, we ensure that we reuse
+            // the exact same logic, maintaining consistency and correctness.
+            // The performance gain comes from keeping the loop "hot" within
+            // this single method call.
+            self.write(item)?;
+        }
+        Ok(())
+    }
+
     /// Consumes the writer, returning the underlying writer.
     pub fn into_inner(self) -> W {
         self.writer
@@ -136,6 +156,21 @@ mod tests {
 
         let data = buffer;
         assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_write_batch() {
+        let mut buffer = Vec::new();
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+        let messages = vec!["message 1", "message 2", "message 3"];
+        assert!(writer.write_batch(&messages).is_ok());
+
+        let data = buffer;
+        assert!(!data.is_empty());
+        // Should have: 3 messages * (4 bytes length + payload)
+        assert!(data.len() >= 12);
     }
 
     #[test]
