@@ -1,6 +1,6 @@
 //! Example demonstrating arena allocation for extreme performance.
 //!
-//! This example shows how to use arena allocation with flatstream-rs to eliminate
+//! This example shows how to use arena allocation with flatstream-rs v2.5 to eliminate
 //! system allocations and achieve maximum performance for high-throughput scenarios.
 //!
 //! Arena allocation is particularly useful for:
@@ -12,7 +12,7 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 use std::time::Instant;
 
 // Import framing types when checksum features are enabled
@@ -38,7 +38,7 @@ impl StreamSerialize for HighFrequencyEvent {
 }
 
 fn main() -> Result<()> {
-    println!("=== Arena Allocation Example ===\n");
+    println!("=== Arena Allocation Example (v2.5) ===\n");
 
     // Demonstrate standard allocation vs arena allocation
     demonstrate_allocation_strategies()?;
@@ -63,7 +63,10 @@ fn demonstrate_allocation_strategies() -> Result<()> {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(writer, framer);
 
-        // Each write() call may trigger system allocations
+        // External builder management for zero-allocation writes
+        let mut builder = FlatBufferBuilder::new();
+
+        // Each write() call uses the same builder, minimizing allocations
         for i in 0..100 {
             let event = HighFrequencyEvent {
                 timestamp: i as u64,
@@ -71,7 +74,11 @@ fn demonstrate_allocation_strategies() -> Result<()> {
                 volume: 1000 + i,
                 symbol: format!("AAPL{}", i),
             };
-            writer.write(&event)?;
+
+            // Build and write with external builder
+            builder.reset();
+            event.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
         writer.flush()?;
 
@@ -88,8 +95,8 @@ fn demonstrate_allocation_strategies() -> Result<()> {
         // Create a memory arena for zero-allocation performance
         // Note: This requires the 'bumpalo' crate in a real implementation
         // For this example, we simulate arena allocation with a custom builder
-        let builder = FlatBufferBuilder::new(); // In real usage: FlatBufferBuilder::new_in_bump_allocator(&arena)
-        let mut writer = StreamWriter::with_builder(writer, framer, builder);
+        let mut builder = FlatBufferBuilder::new(); // In real usage: FlatBufferBuilder::new_in_bump_allocator(&arena)
+        let mut writer = StreamWriter::new(writer, framer);
 
         // All subsequent writes use arena allocation - no system allocations!
         for i in 0..100 {
@@ -99,7 +106,11 @@ fn demonstrate_allocation_strategies() -> Result<()> {
                 volume: 1000 + i,
                 symbol: format!("AAPL{}", i),
             };
-            writer.write(&event)?;
+
+            // Build and write with arena-allocated builder
+            builder.reset();
+            event.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
         writer.flush()?;
 
@@ -107,100 +118,155 @@ fn demonstrate_allocation_strategies() -> Result<()> {
         println!("   Arena allocation: {} bytes written", file_size);
     }
 
+    println!("   ✓ Allocation strategies demonstrated\n");
     Ok(())
 }
 
 fn demonstrate_performance_comparison() -> Result<()> {
-    println!("\n2. Performance Comparison...");
+    println!("2. Performance Comparison...");
 
-    let iterations = 1000;
-    let test_data = "high-frequency-event-data";
+    let num_events = 10_000;
 
-    // Test standard allocation
+    // Standard allocation performance test
+    let start = Instant::now();
     {
-        let start = Instant::now();
         let file = File::create("performance_standard.bin")?;
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            writer.write(&test_data)?;
+        // External builder management
+        let mut builder = FlatBufferBuilder::new();
+
+        for i in 0..num_events {
+            let event = HighFrequencyEvent {
+                timestamp: i as u64,
+                price: 100.0 + (i as f64 * 0.01),
+                volume: 1000 + i,
+                symbol: format!("AAPL{}", i % 100), // Reuse symbols to reduce string allocations
+            };
+
+            builder.reset();
+            event.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
         writer.flush()?;
-
-        let duration = start.elapsed();
-        let file_size = std::fs::metadata("performance_standard.bin")?.len();
-        println!(
-            "   Standard allocation: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
     }
+    let standard_time = start.elapsed();
 
-    // Test arena allocation
+    // Arena allocation performance test
+    let start = Instant::now();
     {
-        let start = Instant::now();
         let file = File::create("performance_arena.bin")?;
         let writer = BufWriter::new(file);
         let framer = DefaultFramer;
-        let builder = FlatBufferBuilder::new(); // Simulated arena
-        let mut writer = StreamWriter::with_builder(writer, framer, builder);
+        let mut writer = StreamWriter::new(writer, framer);
 
-        for _ in 0..iterations {
-            writer.write(&test_data)?;
+        // Arena-allocated builder
+        let mut builder = FlatBufferBuilder::new(); // In real usage: with bumpalo
+
+        for i in 0..num_events {
+            let event = HighFrequencyEvent {
+                timestamp: i as u64,
+                price: 100.0 + (i as f64 * 0.01),
+                volume: 1000 + i,
+                symbol: format!("AAPL{}", i % 100),
+            };
+
+            builder.reset();
+            event.serialize(&mut builder)?;
+            writer.write(&mut builder)?;
         }
         writer.flush()?;
-
-        let duration = start.elapsed();
-        let file_size = std::fs::metadata("performance_arena.bin")?.len();
-        println!(
-            "   Arena allocation: {} messages in {:?}, {} bytes",
-            iterations, duration, file_size
-        );
     }
+    let arena_time = start.elapsed();
 
+    println!("   Standard allocation: {:?}", standard_time);
+    println!("   Arena allocation:    {:?}", arena_time);
+    println!(
+        "   Performance gain:    {:.1}% faster",
+        (standard_time.as_nanos() as f64 / arena_time.as_nanos() as f64 - 1.0) * 100.0
+    );
+    println!("   ✓ Performance comparison completed\n");
     Ok(())
 }
 
 fn demonstrate_high_frequency_scenario() -> Result<()> {
-    println!("\n3. High-Frequency Trading Scenario...");
+    println!("3. High-Frequency Trading Scenario...");
 
-    // Simulate a high-frequency trading system with arena allocation
+    // Simulate a high-frequency trading system
     let file = File::create("hft_events.bin")?;
     let writer = BufWriter::new(file);
     let framer = DefaultFramer;
-    let builder = FlatBufferBuilder::new(); // Arena in real usage
-    let mut writer = StreamWriter::with_builder(writer, framer, builder);
+    let mut writer = StreamWriter::new(writer, framer);
 
-    let symbols = vec!["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"];
-    let start_time = Instant::now();
-    let mut event_count = 0;
+    // Arena-allocated builder for maximum performance
+    let mut builder = FlatBufferBuilder::new(); // In real usage: with bumpalo
 
-    // Simulate 1 second of high-frequency events (1000 events)
-    while start_time.elapsed().as_secs() < 1 && event_count < 1000 {
-        for symbol in &symbols {
-            let event = HighFrequencyEvent {
-                timestamp: start_time.elapsed().as_micros() as u64,
-                price: 100.0 + (event_count as f64 * 0.001),
-                volume: 100 + (event_count % 1000),
-                symbol: symbol.to_string(),
-            };
-            writer.write(&event)?;
-            event_count += 1;
-        }
+    let start = Instant::now();
+    let num_events = 50_000;
+
+    // Generate high-frequency trading events
+    for i in 0..num_events {
+        let event = HighFrequencyEvent {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+                + i,
+            price: 150.0 + (i as f64 * 0.001), // Small price movements
+            volume: 100 + (i % 1000) as u32,
+            symbol: format!("AAPL{}", i % 10), // 10 different symbols
+        };
+
+        builder.reset();
+        event.serialize(&mut builder)?;
+        writer.write(&mut builder)?;
+    }
+    writer.flush()?;
+
+    let write_time = start.elapsed();
+    let throughput = num_events as f64 / write_time.as_secs_f64();
+
+    println!("   Generated {} HFT events in {:?}", num_events, write_time);
+    println!("   Throughput: {:.0} events/second", throughput);
+    println!(
+        "   Average latency: {:.3} microseconds per event",
+        write_time.as_micros() as f64 / num_events as f64
+    );
+
+    // Read back using processor API for maximum performance
+    println!("\n   Reading HFT events with processor API...");
+    let start = Instant::now();
+    {
+        let file = File::open("hft_events.bin")?;
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        let mut total_price = 0.0;
+
+        // Process all events with zero-allocation
+        reader.process_all(|payload| {
+            // In a real HFT system, you would deserialize and process the event here
+            count += 1;
+            total_price += 150.0; // Simulate price extraction
+            Ok(())
+        })?;
+
+        let read_time = start.elapsed();
+        let read_throughput = count as f64 / read_time.as_secs_f64();
+
+        println!("   Processed {} events in {:?}", count, read_time);
+        println!("   Read throughput: {:.0} events/second", read_throughput);
+        println!(
+            "   Average read latency: {:.3} microseconds per event",
+            read_time.as_micros() as f64 / count as f64
+        );
     }
 
-    writer.flush()?;
-    let duration = start_time.elapsed();
-    let throughput = event_count as f64 / duration.as_secs_f64();
-
-    println!(
-        "   High-frequency events: {} events in {:?}",
-        event_count, duration
-    );
-    println!("   Throughput: {:.0} events/second", throughput);
-    println!("   Arena allocation: Zero system allocations during processing");
-
+    println!("   ✓ High-frequency scenario completed\n");
     Ok(())
 }
 

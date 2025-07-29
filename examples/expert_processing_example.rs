@@ -1,5 +1,5 @@
-use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -74,21 +74,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a StreamWriter with default framing
     let framer = DefaultFramer;
     let mut stream_writer = StreamWriter::new(writer, framer);
-    
+
     // External builder management for zero-allocation writes
     let mut builder = FlatBufferBuilder::new();
 
     // Generate test data
     println!("Generating test telemetry events...");
     let mut event_count = 0;
-    
+
     for _ in 0..100 {
         let event = create_telemetry_event();
-        
+
         // Build message with external builder (zero-allocation)
         builder.reset();
         event.serialize(&mut builder)?;
-        
+
         // Emit to stream (zero-allocation write)
         stream_writer.write(&mut builder)?;
         event_count += 1;
@@ -98,104 +98,147 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stream_writer.flush()?;
     println!("Generated {} telemetry events", event_count);
 
-    // Now demonstrate expert-level processing with messages()
-    println!("\n=== Expert Processing with messages() ===");
+    // Now demonstrate the expert reading patterns
+    println!("\n=== Reading Telemetry Data ===");
 
-    let file = File::open(telemetry_file)?;
-    let reader = BufReader::new(file);
+    // Pattern 1: Processor API (highest performance)
+    println!("1. Processor API (Zero-Allocation Processing):");
+    {
+        let file = File::open(telemetry_file)?;
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
 
-    // Create a StreamReader with the same framing strategy used for writing
-    let deframer = DefaultDeframer;
-    let mut stream_reader = StreamReader::new(reader, deframer);
-    
-    // Create the messages processor
-    let mut messages = stream_reader.messages();
+        let mut count = 0;
+        let mut total_speed = 0.0;
+        let mut total_rpm = 0.0;
+        let mut total_temp = 0.0;
+        let mut total_battery = 0.0;
 
-    // Example 1: Chunked Processing
-    println!("1. Chunked Processing:");
-    let mut chunk = Vec::new();
-    let mut chunk_count = 0;
-    
-    while let Some(payload) = messages.next()? {
-        // Convert to owned data for chunking (if needed)
-        chunk.push(payload.to_vec());
-        
-        if chunk.len() >= 10 {
-            println!("  Processing chunk {} with {} messages", chunk_count, chunk.len());
-            // In a real application, you would process the chunk here
-            // For example: send to database, analyze, etc.
-            chunk.clear();
-            chunk_count += 1;
-        }
-    }
-    
-    // Process remaining messages in the last chunk
-    if !chunk.is_empty() {
-        println!("  Processing final chunk {} with {} messages", chunk_count, chunk.len());
-    }
-
-    // Example 2: Early Exit Processing
-    println!("\n2. Early Exit Processing:");
-    let file = File::open(telemetry_file)?;
-    let reader = BufReader::new(file);
-    let deframer = DefaultDeframer;
-    let mut stream_reader = StreamReader::new(reader, deframer);
-    let mut messages = stream_reader.messages();
-    
-    let mut processed_count = 0;
-    let max_events = 25; // Stop after processing 25 events
-    
-    while let Some(payload) = messages.next()? {
-        // Process the payload directly (zero-copy)
-        processed_count += 1;
-        
-        if processed_count % 5 == 0 {
-            println!("  Processed {} events...", processed_count);
-        }
-        
-        // Early exit condition
-        if processed_count >= max_events {
-            println!("  Reached maximum event count ({}), stopping early", max_events);
-            break;
-        }
-    }
-    
-    println!("  Total events processed: {}", processed_count);
-
-    // Example 3: Conditional Processing
-    println!("\n3. Conditional Processing:");
-    let file = File::open(telemetry_file)?;
-    let reader = BufReader::new(file);
-    let deframer = DefaultDeframer;
-    let mut stream_reader = StreamReader::new(reader, deframer);
-    let mut messages = stream_reader.messages();
-    
-    let mut high_temp_count = 0;
-    let mut normal_temp_count = 0;
-    
-    while let Some(payload) = messages.next()? {
-        // In a real application, you would deserialize the FlatBuffer here
-        // For this example, we'll simulate conditional processing based on payload size
-        if payload.len() > 100 {
-            high_temp_count += 1;
-            if high_temp_count % 5 == 0 {
-                println!("  High-temperature events: {}", high_temp_count);
+        // Process all events with zero-allocation
+        stream_reader.process_all(|payload| {
+            // In a real application, you would deserialize the FlatBuffer here
+            // For this example, we simulate processing by parsing the string
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                // Simple parsing for demonstration
+                for part in data_str.split(',') {
+                    if part.starts_with("speed_kph=") {
+                        if let Ok(speed) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                            total_speed += speed;
+                        }
+                    } else if part.starts_with("rpm=") {
+                        if let Ok(rpm) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                            total_rpm += rpm;
+                        }
+                    } else if part.starts_with("temp_c=") {
+                        if let Ok(temp) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                            total_temp += temp;
+                        }
+                    } else if part.starts_with("battery=") {
+                        if let Ok(battery) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
+                            total_battery += battery;
+                        }
+                    }
+                }
+                count += 1;
             }
-        } else {
-            normal_temp_count += 1;
+            Ok(())
+        })?;
+
+        println!("  Processed {} events", count);
+        if count > 0 {
+            println!("  Average speed: {:.1} km/h", total_speed / count as f32);
+            println!("  Average RPM: {:.0}", total_rpm / count as f32);
+            println!("  Average temperature: {:.1}°C", total_temp / count as f32);
+            println!("  Average battery: {:.1}%", total_battery / count as f32);
         }
     }
-    
-    println!("  High-temperature events: {}", high_temp_count);
-    println!("  Normal-temperature events: {}", normal_temp_count);
 
-    println!("\n=== Expert Processing Complete ===");
-    println!("v2.5 Expert API Benefits:");
-    println!("  - User-controlled processing loops");
-    println!("  - Early exit capabilities");
-    println!("  - Chunked processing support");
-    println!("  - Conditional processing logic");
-    println!("  - Zero-copy slice access");
+    // Pattern 2: Expert API (manual control)
+    println!("\n2. Expert API (Manual Control):");
+    {
+        let file = File::open(telemetry_file)?;
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        let mut alerts = 0;
+
+        // Use expert API for conditional processing
+        let mut messages = stream_reader.messages();
+        while let Some(payload) = messages.next()? {
+            // Process each message with manual control
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                count += 1;
+
+                // Check for alert conditions
+                if data_str.contains("temp_c=5") || data_str.contains("battery=1") {
+                    alerts += 1;
+                    println!("  Alert #{}: {}", alerts, data_str);
+                }
+
+                // Stop after processing first 10 events for demonstration
+                if count >= 10 {
+                    println!("  Stopped after {} events (demonstration)", count);
+                    break;
+                }
+            }
+        }
+
+        println!("  Processed {} events, found {} alerts", count, alerts);
+    }
+
+    // Pattern 3: Real-time processing simulation
+    println!("\n3. Real-time Processing Simulation:");
+    {
+        let file = File::open(telemetry_file)?;
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut count = 0;
+        let mut high_speed_events = 0;
+        let mut low_battery_events = 0;
+
+        // Simulate real-time processing with immediate decisions
+        stream_reader.process_all(|payload| {
+            if let Ok(data_str) = std::str::from_utf8(payload) {
+                count += 1;
+
+                // Real-time decision making
+                if data_str.contains("speed_kph=9") {
+                    high_speed_events += 1;
+                    // In a real system, this might trigger an alert
+                }
+
+                if data_str.contains("battery=1") {
+                    low_battery_events += 1;
+                    // In a real system, this might trigger power management
+                }
+
+                // Process every 10th event for demonstration
+                if count % 10 == 0 {
+                    println!(
+                        "  Processed {} events (high_speed: {}, low_battery: {})",
+                        count, high_speed_events, low_battery_events
+                    );
+                }
+            }
+            Ok(())
+        })?;
+
+        println!("  Final stats: {} total events", count);
+        println!("  High speed events: {}", high_speed_events);
+        println!("  Low battery events: {}", low_battery_events);
+    }
+
+    println!("\n=== Expert Processing Example Complete ===");
+    println!("Key v2.5 features demonstrated:");
+    println!("  • External builder management for zero-allocation writes");
+    println!("  • Processor API for high-performance bulk processing");
+    println!("  • Expert API for manual iteration control");
+    println!("  • Zero-copy message processing throughout");
 
     Ok(())
-} 
+}

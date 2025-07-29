@@ -1,4 +1,4 @@
-//! # flatstream-rs (v2)
+//! # flatstream-rs (v2.5)
 //!
 //! A lightweight, composable, high-performance Rust library for streaming FlatBuffers.
 //!
@@ -13,7 +13,7 @@
 //!
 //! * **Composable Architecture**: Separate traits for serialization, framing, and checksums
 //! * **Flexible Framing**: Choose between simple length-prefixed or checksum-protected framing
-//! * **Zero-Copy Reading**: Direct access to FlatBuffer payloads
+//! * **Zero-Copy Reading**: Direct access to FlatBuffer payloads through the Processor API
 //! * **Memory Efficient**: Reusable buffers and minimal allocations
 //! * **Type Safe**: Generic over I/O types and framing strategies
 //!
@@ -22,6 +22,7 @@
 //! ```rust
 //! use flatstream_rs::*;
 //! use std::fs::File;
+//! use flatbuffers::FlatBufferBuilder;
 //!
 //! // Define your serializable type
 //! struct MyData {
@@ -45,18 +46,22 @@
 //!     let mut writer = StreamWriter::new(file, framer);
 //!
 //!     let data = MyData { message: "Hello".to_string(), value: 42 };
-//!     writer.write(&data)?;
+//!     
+//!     // Create and finish the builder
+//!     let mut builder = FlatBufferBuilder::new();
+//!     data.serialize(&mut builder)?;
+//!     writer.write(&mut builder)?;
 //!     writer.flush()?;
 //!
-//!     // Read with default deframing
+//!     // Read with default deframing using the Processor API
 //!     let file = File::open("data.bin")?;
 //!     let deframer = DefaultDeframer;
-//!     let reader = StreamReader::new(file, deframer);
+//!     let mut reader = StreamReader::new(file, deframer);
 //!
-//!     for result in reader {
-//!         let payload = result?;
+//!     reader.process_all(|payload| {
 //!         println!("Read message: {} bytes", payload.len());
-//!     }
+//!         Ok(())
+//!     })?;
 //!
 //!     Ok(())
 //! }
@@ -83,7 +88,7 @@ pub mod writer;
 pub use checksum::NoChecksum;
 pub use error::{Error, Result};
 pub use framing::{DefaultDeframer, DefaultFramer};
-pub use reader::StreamReader;
+pub use reader::{Messages, StreamReader};
 pub use traits::StreamSerialize;
 pub use writer::StreamWriter;
 

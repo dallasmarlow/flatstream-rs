@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::checksum::Checksum;
 use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
-use flatbuffers::FlatBufferBuilder;
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -111,10 +111,12 @@ fn bench_reader<C: Checksum + Default + Copy>(
 
                 // Count all messages using process_all
                 let mut count = 0;
-                reader.process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                }).unwrap();
+                reader
+                    .process_all(|_payload| {
+                        count += 1;
+                        Ok(())
+                    })
+                    .unwrap();
 
                 black_box(count);
             });
@@ -157,10 +159,12 @@ fn bench_write_read_cycle<C: Checksum + Default + Copy>(
                 let deframer = ChecksumDeframer::new(checksum);
                 let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
-                reader.process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                }).unwrap();
+                reader
+                    .process_all(|_payload| {
+                        count += 1;
+                        Ok(())
+                    })
+                    .unwrap();
 
                 black_box((buffer, count));
             });
@@ -274,10 +278,12 @@ fn benchmark_read_default_deframer(c: &mut Criterion) {
             let deframer = DefaultDeframer;
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| {
-                count += 1;
-                Ok(())
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -435,10 +441,12 @@ fn benchmark_write_read_cycle_default(c: &mut Criterion) {
                 let deframer = DefaultDeframer;
                 let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
-                reader.process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                }).unwrap();
+                reader
+                    .process_all(|_payload| {
+                        count += 1;
+                        Ok(())
+                    })
+                    .unwrap();
                 black_box(count);
             }
         });
@@ -472,10 +480,12 @@ fn benchmark_write_read_cycle_with_checksum(c: &mut Criterion) {
                 let deframer = ChecksumDeframer::new(checksum);
                 let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
-                reader.process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                }).unwrap();
+                reader
+                    .process_all(|_payload| {
+                        count += 1;
+                        Ok(())
+                    })
+                    .unwrap();
                 black_box(count);
             }
         });

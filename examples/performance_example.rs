@@ -1,42 +1,28 @@
+use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::Instant;
 
-// This example demonstrates the high-performance optimizations available in flatstream-rs:
-// 1. Write batching for efficient bulk writes
-// 2. Zero-allocation reading for memory-efficient processing
+// This example demonstrates the high-performance optimizations available in flatstream-rs v2.5:
+// 1. External builder management for zero-allocation writes
+// 2. Processor API for zero-allocation reading
 
 fn main() -> Result<()> {
-    println!("=== High-Performance flatstream-rs Example ===\n");
+    println!("=== High-Performance flatstream-rs v2.5 Example ===\n");
 
     let data_file = "performance_test.bin";
     let num_messages = 10_000;
 
-    // Example 1: Write Batching Optimization
-    println!("1. Write Batching Performance Test:");
+    // Example 1: External Builder Management Performance Test
+    println!("1. External Builder Management Performance Test:");
     {
         // Prepare a batch of messages
         let messages: Vec<String> = (0..num_messages)
             .map(|i| format!("high-frequency-message-{}", i))
             .collect();
 
-        // Test iterative writing (baseline)
-        let start = Instant::now();
-        {
-            let file = File::create("iterative_test.bin")?;
-            let writer = BufWriter::new(file);
-            let framer = DefaultFramer;
-            let mut stream_writer = StreamWriter::new(writer, framer);
-
-            for message in &messages {
-                stream_writer.write(message)?;
-            }
-            stream_writer.flush()?;
-        }
-        let iterative_time = start.elapsed();
-
-        // Test batch writing (optimized)
+        // Test iterative writing with external builder management (v2.5 pattern)
         let start = Instant::now();
         {
             let file = File::create(data_file)?;
@@ -44,47 +30,26 @@ fn main() -> Result<()> {
             let framer = DefaultFramer;
             let mut stream_writer = StreamWriter::new(writer, framer);
 
-            // Use the new write_batch method
-            stream_writer.write_batch(&messages)?;
+            // External builder management for zero-allocation writes
+            let mut builder = FlatBufferBuilder::new();
+            for message in &messages {
+                builder.reset();
+                let data = builder.create_string(message);
+                builder.finish(data, None);
+                stream_writer.write(&mut builder)?;
+            }
             stream_writer.flush()?;
         }
-        let batch_time = start.elapsed();
+        let v2_5_time = start.elapsed();
 
-        println!("  Iterative writing: {:?}", iterative_time);
-        println!("  Batch writing:     {:?}", batch_time);
-        println!(
-            "  Performance gain:  {:.1}% faster",
-            (iterative_time.as_nanos() as f64 / batch_time.as_nanos() as f64 - 1.0) * 100.0
-        );
-        println!("  ✓ Write batching optimization demonstrated\n");
+        println!("  v2.5 external builder: {:?}", v2_5_time);
+        println!("  ✓ External builder management optimization demonstrated\n");
     }
 
-    // Example 2: Zero-Allocation Reading Performance Test
-    println!("2. Zero-Allocation Reading Performance Test:");
+    // Example 2: Processor API Reading Performance Test
+    println!("2. Processor API Reading Performance Test:");
     {
-        // Test iterator-based reading (baseline - involves allocations)
-        let start = Instant::now();
-        {
-            let file = File::open(data_file)?;
-            let reader = BufReader::new(file);
-            let deframer = DefaultDeframer;
-            let stream_reader = StreamReader::new(reader, deframer);
-
-            let mut count = 0;
-            let mut total_size = 0;
-            for result in stream_reader {
-                let payload = result?;
-                total_size += payload.len();
-                count += 1;
-            }
-            println!(
-                "  Iterator reading:  {} messages, {} total bytes",
-                count, total_size
-            );
-        }
-        let iterator_time = start.elapsed();
-
-        // Test zero-allocation reading (optimized)
+        // Test processor API reading (v2.5 - zero-allocation)
         let start = Instant::now();
         {
             let file = File::open(data_file)?;
@@ -95,32 +60,54 @@ fn main() -> Result<()> {
             let mut count = 0;
             let mut total_size = 0;
 
-            // Use the high-performance while let pattern
-            while let Some(_payload_slice) = stream_reader.read_message()? {
-                // payload_slice is &[u8] - no allocation, just a borrow
-                total_size += _payload_slice.len();
+            // Use the high-performance processor API
+            stream_reader.process_all(|payload| {
+                total_size += payload.len();
                 count += 1;
-            }
+                Ok(())
+            })?;
+
             println!(
-                "  Zero-copy reading: {} messages, {} total bytes",
+                "  Processor API reading: {} messages, {} total bytes",
                 count, total_size
             );
         }
-        let zero_copy_time = start.elapsed();
+        let processor_time = start.elapsed();
 
-        println!("  Iterator reading:  {:?}", iterator_time);
-        println!("  Zero-copy reading: {:?}", zero_copy_time);
-        println!(
-            "  Performance gain:  {:.1}% faster",
-            (iterator_time.as_nanos() as f64 / zero_copy_time.as_nanos() as f64 - 1.0) * 100.0
-        );
+        // Test expert API reading (v2.5 - manual control)
+        let start = Instant::now();
+        {
+            let file = File::open(data_file)?;
+            let reader = BufReader::new(file);
+            let deframer = DefaultDeframer;
+            let mut stream_reader = StreamReader::new(reader, deframer);
+
+            let mut count = 0;
+            let mut total_size = 0;
+
+            // Use the expert API for manual control
+            let mut messages = stream_reader.messages();
+            while let Some(payload) = messages.next()? {
+                total_size += payload.len();
+                count += 1;
+            }
+
+            println!(
+                "  Expert API reading: {} messages, {} total bytes",
+                count, total_size
+            );
+        }
+        let expert_time = start.elapsed();
+
+        println!("  Processor API: {:?}", processor_time);
+        println!("  Expert API:    {:?}", expert_time);
         println!("  ✓ Zero-allocation reading optimization demonstrated\n");
     }
 
-    // Example 3: Real-World High-Frequency Scenario
-    println!("3. High-Frequency Telemetry Scenario:");
+    // Example 3: Real-world Data Processing
+    println!("3. Real-world Data Processing Example:");
     {
-        // Simulate high-frequency sensor data
+        // Define a realistic data structure
         #[derive(Debug)]
         struct SensorData {
             timestamp: u64,
@@ -130,8 +117,9 @@ fn main() -> Result<()> {
 
         impl StreamSerialize for SensorData {
             fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
+                // Create a simple string representation for this example
                 let data = format!(
-                    "ts={},id={},val={:.3}",
+                    "timestamp={},sensor_id={},value={:.2}",
                     self.timestamp, self.sensor_id, self.value
                 );
                 let data_str = builder.create_string(&data);
@@ -140,68 +128,75 @@ fn main() -> Result<()> {
             }
         }
 
-        // Generate a batch of sensor readings
+        // Generate realistic sensor data
         let sensor_data: Vec<SensorData> = (0..1000)
             .map(|i| SensorData {
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64
-                    + i,
-                sensor_id: (i % 10) as u32,
-                value: (i as f64) * 0.1,
+                timestamp: 1640995200000 + (i * 1000), // Unix timestamp in ms
+                sensor_id: (i % 10) as u32,            // 10 different sensors
+                value: 20.0 + (i as f64 * 0.1),        // Temperature-like values
             })
             .collect();
 
-        // Write batch efficiently
-        let file = File::create("sensor_data.bin")?;
-        let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        // Write sensor data using v2.5 pattern
+        let sensor_file = "sensor_data.bin";
+        println!("  Writing {} sensor readings...", sensor_data.len());
 
         let start = Instant::now();
-        stream_writer.write_batch(&sensor_data)?;
-        stream_writer.flush()?;
+        {
+            let file = File::create(sensor_file)?;
+            let writer = BufWriter::new(file);
+            let framer = DefaultFramer;
+            let mut stream_writer = StreamWriter::new(writer, framer);
+
+            // External builder management for optimal performance
+            let mut builder = FlatBufferBuilder::new();
+            for data in &sensor_data {
+                builder.reset();
+                data.serialize(&mut builder)?;
+                stream_writer.write(&mut builder)?;
+            }
+            stream_writer.flush()?;
+        }
         let write_time = start.elapsed();
 
-        println!(
-            "  Wrote {} sensor readings in {:?}",
-            sensor_data.len(),
-            write_time
-        );
-        println!(
-            "  Throughput: {:.0} messages/second",
-            sensor_data.len() as f64 / write_time.as_secs_f64()
-        );
-
-        // Read efficiently with zero-allocation
-        let file = File::open("sensor_data.bin")?;
-        let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
+        // Read and process sensor data using processor API
+        println!("  Reading and processing sensor data...");
         let start = Instant::now();
-        let mut count = 0;
-        while let Some(_payload_slice) = stream_reader.read_message()? {
-            // Process the sensor data directly from the slice
-            // In a real application, you would deserialize the FlatBuffer here
-            count += 1;
+        {
+            let file = File::open(sensor_file)?;
+            let reader = BufReader::new(file);
+            let deframer = DefaultDeframer;
+            let mut stream_reader = StreamReader::new(reader, deframer);
+
+            let mut count = 0;
+            let mut total_value = 0.0;
+
+            // Process all sensor readings with zero-allocation
+            stream_reader.process_all(|payload| {
+                // In a real application, you would deserialize the FlatBuffer here
+                // For this example, we just count and simulate processing
+                count += 1;
+                total_value += 20.0; // Simulate value extraction
+                Ok(())
+            })?;
+
+            println!("  Processed {} sensor readings", count);
+            println!("  Average value: {:.2}", total_value / count as f64);
         }
         let read_time = start.elapsed();
 
-        println!("  Read {} sensor readings in {:?}", count, read_time);
-        println!(
-            "  Throughput: {:.0} messages/second",
-            count as f64 / read_time.as_secs_f64()
-        );
-        println!("  ✓ High-frequency scenario completed\n");
+        println!("  Write time: {:?}", write_time);
+        println!("  Read time:  {:?}", read_time);
+        println!("  Total time: {:?}", write_time + read_time);
+        println!("  ✓ Real-world data processing demonstrated\n");
     }
 
     println!("=== Performance Example Complete ===");
-    println!("Key optimizations demonstrated:");
-    println!("  - Write batching: Reduces function call overhead");
-    println!("  - Zero-allocation reading: Eliminates per-message heap allocations");
-    println!("  - Both optimizations maintain API consistency and safety");
+    println!("The v2.5 Processor API provides:");
+    println!("  • Zero-allocation writes through external builder management");
+    println!("  • Zero-allocation reads through the processor API");
+    println!("  • Maximum performance for high-frequency data processing");
+    println!("  • Explicit control over memory allocation patterns");
 
     Ok(())
 }
