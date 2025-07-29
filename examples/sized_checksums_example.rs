@@ -8,7 +8,7 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -40,29 +40,45 @@ struct LargeMessage {
 }
 
 impl StreamSerialize for SmallMessage {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Simple serialization for small messages
-        let sensor_id = builder.create_string(&format!("sensor-{}", self.sensor_id));
-        builder.finish(sensor_id, None);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!("{}", self.sensor_id);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
 
 impl StreamSerialize for MediumMessage {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Medium complexity serialization
-        let device_id = builder.create_string(&self.device_id);
-        builder.finish(device_id, None);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!("{},{},{}", self.device_id, self.timestamp, self.readings[0]);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
 
 impl StreamSerialize for LargeMessage {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Complex serialization for large messages
-        let batch_id = builder.create_string(&self.batch_id);
-        let _metadata = builder.create_string(&self.metadata);
-        builder.finish(batch_id, None);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{},{},{}",
+            self.batch_id,
+            self.metadata,
+            self.data_points[0],
+            self.flags[0],
+            self.data_points[1],
+            self.flags[1]
+        );
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -125,14 +141,18 @@ fn main() -> Result<()> {
 }
 
 fn demonstrate_checksum_sizes(
+    #[allow(unused_variables)]
     small_messages: &[SmallMessage],
+    #[allow(unused_variables)]
     medium_messages: &[MediumMessage],
+    #[allow(unused_variables)]
     large_messages: &[LargeMessage],
 ) -> Result<()> {
     println!("1. Checksum Size Comparison...");
 
     // External builder management for zero-allocation writes
-    let mut builder = FlatBufferBuilder::new();
+    #[allow(unused_variables)]
+    let builder = FlatBufferBuilder::new();
 
     // Small messages with CRC16 (2 bytes)
     #[cfg(feature = "crc16")]
@@ -147,7 +167,7 @@ fn demonstrate_checksum_sizes(
         for message in small_messages {
             builder.reset();
             message.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
 
@@ -172,7 +192,7 @@ fn demonstrate_checksum_sizes(
         for message in medium_messages {
             builder.reset();
             message.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
 
@@ -197,7 +217,7 @@ fn demonstrate_checksum_sizes(
         for message in large_messages {
             builder.reset();
             message.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
 
@@ -289,6 +309,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
     let test_message = "performance-test-message";
 
     // External builder management
+    #[allow(unused_variables)]
     let mut builder = FlatBufferBuilder::new();
 
     // No checksum (baseline)
@@ -303,7 +324,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
             builder.reset();
             let data = builder.create_string(test_message);
             builder.finish(data, None);
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
         let duration = start.elapsed();
@@ -326,7 +347,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
             builder.reset();
             let data = builder.create_string(test_message);
             builder.finish(data, None);
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
         let duration = start.elapsed();
@@ -349,7 +370,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
             builder.reset();
             let data = builder.create_string(test_message);
             builder.finish(data, None);
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
         let duration = start.elapsed();
@@ -372,7 +393,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
             builder.reset();
             let data = builder.create_string(test_message);
             builder.finish(data, None);
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
         let duration = start.elapsed();

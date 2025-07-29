@@ -248,4 +248,13 @@ The refactoring to v2 was a **complete success**, delivering both performance im
 
 ---
 
-*This analysis demonstrates the importance of thorough performance testing and the value of architectural improvements that can deliver both better design and better performance.* 
+*This analysis demonstrates the importance of thorough performance testing and the value of architectural improvements that can deliver both better design and better performance.*
+
+---
+
+## Related Documentation
+
+- **[V2.5 Implementation Report](V2_5_IMPLEMENTATION_REPORT.md)**: Complete documentation of the v2.5 "Processor API" implementation and its performance validation against v2
+- **[V2.5 Migration Guide](V2_5_MIGRATION_GUIDE.md)**: Step-by-step guide for migrating from v2 to v2.5 
+
+ 

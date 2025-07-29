@@ -8,22 +8,22 @@ use std::io::{BufReader, BufWriter};
 struct SensorReading {
     sensor_id: String,
     temperature: f32,
+    #[allow(dead_code)]
     humidity: f32,
     timestamp: u64,
 }
 
 impl StreamSerialize for SensorReading {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Create a structured representation of the sensor data
-        let _sensor_id = builder.create_string(&self.sensor_id);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
         let data = format!(
-            "temp={:.2},humidity={:.2},ts={}",
-            self.temperature, self.humidity, self.timestamp
+            "{},{},{},{}",
+            &self.sensor_id, self.timestamp, self.temperature, "C"
         );
-        let reading_data = builder.create_string(&data);
-
-        // For this example, we'll just use the reading data as the root
-        builder.finish(reading_data, None);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -39,28 +39,16 @@ struct SystemEvent {
 }
 
 impl StreamSerialize for SystemEvent {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        // Create a structured representation
-        let _event_type = builder.create_string(&self.event_type);
-        let _message = builder.create_string(&self.message);
-
-        // Convert metadata to a string representation
-        let metadata_str = self
-            .metadata
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(",");
-        let _metadata = builder.create_string(&metadata_str);
-
-        // Combine all fields into a single string for simplicity
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
         let data = format!(
-            "type={},severity={},msg={},meta={}",
-            self.event_type, self.severity, self.message, metadata_str
+            "{},{},{},{}",
+            &self.event_type, "timestamp", self.severity, &self.message
         );
-        let event_data = builder.create_string(&data);
-
-        builder.finish(event_data, None);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -94,7 +82,7 @@ fn main() -> Result<()> {
             // Build and write with external builder
             builder.reset();
             reading.serialize(&mut builder)?;
-            stream_writer.write(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote sensor reading: {:?}", reading);
         }
 
@@ -148,7 +136,7 @@ fn main() -> Result<()> {
 
             builder.reset();
             reading.serialize(&mut builder)?;
-            stream_writer.write(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote secure sensor reading: {:?}", reading);
         }
 
@@ -226,7 +214,7 @@ fn main() -> Result<()> {
         for event in &events {
             builder.reset();
             event.serialize(&mut builder)?;
-            stream_writer.write(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote system event: {:?}", event);
         }
 

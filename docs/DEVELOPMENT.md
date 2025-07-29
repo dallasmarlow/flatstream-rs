@@ -46,7 +46,7 @@ src/
 [dependencies]
 flatbuffers = "24.3.25"     # Core serialization
 thiserror = "1.0"           # Error handling
-tokio = { version = "1", features = ["full"], optional = true }  # Optional async support
+tokio = { version = "1", features = ["full"], optional = true }  # Optional async support (planned)
 
 # Optional dependencies (feature-gated)
 [dependencies.xxhash-rust]
@@ -58,12 +58,17 @@ optional = true
 version = "1.4"
 optional = true
 
+[dependencies.crc16]
+version = "0.4"
+optional = true
+
 [features]
 default = []
-async = ["tokio"]
+async = ["tokio"]           # Planned feature - not yet implemented
 xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
-all_checksums = ["xxhash", "crc32"]
+crc16 = ["dep:crc16"]
+all_checksums = ["xxhash", "crc32", "crc16"]
 
 [dev-dependencies]
 tempfile = "3.8"            # Temporary files for testing
@@ -74,7 +79,25 @@ criterion = { version = "0.5", features = ["html_reports"] }  # Performance benc
 
 ## 🏗️ Architecture Overview
 
-### Trait-Based Design (v2)
+### Zero-Copy Throughout
+
+Both writing modes maintain perfect zero-copy behavior - after serialization, data is written directly from the builder's buffer to I/O without intermediate copies. The performance difference between simple and expert modes (0-25%, or ~0.9ns per operation) comes from trait dispatch overhead through the `StreamSerialize` trait in simple mode, not from data copying. This preserves the FlatBuffers philosophy: serialize once, access everywhere, copy never. See `docs/ZERO_COPY_ANALYSIS.md` for detailed analysis.
+
+### Hybrid API Design (v2.6)
+
+The library provides both simple and expert modes for writing:
+- **Simple Mode**: `write()` with internal builder management
+  - Best for uniform message sizes
+  - Single builder can grow large and stay large
+  - Small trait dispatch overhead (~0.9ns per operation)
+- **Expert Mode**: `write_finished()` with external builder management
+  - Enables multiple builders for different message types
+  - Up to 2x faster for large messages (avoids trait dispatch)
+  - Better memory control for mixed workloads
+
+This hybrid approach balances ease of use with flexibility, allowing users to start simple and switch to expert mode when they need more control over memory usage or performance with large messages.
+
+### Trait-Based Design
 
 The library uses a composable, trait-based architecture that enables:
 
@@ -111,7 +134,7 @@ Optional functionality is controlled by feature flags:
 - `crc32`: Enables CRC32 checksum support (4 bytes)
 - `crc16`: Enables CRC16 checksum support (2 bytes)
 - `all_checksums`: Enables all checksum algorithms
-- `async`: Enables async I/O support
+- `async`: Planned async I/O support (not yet implemented)
 
 ---
 
@@ -173,8 +196,9 @@ let mut writer = StreamWriter::new(file, framer);
 
 **Key Methods:**
 - `new(writer: W, framer: F)` - Constructor with composable framer
+- `with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>)` - Expert mode with custom builder
 - `write<T: StreamSerialize>(item: &T)` - Write serializable item
-- `write_batch<T: StreamSerialize>(items: &[T])` - Write multiple items efficiently
+- `write_finished(builder: &mut FlatBufferBuilder)` - Expert mode for pre-built messages
 - `flush()` - Ensure data persistence
 - `into_inner()` - Extract underlying writer
 
@@ -191,45 +215,61 @@ let mut writer = StreamWriter::new(file, framer);
 
 **API Usage:**
 ```rust
-// Simple usage with built-in StreamSerialize for String
+// SIMPLE MODE - Good for getting started
 let framer = DefaultFramer;
 let mut writer = StreamWriter::new(file, framer);
-writer.write(&"example data")?;
+writer.write(&"example data")?;  // Internal builder, automatic reuse
 
-// With checksum
+// EXPERT MODE - Recommended for mixed sizes or large messages
+let mut builder = FlatBufferBuilder::new();
+let mut writer = StreamWriter::new(file, DefaultFramer);
+
+// High-performance loop with external builder management
+for event in events {
+    builder.reset();  // Critical: reuse memory!
+    event.serialize(&mut builder)?;
+    writer.write_finished(&mut builder)?;  // Zero-allocation write
+}
+
+// WITH CHECKSUM - Works with both modes
 let checksum = XxHash64::new();
 let framer = ChecksumFramer::new(checksum);
 let mut writer = StreamWriter::new(file, framer);
-writer.write(&"example data")?;
 
-// Batch writing for performance
-let messages = vec!["msg1", "msg2", "msg3"];
-writer.write_batch(&messages)?;
+// Simple mode with checksum
+writer.write(&"protected data")?;
+
+// Expert mode with checksum (recommended)
+builder.reset();
+data.serialize(&mut builder)?;
+writer.write_finished(&mut builder)?;
 ```
 
 ### StreamReader Implementation
 
 **Key Methods:**
 - `new(reader: R, deframer: D)` - Constructor with composable deframer
-- `read_message()` - Read next message (zero-allocation)
-- Implements `Iterator<Item = Result<Vec<u8>>>` (ergonomic, with allocation)
+- `read_message()` - Read next message returning `Result<Option<&[u8]>>` (zero-copy)
+- `process_all<F>(processor: F)` - High-performance processing with closure
+- `messages()` - Returns `Messages` expert API for manual iteration
 
 **Read Process:**
 1. Deframer reads and parses frame (length prefix, checksum if enabled)
 2. Read payload_length bytes → message data
 3. Verify checksum against payload (if enabled)
-4. Return payload (copy for iterator, borrow for read_message)
+4. Return payload as borrowed slice (&[u8])
 
 **EOF Handling:**
-- Clean EOF: Returns `Ok(None)` or `None` (iterator)
+- Clean EOF: Returns `Ok(None)` from `read_message()` or `messages().next()`
 - Unexpected EOF: Returns `Err(UnexpectedEof)`
 - Partial reads: Returns appropriate error
+- `process_all()` completes normally on EOF
 
 **Memory Efficiency:**
 - Reusable buffer for payload storage
-- Single allocation per message size (iterator mode)
-- Zero-copy access via `read_message()` method
-- High-performance zero-allocation reading pattern available
+- Zero-copy access via `read_message()` method returning borrowed slices
+- `process_all()` provides highest performance with closure-based processing
+- `messages()` expert API allows manual control while maintaining zero-copy
 
 ---
 
@@ -249,10 +289,10 @@ writer.write_batch(&messages)?;
 - **Memory streams**: In-memory validation
 
 ### Performance Benchmarks
-- **Write throughput**: With/without checksums (Default, XXHash64, CRC32)
-- **Read throughput**: With/without checksums (Default, XXHash64, CRC32)
+- **Write throughput**: With/without checksums (Default, XXHash64, CRC32, CRC16)
+- **Read throughput**: With/without checksums (Default, XXHash64, CRC32, CRC16)
 - **Zero-allocation reading**: High-performance pattern comparison
-- **Write batching**: Batch vs iterative performance analysis
+- **Multiple writes**: Performance of consecutive write operations
 - **End-to-end**: Complete write-read cycles
 - **High-frequency telemetry**: 1000 message stress testing
 - **Large messages**: Real-world message size simulation
@@ -260,19 +300,24 @@ writer.write_batch(&messages)?;
 - **Scale testing**: 100 message scenarios with comprehensive coverage
 
 **Benchmark Results (Release Mode):**
-- Write with checksum: ~19.4 µs for 100 messages
-- Write without checksum: ~18.9 µs for 100 messages
-- Read with checksum: ~2.36 µs for 100 messages
-- Read without checksum: ~2.25 µs for 100 messages
-- Write batching: ~0.5% performance improvement
-- Zero-allocation reading: ~84.1% performance improvement
-- High-frequency telemetry: 1.1M messages/sec write, 11.9M messages/sec read
+- Write with default framer: ~1.77 µs for 100 messages
+- Write with XXHash64: ~2.82 µs for 100 messages  
+- Read with default deframer: ~0.19 µs for 100 messages
+- Read with XXHash64: ~0.63 µs for 100 messages
+- Zero-allocation reading: ~84.1% performance improvement over allocation-based approaches
+- High-frequency telemetry: ~18.4 µs for 1000 writes, ~4.4 µs for 1000 reads
+
+**Note**: In real-world throughput tests, the library has achieved:
+- Simple mode: ~16 million messages/sec (62 ns/message)
+- Expert mode: ~17 million messages/sec (58 ns/message)
+- Read throughput: ~130+ million messages/sec (8 ns/message)
+- Sustained telemetry: ~15 million messages/sec
 
 **Comprehensive Benchmark Coverage:**
-- **Write Performance**: Default framer, XXHash64, CRC32 checksums
-- **Read Performance**: Default deframer, XXHash64, CRC32 checksums  
+- **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
+- **Read Performance**: Default deframer, XXHash64, CRC32, CRC16 checksums  
 - **Zero-Allocation Reading**: High-performance pattern comparison
-- **Write Batching**: Batch vs iterative performance comparison
+- **Multiple Writes**: Performance of consecutive write operations
 - **End-to-End Cycles**: Complete write-read cycle performance
 - **High-Frequency Telemetry**: 1000 message scenarios
 - **Large Messages**: Real-world message size simulation
@@ -338,19 +383,19 @@ let file = File::open("telemetry.bin")?;
 let reader = BufReader::new(file);
 let checksum = XxHash64::new();
 let deframer = ChecksumDeframer::new(checksum);
-let stream_reader = StreamReader::new(reader, deframer);
+let mut stream_reader = StreamReader::new(reader, deframer);
 
-for result in stream_reader {
-    match result {
-        Ok(payload) => {
-            // Process the FlatBuffer payload
-            // Use flatbuffers::get_root to deserialize
-        }
-        Err(e) => {
-            eprintln!("Stream error: {}", e);
-            break;
-        }
-    }
+// High-performance processing with closure
+stream_reader.process_all(|payload| {
+    // Process the FlatBuffer payload
+    // Use flatbuffers::get_root to deserialize
+    Ok(())
+})?;
+
+// Or use expert API for manual control
+let mut messages = stream_reader.messages();
+while let Some(payload) = messages.next()? {
+    // Process the FlatBuffer payload
 }
 ```
 
@@ -400,10 +445,10 @@ match stream_reader.read_message() {
 ## 📊 Performance Characteristics
 
 ### Benchmarks (Release Mode)
-- **Write with checksum**: ~50,000 messages/sec
-- **Write without checksum**: ~60,000 messages/sec
-- **Read with checksum**: ~45,000 messages/sec
-- **Read without checksum**: ~55,000 messages/sec
+- **Write throughput (simple mode)**: ~16 million messages/sec
+- **Write throughput (expert mode)**: ~17 million messages/sec  
+- **Read throughput**: ~130+ million messages/sec
+- **High-frequency telemetry**: ~15 million messages/sec sustained
 - **Memory overhead**: ~4-12 bytes per message
 
 ### Optimization Notes
@@ -411,6 +456,7 @@ match stream_reader.read_message() {
 - **Buffer size**: 8KB default for BufWriter/BufReader
 - **Memory allocation**: Single Vec allocation per message size
 - **Zero-copy**: FlatBuffer payloads accessed directly
+- **Real-world performance**: Actual throughput often exceeds documented benchmarks by 10-100x depending on message size and system configuration
 
 ### Real-World Example Performance
 The telemetry agent example demonstrates:
@@ -421,16 +467,17 @@ The telemetry agent example demonstrates:
 
 ### High-Performance Optimizations
 
-**Write Batching:**
-- `write_batch<T: StreamSerialize>(items: &[T])` method for efficient bulk writes
-- Reduces function call overhead for multiple messages
-- Maintains API consistency by reusing existing `write()` method
+**Efficient Writing:**
+- Use a simple for loop for multiple writes - explicit and flexible
+- Internal builder reuse minimizes allocations
+- Direct serialization without temporary buffers
 
 **Zero-Allocation Reading:**
 - `read_message()` method returns `Result<Option<&[u8]>>` (zero-copy borrow)
-- Iterator interface returns `Result<Vec<u8>>` (with allocation)
-- High-performance pattern: `while let Some(payload) = reader.read_message()?`
-- **84.1% performance improvement** in real-world testing
+- `process_all()` provides closure-based processing with zero allocations
+- `messages()` expert API for manual iteration control
+- High-performance pattern: `reader.process_all(|payload| { /* process */ Ok(()) })?`
+- **84.1% performance improvement** over allocation-based approaches
 
 **Sized Checksums:**
 - Variable-size checksums to optimize overhead for different message types
@@ -440,10 +487,13 @@ The telemetry agent example demonstrates:
 - Automatic size-aware framing and deframing
 
 **Performance Results:**
-- High-frequency telemetry: **1.1M messages/sec** write throughput
-- Zero-allocation reading: **11.9M messages/sec** read throughput
-- Write batching: **0.5% performance improvement** for bulk operations
+- Small uniform messages: Simple and expert modes perform similarly (trait dispatch adds only ~0.9ns)
+- Large messages (10MB+): Expert mode up to 2x faster than simple mode (trait dispatch overhead becomes noticeable)
+- Mixed message sizes: Expert mode avoids memory bloat via multiple builders
+- Zero-allocation reading: Excellent performance with both APIs
 - Sized checksums: **Up to 75% reduction** in checksum overhead for small messages
+
+**Note**: The performance difference between simple and expert modes is NOT due to data copying (both are equally zero-copy), but rather from the trait dispatch overhead when calling `StreamSerialize::serialize()` in simple mode.
 
 ---
 
@@ -506,16 +556,15 @@ error!("Stream error: {}", e);
 ## 🔮 Future Enhancements
 
 ### Planned Features
-- **Async I/O support**: Tokio integration for non-blocking operations
+- **Async I/O support**: Tokio integration for non-blocking operations (dependency ready, implementation pending)
 - **Memory mapping**: Zero-copy file reading with mmap
 - **Compression**: Built-in compression support (zstd, lz4)
 - **Schema evolution**: Backward compatibility tools
 - **Streaming validation**: Real-time schema validation
 
 ### Performance Optimizations
-- **Write batching**: Multi-message write operations (implemented)
-- **Zero-allocation reading**: Zero-copy message processing (implemented)
-- **Sized checksums**: Variable-size checksums for optimal overhead (implemented)
+- **Zero-allocation reading**: Zero-copy message processing (✅ implemented)
+- **Sized checksums**: Variable-size checksums for optimal overhead (✅ implemented)
 - **SIMD checksums**: Vectorized XXH3 implementation
 - **Memory pools**: Reusable buffer pools for high-frequency usage
 - **Direct I/O**: Bypass OS buffers for maximum throughput
@@ -532,7 +581,7 @@ error!("Stream error: {}", e);
 
 ### Documentation
 - **API Docs**: `cargo doc --open`
-- **Examples**: `examples/telemetry_agent.rs`
+- **Examples**: See `examples/` directory, especially `multiple_builders_example.rs`
 - **Tests**: `tests/integration_tests.rs`
 - **Benchmarks**: `benches/benchmarks.rs`
 
@@ -556,12 +605,18 @@ flatstream-rs/
 │   ├── composable_example.rs # Trait-based API demonstration
 │   ├── crc32_example.rs    # CRC32 checksum example
 │   ├── sized_checksums_example.rs # Sized checksums demonstration
-│   └── performance_example.rs # High-performance optimizations
+│   ├── performance_example.rs # High-performance optimizations
+│   ├── expert_mode_example.rs # Simple vs expert mode comparison
+│   └── multiple_builders_example.rs # Multiple builders pattern
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User documentation
 ├── DEVELOPMENT.md          # Implementation guide and benchmarks
 ├── BENCHMARKING_GUIDE.md   # Comprehensive benchmarking strategy
-└── DESIGN_EVOLUTION.md     # Architecture evolution documentation
+├── DESIGN_EVOLUTION.md     # Architecture evolution documentation
+├── docs/
+│   ├── DESIGN_v2_5.md      # Original v2.5 processor API proposal
+│   ├── DESIGN_v2_6.md      # Current hybrid API implementation
+│   └── ZERO_COPY_ANALYSIS.md # Zero-copy behavior analysis
 
 ### Related Projects
 - **FlatBuffers**: https://flatbuffers.dev/
@@ -584,7 +639,7 @@ flatstream-rs/
 - [x] XXH3_64, CRC32, and CRC16 checksum support (feature-gated)
 - [x] Comprehensive error handling
 - [x] Zero-copy read support
-- [x] High-performance optimizations (write batching, zero-allocation reading, sized checksums)
+- [x] High-performance optimizations (zero-allocation reading, sized checksums, builder reuse)
 
 **Testing**: ✅ Complete
 - [x] 13 unit tests (100% coverage)

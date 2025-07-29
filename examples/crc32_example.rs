@@ -1,7 +1,4 @@
 use flatstream_rs::*;
-use flatbuffers::FlatBufferBuilder;
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
 
 // Import the framing types directly since we need them for CRC32
 #[cfg(feature = "crc32")]
@@ -43,7 +40,7 @@ fn main() -> Result<()> {
             builder.reset();
             let data = builder.create_string(message);
             builder.finish(data, None);
-            stream_writer.write(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote message {}: '{}'", i + 1, message);
         }
 

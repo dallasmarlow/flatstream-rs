@@ -22,23 +22,21 @@ struct TelemetryEvent {
 }
 
 impl StreamSerialize for TelemetryEvent {
-    fn serialize(
+    fn serialize<A: flatbuffers::Allocator>(
         &self,
-        builder: &mut flatbuffers::FlatBufferBuilder,
+        builder: &mut FlatBufferBuilder<A>,
     ) -> Result<(), flatstream_rs::Error> {
-        // Create a simple string representation of the telemetry data
-        let telemetry_data = format!(
-            "timestamp={},device_id={},speed_kph={:.2},rpm={},temp_c={:.2},battery={:.2}",
+        let data = format!(
+            "{},{},{},{},{},{}",
+            &self.device_id,
             self.timestamp,
-            self.device_id,
             self.speed_kph,
             self.rpm,
             self.temperature_celsius,
             self.battery_level
         );
-
-        let data = builder.create_string(&telemetry_data);
-        builder.finish(data, None);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -90,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         event.serialize(&mut builder)?;
 
         // Emit to stream (zero-allocation write)
-        stream_writer.write(&mut builder)?;
+        stream_writer.write_finished(&mut builder)?;
         event_count += 1;
     }
 

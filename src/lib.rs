@@ -31,7 +31,7 @@
 //! }
 //!
 //! impl StreamSerialize for MyData {
-//!     fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
+//!     fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
 //!         let message = builder.create_string(&self.message);
 //!         // Build your FlatBuffer here...
 //!         builder.finish(message, None);
@@ -47,10 +47,8 @@
 //!
 //!     let data = MyData { message: "Hello".to_string(), value: 42 };
 //!     
-//!     // Create and finish the builder
-//!     let mut builder = FlatBufferBuilder::new();
-//!     data.serialize(&mut builder)?;
-//!     writer.write(&mut builder)?;
+//!     // Write the data directly (simple mode)
+//!     writer.write(&data)?;
 //!     writer.flush()?;
 //!
 //!     // Read with default deframing using the Processor API
