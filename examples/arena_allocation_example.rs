@@ -9,8 +9,8 @@
 //! - Gaming engines
 //! - Any scenario where allocation overhead must be minimized
 
-use flatstream_rs::*;
 use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::*;
 use std::fs::File;
 use std::io::BufWriter;
 use std::time::Instant;
@@ -193,7 +193,10 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
     let duration = start_time.elapsed();
     let throughput = event_count as f64 / duration.as_secs_f64();
 
-    println!("   High-frequency events: {} events in {:?}", event_count, duration);
+    println!(
+        "   High-frequency events: {} events in {:?}",
+        event_count, duration
+    );
     println!("   Throughput: {:.0} events/second", throughput);
     println!("   Arena allocation: Zero system allocations during processing");
 
@@ -232,4 +235,4 @@ fn demonstrate_real_arena_allocation() -> Result<()> {
     writer.flush()?;
     Ok(())
 }
-*/ 
+*/

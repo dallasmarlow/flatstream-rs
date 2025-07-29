@@ -102,8 +102,6 @@ fn main() -> Result<()> {
         flags: (0..50).map(|i| i % 2 == 0).collect(),
     }];
 
-
-
     // Demonstrate different checksum sizes for different message types
     demonstrate_checksum_sizes(&small_messages, &medium_messages, &large_messages)?;
 
@@ -172,8 +170,6 @@ fn demonstrate_checksum_sizes(
         println!("   Large messages (XXHash64): {} bytes", file_size);
     }
 
-
-
     // Read back and verify
     println!("\n2. Reading and verifying messages...");
 
@@ -209,8 +205,6 @@ fn demonstrate_checksum_sizes(
             count
         );
     }
-
-
 
     Ok(())
 }
@@ -308,8 +302,6 @@ fn demonstrate_performance_comparison() -> Result<()> {
         );
     }
 
-
-
     println!("\n4. Checksum size comparison:");
     println!("   No checksum: 0 bytes overhead");
     #[cfg(feature = "crc16")]
@@ -318,7 +310,6 @@ fn demonstrate_performance_comparison() -> Result<()> {
     println!("   CRC32: 4 bytes overhead per message");
     #[cfg(feature = "xxhash")]
     println!("   XXHash64: 8 bytes overhead per message");
-
 
     println!("\n💡 Key Benefits:");
     println!(

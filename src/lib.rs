@@ -97,5 +97,3 @@ pub use checksum::Crc32;
 
 #[cfg(feature = "crc16")]
 pub use checksum::Crc16;
-
-

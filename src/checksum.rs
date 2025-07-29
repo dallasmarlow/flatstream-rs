@@ -93,8 +93,6 @@ impl Checksum for Crc16 {
     }
 }
 
-
-
 // For backward compatibility, we can provide a "None" checksum implementation
 /// A no-op checksum implementation for when checksums are not needed.
 #[derive(Default, Clone, Copy)]
@@ -180,8 +178,6 @@ mod tests {
         assert_eq!(checksum.size(), 2);
     }
 
-
-
     #[test]
     fn test_checksum_sizes() {
         let no_checksum = NoChecksum::new();
@@ -204,7 +200,5 @@ mod tests {
             let crc16 = Crc16::new();
             assert_eq!(crc16.size(), 2);
         }
-
-
     }
 }

@@ -213,7 +213,7 @@ mod tests {
     fn test_with_builder() {
         let mut buffer = Vec::new();
         let framer = DefaultFramer;
-        
+
         // Create a custom builder (simulating arena allocation)
         let builder = FlatBufferBuilder::new();
         let mut writer = StreamWriter::with_builder(Cursor::new(&mut buffer), framer, builder);

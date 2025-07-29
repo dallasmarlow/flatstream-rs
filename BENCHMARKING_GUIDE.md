@@ -7,11 +7,12 @@ This guide covers the comprehensive benchmarking strategy for `flatstream-rs`, i
 ## Benchmark Categories
 
 ### 1. Core Performance Benchmarks
-- **Write Performance**: Default framer, XXHash64, CRC32 checksums
-- **Read Performance**: Default deframer, XXHash64, CRC32 checksums  
+- **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
+- **Read Performance**: Default deframer, XXHash64, CRC32, CRC16 checksums  
 - **Zero-Allocation Reading**: High-performance pattern comparison
 - **Write Batching**: Batch vs iterative performance comparison
 - **End-to-End Cycles**: Complete write-read cycle performance
+- **Parameterized Checksum Comparison**: Direct performance comparison across checksum algorithms
 
 ### 2. Real-World Scenario Benchmarks
 - **High-Frequency Telemetry**: 1000 message scenarios
@@ -85,6 +86,97 @@ read_100_messages_checksum       0.8451ms                             0.9127ms (
 ```
 
 This process provides concrete, undeniable evidence of a performance change, allowing us to pinpoint exactly which operations were affected.
+
+## Parameterized Checksum Benchmarking
+
+### Direct Performance Comparison Across Checksum Algorithms
+
+The benchmark suite includes parameterized benchmarks that directly compare the performance characteristics of different checksum algorithms. This provides empirical data to help users choose the optimal checksum for their specific use case.
+
+#### Implementation Details
+
+The parameterized benchmarks use Criterion's `BenchmarkId` and `Throughput` features to create fair comparisons:
+
+```rust
+/// Generic benchmark function for writing with a given checksum algorithm
+fn bench_write_with_checksum<C: Checksum + Default + Copy>(c: &mut Criterion, checksum_name: &str) {
+    let mut group = c.benchmark_group("write_checksum_variants");
+    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    
+    // Calculate total throughput in bytes for fair comparison
+    let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("write_100_messages", checksum_name), 
+        &messages, 
+        |b, msgs| {
+            b.iter(|| {
+                let mut buffer = Vec::new();
+                let checksum = C::default();
+                let framer = ChecksumFramer::new(checksum);
+                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+                
+                for message in msgs {
+                    writer.write(message).unwrap();
+                }
+                
+                black_box(buffer);
+            });
+        }
+    );
+
+    group.finish();
+}
+```
+
+#### Benchmark Categories
+
+The parameterized benchmarks cover three key scenarios:
+
+1. **Write Performance**: Measures the overhead of different checksum algorithms during serialization
+2. **Read Performance**: Measures the overhead of checksum verification during deserialization  
+3. **Write-Read Cycle**: Measures end-to-end performance including both serialization and verification
+
+#### Sample Results
+
+When running with all checksums enabled (`cargo bench --features all_checksums`), the results show:
+
+```
+write_checksum_variants/write_100_messages/XXHash64
+                        time:   [2.1538 µs 2.1947 µs 2.2626 µs]
+                        thrpt:  [1.1072 GiB/s 1.1415 GiB/s 1.1632 GiB/s]
+
+write_checksum_variants/write_100_messages/CRC32
+                        time:   [2.3239 µs 2.3422 µs 2.3614 µs]
+                        thrpt:  [1.0609 GiB/s 1.0696 GiB/s 1.0780 GiB/s]
+
+write_checksum_variants/write_100_messages/CRC16
+                        time:   [5.0367 µs 5.0529 µs 5.0714 µs]
+                        thrpt:  [505.86 MiB/s 507.70 MiB/s 509.33 MiB/s]
+```
+
+#### Performance Insights
+
+The benchmarks reveal important trade-offs:
+
+- **XXHash64**: Fastest algorithm, 8-byte checksum, excellent for high-performance scenarios
+- **CRC32**: Good balance of speed and error detection, 4-byte checksum
+- **CRC16**: Slowest algorithm, 2-byte checksum, suitable for space-constrained scenarios
+
+#### Usage
+
+To run parameterized checksum benchmarks:
+
+```bash
+# Run with specific checksum features
+cargo bench --features xxhash
+cargo bench --features crc32
+cargo bench --features crc16
+
+# Run with all checksums for comparison
+cargo bench --features all_checksums
+```
 
 ## Comparative Benchmarking
 

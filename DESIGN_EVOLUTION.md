@@ -669,8 +669,9 @@ writer.write(&"high-performance data")?;
 - **Predictable Performance**: No GC pressure or allocation stalls
 
 **Comprehensive Benchmark Validation:**
-- **8 benchmark categories** covering all performance aspects
-- **Feature-gated benchmarking** for XXHash64 and CRC32 algorithms
+- **11 benchmark categories** covering all performance aspects
+- **Feature-gated benchmarking** for XXHash64, CRC32, and CRC16 algorithms
+- **Parameterized checksum comparison** for direct algorithm performance analysis
 - **Real-world scenario testing** with high-frequency telemetry workloads
 - **Memory efficiency analysis** with buffer usage tracking
 - **Performance validation** confirming all optimization claims

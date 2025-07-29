@@ -21,8 +21,6 @@ use flatstream_rs::Crc32;
 #[cfg(feature = "crc16")]
 use flatstream_rs::Crc16;
 
-
-
 #[test]
 fn test_write_read_cycle_default() {
     let temp_file = NamedTempFile::new().unwrap();
@@ -252,5 +250,3 @@ fn test_write_read_cycle_with_crc16() {
         assert_eq!(stream_reader.count(), 1);
     }
 }
-
-

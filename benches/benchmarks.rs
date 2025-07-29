@@ -1,13 +1,20 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use flatstream_rs::checksum::Checksum;
 use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+
 #[cfg(feature = "xxhash")]
-use flatstream_rs::{ChecksumDeframer, ChecksumFramer, XxHash64};
+use flatstream_rs::XxHash64;
 
 #[cfg(feature = "crc32")]
 use flatstream_rs::Crc32;
+
+#[cfg(feature = "crc16")]
+use flatstream_rs::Crc16;
 
 // Test data generation utilities
 fn create_test_messages(count: usize) -> Vec<String> {
@@ -24,6 +31,155 @@ fn create_large_messages(count: usize) -> Vec<String> {
 const SMALL_MESSAGE_COUNT: usize = 100;
 const LARGE_MESSAGE_COUNT: usize = 50;
 const HIGH_FREQUENCY_COUNT: usize = 1000;
+
+// === PARAMETERIZED CHECKSUM BENCHMARKS ===
+
+/// Generic benchmark function for writing with a given checksum algorithm
+/// This allows us to compare performance across different checksum implementations
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+fn bench_write_with_checksum<C: Checksum + Default + Copy>(c: &mut Criterion, checksum_name: &str) {
+    use flatstream_rs::framing::ChecksumFramer;
+
+    let mut group = c.benchmark_group("write_checksum_variants");
+    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+
+    // Calculate total throughput in bytes
+    let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("write_100_messages", checksum_name),
+        &messages,
+        |b, msgs| {
+            b.iter(|| {
+                let mut buffer = Vec::new();
+                let checksum = C::default();
+                let framer = ChecksumFramer::new(checksum);
+                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+                for message in msgs {
+                    writer.write(message).unwrap();
+                }
+
+                black_box(buffer);
+            });
+        },
+    );
+
+    group.finish();
+}
+
+/// Generic benchmark function for reading with a given checksum algorithm
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+fn bench_read_with_checksum<C: Checksum + Default + Copy>(c: &mut Criterion, checksum_name: &str) {
+    use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+
+    let mut group = c.benchmark_group("read_checksum_variants");
+
+    // Prepare test data with the specific checksum
+    let mut buffer = Vec::new();
+    {
+        let checksum = C::default();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+        for message in &messages {
+            writer.write(message).unwrap();
+        }
+    }
+
+    let total_bytes = buffer.len();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("read_100_messages", checksum_name),
+        &buffer,
+        |b, data| {
+            b.iter(|| {
+                let checksum = C::default();
+                let deframer = ChecksumDeframer::new(checksum);
+                let reader = StreamReader::new(Cursor::new(data), deframer);
+
+                // Count all messages
+                let count = reader.count();
+                black_box(count);
+            });
+        },
+    );
+
+    group.finish();
+}
+
+/// Generic benchmark function for write-read cycle with a given checksum algorithm
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+fn bench_write_read_cycle_with_checksum<C: Checksum + Default + Copy>(
+    c: &mut Criterion,
+    checksum_name: &str,
+) {
+    use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+
+    let mut group = c.benchmark_group("write_read_cycle_checksum_variants");
+    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+
+    let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("write_read_cycle_100_messages", checksum_name),
+        &messages,
+        |b, msgs| {
+            b.iter(|| {
+                // Write phase
+                let mut buffer = Vec::new();
+                let checksum = C::default();
+                let framer = ChecksumFramer::new(checksum);
+                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+                for message in msgs {
+                    writer.write(message).unwrap();
+                }
+
+                // Read phase
+                let deframer = ChecksumDeframer::new(checksum);
+                let reader = StreamReader::new(Cursor::new(&buffer), deframer);
+                let count = reader.count();
+
+                black_box((buffer, count));
+            });
+        },
+    );
+
+    group.finish();
+}
+
+/// Benchmark function that runs all checksum variants
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+fn benchmark_checksum_variants(c: &mut Criterion) {
+    // Import checksum types conditionally
+    #[cfg(feature = "xxhash")]
+    {
+        use flatstream_rs::XxHash64;
+        bench_write_with_checksum::<XxHash64>(c, "XXHash64");
+        bench_read_with_checksum::<XxHash64>(c, "XXHash64");
+        bench_write_read_cycle_with_checksum::<XxHash64>(c, "XXHash64");
+    }
+
+    #[cfg(feature = "crc32")]
+    {
+        use flatstream_rs::Crc32;
+        bench_write_with_checksum::<Crc32>(c, "CRC32");
+        bench_read_with_checksum::<Crc32>(c, "CRC32");
+        bench_write_read_cycle_with_checksum::<Crc32>(c, "CRC32");
+    }
+
+    #[cfg(feature = "crc16")]
+    {
+        use flatstream_rs::Crc16;
+        bench_write_with_checksum::<Crc16>(c, "CRC16");
+        bench_read_with_checksum::<Crc16>(c, "CRC16");
+        bench_write_read_cycle_with_checksum::<Crc16>(c, "CRC16");
+    }
+}
 
 // === WRITE BENCHMARKS ===
 
@@ -627,7 +783,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
 // === MAIN BENCHMARK CONFIGURATION ===
 
 // Define benchmark groups based on enabled features
-#[cfg(not(any(feature = "xxhash", feature = "crc32")))]
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 criterion_group!(
     benches,
     benchmark_write_default_framer,
@@ -642,7 +798,7 @@ criterion_group!(
     benchmark_regression_sensitive_operations,
 );
 
-#[cfg(all(feature = "xxhash", not(feature = "crc32")))]
+#[cfg(all(feature = "xxhash", not(any(feature = "crc32", feature = "crc16"))))]
 criterion_group!(
     benches,
     benchmark_write_default_framer,
@@ -661,9 +817,10 @@ criterion_group!(
     benchmark_write_batch_with_checksum,
     benchmark_write_read_cycle_with_checksum,
     benchmark_large_messages_with_checksum,
+    benchmark_checksum_variants,
 );
 
-#[cfg(all(not(feature = "xxhash"), feature = "crc32"))]
+#[cfg(all(not(feature = "xxhash"), feature = "crc32", not(feature = "crc16")))]
 criterion_group!(
     benches,
     benchmark_write_default_framer,
@@ -678,9 +835,10 @@ criterion_group!(
     benchmark_regression_sensitive_operations,
     benchmark_write_crc32_checksum,
     benchmark_read_crc32_checksum,
+    benchmark_checksum_variants,
 );
 
-#[cfg(all(feature = "xxhash", feature = "crc32"))]
+#[cfg(all(feature = "xxhash", feature = "crc32", not(feature = "crc16")))]
 criterion_group!(
     benches,
     benchmark_write_default_framer,
@@ -701,6 +859,88 @@ criterion_group!(
     benchmark_large_messages_with_checksum,
     benchmark_write_crc32_checksum,
     benchmark_read_crc32_checksum,
+    benchmark_checksum_variants,
+);
+
+// Add CRC16-specific groups
+#[cfg(all(not(feature = "xxhash"), not(feature = "crc32"), feature = "crc16"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_checksum_variants,
+);
+
+#[cfg(all(feature = "xxhash", not(feature = "crc32"), feature = "crc16"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_write_xxhash64_checksum,
+    benchmark_read_xxhash64_checksum,
+    benchmark_zero_allocation_reading_with_checksum,
+    benchmark_write_batch_with_checksum,
+    benchmark_write_read_cycle_with_checksum,
+    benchmark_large_messages_with_checksum,
+    benchmark_checksum_variants,
+);
+
+#[cfg(all(not(feature = "xxhash"), feature = "crc32", feature = "crc16"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_write_crc32_checksum,
+    benchmark_read_crc32_checksum,
+    benchmark_checksum_variants,
+);
+
+#[cfg(all(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+criterion_group!(
+    benches,
+    benchmark_write_default_framer,
+    benchmark_read_default_deframer,
+    benchmark_zero_allocation_reading,
+    benchmark_write_batch_vs_iterative,
+    benchmark_write_read_cycle_default,
+    benchmark_high_frequency_telemetry,
+    benchmark_high_frequency_reading,
+    benchmark_large_messages,
+    benchmark_memory_efficiency,
+    benchmark_regression_sensitive_operations,
+    benchmark_write_xxhash64_checksum,
+    benchmark_read_xxhash64_checksum,
+    benchmark_zero_allocation_reading_with_checksum,
+    benchmark_write_batch_with_checksum,
+    benchmark_write_read_cycle_with_checksum,
+    benchmark_large_messages_with_checksum,
+    benchmark_write_crc32_checksum,
+    benchmark_read_crc32_checksum,
+    benchmark_checksum_variants,
 );
 
 criterion_main!(benches);
