@@ -239,10 +239,15 @@ writer.write_batch(&messages)?;
 - **Memory streams**: In-memory validation
 
 ### Performance Benchmarks
-- **Write throughput**: With/without checksums
-- **Read throughput**: With/without checksums
+- **Write throughput**: With/without checksums (Default, XXHash64, CRC32)
+- **Read throughput**: With/without checksums (Default, XXHash64, CRC32)
+- **Zero-allocation reading**: High-performance pattern comparison
+- **Write batching**: Batch vs iterative performance analysis
 - **End-to-end**: Complete write-read cycles
-- **Scale testing**: 100 message scenarios
+- **High-frequency telemetry**: 1000 message stress testing
+- **Large messages**: Real-world message size simulation
+- **Memory efficiency**: Buffer usage and allocation analysis
+- **Scale testing**: 100 message scenarios with comprehensive coverage
 
 **Benchmark Results (Release Mode):**
 - Write with checksum: ~19.4 µs for 100 messages
@@ -253,9 +258,25 @@ writer.write_batch(&messages)?;
 - Zero-allocation reading: ~84.1% performance improvement
 - High-frequency telemetry: 1.1M messages/sec write, 11.9M messages/sec read
 
+**Comprehensive Benchmark Coverage:**
+- **Write Performance**: Default framer, XXHash64, CRC32 checksums
+- **Read Performance**: Default deframer, XXHash64, CRC32 checksums  
+- **Zero-Allocation Reading**: High-performance pattern comparison
+- **Write Batching**: Batch vs iterative performance comparison
+- **End-to-End Cycles**: Complete write-read cycle performance
+- **High-Frequency Telemetry**: 1000 message scenarios
+- **Large Messages**: Real-world message size simulation
+- **Memory Efficiency**: Memory usage analysis
+
+**Feature-Gated Benchmarking:**
+- Conditional compilation for `xxhash` and `crc32` features
+- Automatic benchmark selection based on enabled features
+- Comprehensive coverage of all available checksum algorithms
+
 **Benchmark Commands:**
 ```bash
 cargo bench                    # Run all benchmarks
+cargo bench --features all_checksums  # Run with all checksum algorithms
 cargo test                     # Run all tests
 cargo test --release          # Release mode tests
 ```
@@ -505,7 +526,7 @@ flatstream-rs/
 ├── tests/
 │   └── integration_tests.rs # End-to-end tests
 ├── benches/
-│   └── benchmarks.rs       # Performance benchmarks
+│   └── benchmarks.rs       # Comprehensive performance benchmarks
 ├── examples/
 │   ├── telemetry_agent.rs  # Real-world example
 │   ├── composable_example.rs # Trait-based API demonstration
@@ -513,6 +534,7 @@ flatstream-rs/
 │   └── performance_example.rs # High-performance optimizations
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User documentation
+├── DEVELOPMENT.md          # Implementation guide and benchmarks
 └── DESIGN_EVOLUTION.md     # Architecture evolution documentation
 ```
 
