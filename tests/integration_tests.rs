@@ -3,7 +3,7 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Write};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -393,5 +393,66 @@ fn test_realistic_telemetry_data() {
             })
             .unwrap();
         assert_eq!(count, 3);
+    }
+}
+
+#[test]
+fn test_partial_file_read() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    // Write a message but truncate the file
+    {
+        let file = File::create(path).unwrap();
+        let writer = BufWriter::new(file);
+        let framer = DefaultFramer;
+        let mut stream_writer = StreamWriter::new(writer, framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        let data = builder.create_string("a long partial message");
+        builder.finish(data, None);
+        stream_writer.write(&mut builder).unwrap();
+        stream_writer.flush().unwrap();
+    }
+
+    // Truncate the file to simulate corruption
+    {
+        let data = std::fs::read(path).unwrap();
+        let truncated_size = data.len() - 5; // Remove last 5 bytes
+        let mut file = File::create(path).unwrap();
+        file.write_all(&data[..truncated_size]).unwrap();
+    }
+
+    // Try to read the truncated file using process_all
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let result = stream_reader.process_all(|_payload| Ok(()));
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            Error::UnexpectedEof => {} // Expected
+            e => panic!("Expected UnexpectedEof error, got: {:?}", e),
+        }
+    }
+
+    // Try to read the truncated file using messages().next()
+    {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let deframer = DefaultDeframer;
+        let mut stream_reader = StreamReader::new(reader, deframer);
+
+        let mut messages = stream_reader.messages();
+        let result = messages.next();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            Error::UnexpectedEof => {} // Expected
+            e => panic!("Expected UnexpectedEof error, got: {:?}", e),
+        }
     }
 }

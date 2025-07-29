@@ -341,6 +341,57 @@ mod tests {
         assert_eq!(count, 0);
     }
 
+    #[test]
+    fn test_process_all_error_propagation() {
+        // Write some test data first
+        let mut buffer = Vec::new();
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+        let mut builder = FlatBufferBuilder::new();
+        for i in 0..5 {
+            builder.reset();
+            let data = builder.create_string(&format!("message {}", i));
+            builder.finish(data, None);
+            writer.write(&mut builder).unwrap();
+        }
+
+        // Now test error propagation in process_all
+        let data = buffer;
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
+
+        let mut count = 0;
+        let result = reader.process_all(|_payload| {
+            count += 1;
+            
+            // Simulate an error on the third message
+            if count == 3 {
+                return Err(crate::error::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Simulated processing error"
+                )));
+            }
+            
+            Ok(())
+        });
+
+        // Should get an error
+        assert!(result.is_err());
+        
+        // Should have processed exactly 3 messages before the error
+        assert_eq!(count, 3);
+        
+        // Verify the error is the one we created
+        match result.unwrap_err() {
+            crate::error::Error::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::Other);
+                assert_eq!(e.to_string(), "Simulated processing error");
+            }
+            _ => panic!("Expected Io error"),
+        }
+    }
+
     #[cfg(feature = "xxhash")]
     #[test]
     fn test_checksum_mismatch() {
