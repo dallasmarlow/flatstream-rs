@@ -552,6 +552,9 @@ The v2 architecture makes it trivial to add new functionality without modifying 
 [features]
 crc32 = ["crc32fast"]
 
+# Optional: Add a meta-feature for convenience
+all_checksums = ["checksum", "crc32"]
+
 [dependencies.crc32fast]
 version = "1.4"
 optional = true
@@ -589,6 +592,11 @@ writer.write(&"my data")?; // Works immediately!
 ```
 
 **Result:** Users can now use CRC32 checksums by simply enabling the `crc32` feature, with zero changes to core library code.
+
+**Developer Convenience:** The `all_checksums` meta-feature enables all available checksum algorithms for comprehensive testing and development:
+```bash
+cargo test --features all_checksums  # Runs all tests with all checksums enabled
+```
 
 ### Planned Extensions
 

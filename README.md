@@ -48,3 +48,23 @@ Add `flatstream-rs` to your `Cargo.toml`:
 flatstream-rs = "0.1.0" # Or the latest version
 flatbuffers = "24.3.25" # Or the version you are using
 xxhash-rust = { version = "0.8", features = ["xxh3"] } # If using xxh3_64
+
+## Available Features
+
+The library supports several optional features to customize functionality:
+
+- **`checksum`**: Enables XXHash64 checksum support (default: disabled)
+- **`crc32`**: Enables CRC32 checksum support (default: disabled)
+- **`all_checksums`**: Enables all available checksum algorithms for testing and development
+- **`async`**: Enables async I/O support with tokio (default: disabled)
+
+Example with multiple features:
+```toml
+[dependencies]
+flatstream-rs = { version = "0.1.0", features = ["checksum", "crc32"] }
+```
+
+For comprehensive testing with all checksums enabled:
+```bash
+cargo test --features all_checksums
+```

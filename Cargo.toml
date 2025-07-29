@@ -21,6 +21,9 @@ async = ["tokio"]
 checksum = ["xxhash-rust"]
 crc32 = ["crc32fast"]
 
+# Meta-feature to enable all checksum algorithms for testing and development
+all_checksums = ["checksum", "crc32"]
+
 [dependencies.xxhash-rust]
 version = "0.8"
 features = ["xxh3"]

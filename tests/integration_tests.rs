@@ -5,13 +5,15 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Write};
 use tempfile::NamedTempFile;
 
+// Import framing types once (available when either checksum feature is enabled)
+#[cfg(any(feature = "checksum", feature = "crc32"))]
+use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+
 // Conditionally import checksum components when the feature is enabled
 #[cfg(feature = "checksum")]
-use flatstream_rs::{ChecksumDeframer, ChecksumFramer, XxHash64};
+use flatstream_rs::XxHash64;
 
 // Conditionally import CRC32 components when the feature is enabled
-#[cfg(feature = "crc32")]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 #[cfg(feature = "crc32")]
 use flatstream_rs::Crc32;
 
