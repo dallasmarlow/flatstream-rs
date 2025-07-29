@@ -1,113 +1,57 @@
-use crate::checksum::ChecksumType;
-use crate::error::{Error, Result};
-use std::io::Read;
+//! A generic, composable reader for `flatstream`.
 
-/// A reader for streaming FlatBuffers messages with optional checksum verification.
+use crate::error::Result;
+use crate::framing::Deframer;
+use std::io::Read;
+use std::marker::PhantomData;
+
+/// A reader for streaming messages from a `flatstream`.
 ///
-/// The `StreamReader` reads messages in the format:
-/// `[4-byte Payload Length (u32, little-endian) | 8-byte Checksum (u64, little-endian, if enabled) | FlatBuffer Payload]`
-pub struct StreamReader<R: Read> {
+/// This reader is generic over a `Deframer` strategy, which defines how
+/// each message is parsed from the byte stream. It implements `Iterator`
+/// to provide an ergonomic way to process messages.
+pub struct StreamReader<R: Read, D: Deframer> {
     reader: R,
-    checksum_type: ChecksumType,
+    deframer: D,
+    // The reader owns its buffer, resizing as needed.
+    // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
+    _phantom: PhantomData<D>, // PhantomData because D is only used in method calls
 }
 
-impl<R: Read> StreamReader<R> {
-    /// Create a new `StreamReader` with the specified underlying reader and checksum type.
-    ///
-    /// # Arguments
-    /// * `reader` - The underlying reader to read from
-    /// * `checksum_type` - The type of checksum to use for data integrity verification
-    pub fn new(reader: R, checksum_type: ChecksumType) -> Self {
+impl<R: Read, D: Deframer> StreamReader<R, D> {
+    /// Creates a new `StreamReader` with the given reader and deframing strategy.
+    pub fn new(reader: R, deframer: D) -> Self {
         Self {
             reader,
-            checksum_type,
+            deframer,
             buffer: Vec::new(),
+            _phantom: PhantomData,
         }
     }
 
-    /// Read the next message from the stream.
-    ///
-    /// This method:
-    /// 1. Reads 4 bytes for payload length
-    /// 2. Reads 8 bytes for checksum (if enabled)
-    /// 3. Reads the payload bytes
-    /// 4. Verifies the checksum
-    /// 5. Returns the raw FlatBuffer payload
-    ///
-    /// # Returns
-    /// * `Ok(Some(payload))` - Successfully read a message
-    /// * `Ok(None)` - End of stream (clean EOF)
-    /// * `Err(e)` - Error reading or verifying the message
-    pub fn read_message(&mut self) -> Result<Option<Vec<u8>>> {
-        // Read payload length (4 bytes, little-endian)
-        let mut length_bytes = [0u8; 4];
-        match self.reader.read_exact(&mut length_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Ok(None); // Clean EOF
-            }
-            Err(e) => return Err(Error::Io(e)),
+    /// Reads the next message into the internal buffer. This is the low-level
+    /// alternative to using the iterator interface.
+    /// Returns Ok(Some(payload)) on success, Ok(None) on clean EOF.
+    pub fn read_message(&mut self) -> Result<Option<&[u8]>> {
+        match self
+            .deframer
+            .read_and_deframe(&mut self.reader, &mut self.buffer)?
+        {
+            Some(_) => Ok(Some(&self.buffer)),
+            None => Ok(None),
         }
-
-        let payload_length = u32::from_le_bytes(length_bytes) as usize;
-
-        // Read checksum (8 bytes, little-endian, if enabled)
-        let mut checksum_bytes = [0u8; 8];
-        let expected_checksum = if self.checksum_type != ChecksumType::None {
-            match self.reader.read_exact(&mut checksum_bytes) {
-                Ok(_) => u64::from_le_bytes(checksum_bytes),
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Err(Error::UnexpectedEof);
-                }
-                Err(e) => return Err(Error::Io(e)),
-            }
-        } else {
-            0 // Not used when checksums are disabled
-        };
-
-        // Read payload
-        self.buffer.resize(payload_length, 0);
-        match self.reader.read_exact(&mut self.buffer) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Err(Error::UnexpectedEof);
-            }
-            Err(e) => return Err(Error::Io(e)),
-        }
-
-        // Verify checksum
-        self.checksum_type
-            .verify_checksum(expected_checksum, &self.buffer)?;
-
-        // Return a copy of the payload
-        Ok(Some(self.buffer.clone()))
-    }
-
-    /// Get a reference to the underlying reader.
-    pub fn reader(&self) -> &R {
-        &self.reader
-    }
-
-    /// Get a mutable reference to the underlying reader.
-    pub fn reader_mut(&mut self) -> &mut R {
-        &mut self.reader
-    }
-
-    /// Consume this reader and return the underlying reader.
-    pub fn into_inner(self) -> R {
-        self.reader
     }
 }
 
-impl<R: Read> Iterator for StreamReader<R> {
+impl<R: Read, D: Deframer> Iterator for StreamReader<R, D> {
     type Item = Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.read_message() {
-            Ok(Some(payload)) => Some(Ok(payload)),
-            Ok(None) => None, // End of stream
-            Err(e) => Some(Err(e)),
+            Ok(Some(payload)) => Some(Ok(payload.to_vec())), // Return a copy for iterator safety
+            Ok(None) => None,                                // Clean end of stream
+            Err(e) => Some(Err(e)),                          // An error occurred
         }
     }
 }
@@ -115,29 +59,51 @@ impl<R: Read> Iterator for StreamReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framing::DefaultDeframer;
+    use crate::framing::DefaultFramer;
     use crate::writer::StreamWriter;
-    use flatbuffers::FlatBufferBuilder;
+
+    #[cfg(feature = "checksum")]
+    use crate::{ChecksumDeframer, ChecksumFramer, XxHash64};
     use std::io::Cursor;
 
     #[test]
     fn test_read_message_with_checksum() {
         // Write a message first
         let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
-
-        // Create a simple FlatBuffer
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_message(&mut builder).unwrap();
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        writer.write(&"test data").unwrap();
 
         // Now read it back
         let data = buffer;
-        let mut reader = StreamReader::new(Cursor::new(data), ChecksumType::XxHash64);
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
 
         let result = reader.read_message().unwrap();
         assert!(result.is_some());
+        let payload = result.unwrap();
+        assert!(!payload.is_empty());
+    }
 
+    #[cfg(feature = "checksum")]
+    #[test]
+    fn test_read_message_with_checksum_feature() {
+        // Write a message first
+        let mut buffer = Vec::new();
+        let checksum = XxHash64::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        writer.write(&"test data").unwrap();
+
+        // Now read it back
+        let data = buffer;
+        let checksum = XxHash64::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
+
+        let result = reader.read_message().unwrap();
+        assert!(result.is_some());
         let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
@@ -146,21 +112,17 @@ mod tests {
     fn test_read_message_without_checksum() {
         // Write a message first
         let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::None);
-
-        // Create a simple FlatBuffer
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("no checksum");
-        builder.finish(data, None);
-        writer.write_message(&mut builder).unwrap();
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        writer.write(&"no checksum").unwrap();
 
         // Now read it back
         let data = buffer;
-        let mut reader = StreamReader::new(Cursor::new(data), ChecksumType::None);
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
 
         let result = reader.read_message().unwrap();
         assert!(result.is_some());
-
         let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
@@ -169,48 +131,72 @@ mod tests {
     fn test_read_multiple_messages() {
         // Write multiple messages
         let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            writer.write_message(&mut builder).unwrap();
+            writer.write(&format!("message {}", i)).unwrap();
         }
 
         // Read them back
         let data = buffer;
-        let mut reader = StreamReader::new(Cursor::new(data), ChecksumType::XxHash64);
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
 
         let mut count = 0;
         while let Some(result) = reader.next() {
             assert!(result.is_ok());
             count += 1;
         }
+        assert_eq!(count, 3);
+    }
 
+    #[cfg(feature = "checksum")]
+    #[test]
+    fn test_read_multiple_messages_with_checksum() {
+        // Write multiple messages
+        let mut buffer = Vec::new();
+        let checksum = XxHash64::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+
+        for i in 0..3 {
+            writer.write(&format!("message {}", i)).unwrap();
+        }
+
+        // Read them back
+        let data = buffer;
+        let checksum = XxHash64::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
+
+        let mut count = 0;
+        while let Some(result) = reader.next() {
+            assert!(result.is_ok());
+            count += 1;
+        }
         assert_eq!(count, 3);
     }
 
     #[test]
     fn test_read_empty_stream() {
         let empty_data = Vec::new();
-        let mut reader = StreamReader::new(Cursor::new(empty_data), ChecksumType::XxHash64);
+        let deframer = DefaultDeframer;
+        let mut reader = StreamReader::new(Cursor::new(empty_data), deframer);
 
         let result = reader.read_message().unwrap();
         assert!(result.is_none());
     }
 
+    #[cfg(feature = "checksum")]
     #[test]
     fn test_checksum_mismatch() {
         // Write a message with checksum
         let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), ChecksumType::XxHash64);
-
-        // Create a simple FlatBuffer
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_message(&mut builder).unwrap();
+        let checksum = XxHash64::new();
+        let framer = ChecksumFramer::new(checksum);
+        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        writer.write(&"test data").unwrap();
 
         // Corrupt the data by flipping a bit
         let mut data = buffer;
@@ -219,13 +205,15 @@ mod tests {
         }
 
         // Try to read the corrupted data
-        let mut reader = StreamReader::new(Cursor::new(data), ChecksumType::XxHash64);
+        let checksum = XxHash64::new();
+        let deframer = ChecksumDeframer::new(checksum);
+        let mut reader = StreamReader::new(Cursor::new(data), deframer);
         let result = reader.read_message();
 
         // Should get a checksum mismatch error
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ChecksumMismatch { .. } => {} // Expected
+            crate::error::Error::ChecksumMismatch { .. } => {} // Expected
             e => panic!("Expected ChecksumMismatch error, got: {:?}", e),
         }
     }
