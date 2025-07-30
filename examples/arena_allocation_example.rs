@@ -30,9 +30,11 @@ struct HighFrequencyEvent {
 }
 
 impl StreamSerialize for HighFrequencyEvent {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
         let symbol = builder.create_string(&self.symbol);
-        builder.finish(symbol, None);
+        let data = format!("{},{},{},{}", self.timestamp, self.price, self.volume, &self.symbol);
+        let data_str = builder.create_string(&data);
+        builder.finish(data_str, None);
         Ok(())
     }
 }
@@ -78,7 +80,7 @@ fn demonstrate_allocation_strategies() -> Result<()> {
             // Build and write with external builder
             builder.reset();
             event.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
 
@@ -110,7 +112,7 @@ fn demonstrate_allocation_strategies() -> Result<()> {
             // Build and write with arena-allocated builder
             builder.reset();
             event.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
 
@@ -148,7 +150,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
 
             builder.reset();
             event.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
     }
@@ -175,7 +177,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
 
             builder.reset();
             event.serialize(&mut builder)?;
-            writer.write(&mut builder)?;
+            writer.write_finished(&mut builder)?;
         }
         writer.flush()?;
     }
@@ -221,7 +223,7 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
 
         builder.reset();
         event.serialize(&mut builder)?;
-        writer.write(&mut builder)?;
+        writer.write_finished(&mut builder)?;
     }
     writer.flush()?;
 

@@ -36,7 +36,7 @@ fn main() -> Result<()> {
                 builder.reset();
                 let data = builder.create_string(message);
                 builder.finish(data, None);
-                stream_writer.write(&mut builder)?;
+                stream_writer.write_finished(&mut builder)?;
             }
             stream_writer.flush()?;
         }
@@ -113,15 +113,12 @@ fn main() -> Result<()> {
             timestamp: u64,
             sensor_id: u32,
             value: f64,
+            unit: String, // Added unit field for the new serialize method
         }
 
         impl StreamSerialize for SensorData {
-            fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-                // Create a simple string representation for this example
-                let data = format!(
-                    "timestamp={},sensor_id={},value={:.2}",
-                    self.timestamp, self.sensor_id, self.value
-                );
+            fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
+                let data = format!("{},{},{},{}", self.sensor_id, self.timestamp, self.value, &self.unit);
                 let data_str = builder.create_string(&data);
                 builder.finish(data_str, None);
                 Ok(())
@@ -134,6 +131,7 @@ fn main() -> Result<()> {
                 timestamp: 1640995200000 + (i * 1000), // Unix timestamp in ms
                 sensor_id: (i % 10) as u32,            // 10 different sensors
                 value: 20.0 + (i as f64 * 0.1),        // Temperature-like values
+                unit: "C".to_string(), // Added unit field
             })
             .collect();
 
@@ -153,7 +151,7 @@ fn main() -> Result<()> {
             for data in &sensor_data {
                 builder.reset();
                 data.serialize(&mut builder)?;
-                stream_writer.write(&mut builder)?;
+                stream_writer.write_finished(&mut builder)?;
             }
             stream_writer.flush()?;
         }

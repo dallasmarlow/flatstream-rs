@@ -159,7 +159,7 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("test data");
         builder.finish(data, None);
-        writer.write(&mut builder).unwrap();
+        writer.write_finished(&mut builder).unwrap();
 
         // Now read it back
         let data = buffer;
@@ -184,7 +184,7 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("test data");
         builder.finish(data, None);
-        writer.write(&mut builder).unwrap();
+        writer.write_finished(&mut builder).unwrap();
 
         // Now read it back
         let data = buffer;
@@ -208,7 +208,7 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("no checksum");
         builder.finish(data, None);
-        writer.write(&mut builder).unwrap();
+        writer.write_finished(&mut builder).unwrap();
 
         // Now read it back
         let data = buffer;
@@ -232,7 +232,7 @@ mod tests {
             let mut builder = FlatBufferBuilder::new();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+            writer.write_finished(&mut builder).unwrap();
         }
 
         // Read them back using process_all
@@ -263,7 +263,7 @@ mod tests {
             let mut builder = FlatBufferBuilder::new();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+            writer.write_finished(&mut builder).unwrap();
         }
 
         // Read them back using the expert API
@@ -293,7 +293,7 @@ mod tests {
             let mut builder = FlatBufferBuilder::new();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+            writer.write_finished(&mut builder).unwrap();
         }
 
         // Read them back using process_all
@@ -353,7 +353,7 @@ mod tests {
             builder.reset();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+            writer.write_finished(&mut builder).unwrap();
         }
 
         // Now test error propagation in process_all
@@ -404,7 +404,7 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("test data");
         builder.finish(data, None);
-        writer.write(&mut builder).unwrap();
+        writer.write_finished(&mut builder).unwrap();
 
         // Corrupt the data by flipping a bit
         let mut data = buffer;

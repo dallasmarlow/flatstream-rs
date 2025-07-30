@@ -34,7 +34,7 @@ struct TelemetryEvent {
 // PROPER FlatBuffer implementation using binary tables instead of strings
 
 impl StreamSerialize for TelemetryEvent {
-    fn serialize(&self, builder: &mut FlatBufferBuilder) -> flatstream::Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> flatstream::Result<()> {
         // Create a proper FlatBuffer table structure
         // This is much more efficient than string formatting
         
@@ -78,11 +78,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             let mut buffer = Vec::new();
             // Write phase
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -106,11 +103,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -136,11 +130,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             let checksum = Crc32::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -166,11 +157,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             let checksum = Crc16::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -189,19 +177,16 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
 
     // Benchmark 5: flatstream-rs with arena allocation (simulated)
     // Note: Current flatbuffers version doesn't support bumpalo allocators directly
-    // This benchmark simulates the concept by reusing the same builder
-    group.bench_function("flatstream_builder_reuse", |b| {
+    // This benchmark simulates arena allocation benefits by reusing the same builder
+    #[cfg(feature = "bumpalo")]
+    group.bench_function("flatstream_arena", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             // Write phase with builder reuse (simulates arena allocation benefits)
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            let mut builder = FlatBufferBuilder::new();
             
             for event in &events {
-                // Reuse the same builder for all events (like arena allocation)
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -294,11 +279,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             let mut buffer = Vec::new();
             // Write phase
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -322,11 +304,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -352,11 +331,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             let checksum = Crc32::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -382,11 +358,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             let checksum = Crc16::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
             for event in &events {
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             
@@ -405,19 +378,16 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
 
     // Benchmark 5: flatstream-rs with arena allocation (simulated)
     // Note: Current flatbuffers version doesn't support bumpalo allocators directly
-    // This benchmark simulates the concept by reusing the same builder
-    group.bench_function("flatstream_builder_reuse", |b| {
+    // This benchmark simulates arena allocation benefits by reusing the same builder
+    #[cfg(feature = "bumpalo")]
+    group.bench_function("flatstream_arena", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             // Write phase with builder reuse (simulates arena allocation benefits)
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            let mut builder = FlatBufferBuilder::new();
             
             for event in &events {
-                // Reuse the same builder for all events (like arena allocation)
-                builder.reset();
-                StreamSerialize::serialize(event, &mut builder).unwrap();
-                writer.write(&mut builder).unwrap();
+                writer.write(event).unwrap();
             }
             black_box(&buffer);
             

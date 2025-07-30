@@ -25,7 +25,7 @@ fn test_write_read_cycle_default() {
             builder.reset();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            stream_writer.write(&mut builder).unwrap();
+            stream_writer.write_finished(&mut builder).unwrap();
         }
         stream_writer.flush().unwrap();
     }
@@ -67,7 +67,7 @@ fn test_write_read_cycle_with_checksum() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("important data");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
@@ -108,7 +108,7 @@ fn test_corruption_detection_with_checksum() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("important data");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
@@ -156,7 +156,7 @@ fn test_mismatched_framing_strategies() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("a long partial message");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
@@ -189,7 +189,7 @@ fn test_write_read_cycle_with_crc32() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("crc32 test data");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
@@ -230,7 +230,7 @@ fn test_write_read_cycle_with_crc16() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("crc16 test data");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 
@@ -278,7 +278,7 @@ fn test_comprehensive_data_types() {
             builder.reset();
             let data = builder.create_string(message);
             builder.finish(data, None);
-            stream_writer.write(&mut builder).unwrap();
+            stream_writer.write_finished(&mut builder).unwrap();
         }
         stream_writer.flush().unwrap();
     }
@@ -321,7 +321,7 @@ fn test_large_stream_stress() {
             builder.reset();
             let data = builder.create_string(&format!("message {}", i));
             builder.finish(data, None);
-            stream_writer.write(&mut builder).unwrap();
+            stream_writer.write_finished(&mut builder).unwrap();
         }
         stream_writer.flush().unwrap();
     }
@@ -370,7 +370,7 @@ fn test_realistic_telemetry_data() {
             builder.reset();
             let data = builder.create_string(event);
             builder.finish(data, None);
-            stream_writer.write(&mut builder).unwrap();
+            stream_writer.write_finished(&mut builder).unwrap();
         }
         stream_writer.flush().unwrap();
     }
@@ -411,7 +411,7 @@ fn test_partial_file_read() {
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("a long partial message");
         builder.finish(data, None);
-        stream_writer.write(&mut builder).unwrap();
+        stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
 

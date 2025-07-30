@@ -43,7 +43,7 @@ fn main() -> Result<()> {
             builder.reset();
             let data = builder.create_string(message);
             builder.finish(data, None);
-            stream_writer.write(&mut builder)?;
+            stream_writer.write_finished(&mut builder)?;
             println!("  Wrote message {}: '{}'", i + 1, message);
         }
 
