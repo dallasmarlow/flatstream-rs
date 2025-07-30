@@ -40,7 +40,10 @@ struct LargeMessage {
 }
 
 impl StreamSerialize for SmallMessage {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
         let data = format!("{}", self.sensor_id);
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
@@ -49,7 +52,10 @@ impl StreamSerialize for SmallMessage {
 }
 
 impl StreamSerialize for MediumMessage {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
         let data = format!("{},{},{}", self.device_id, self.timestamp, self.readings[0]);
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
@@ -58,9 +64,19 @@ impl StreamSerialize for MediumMessage {
 }
 
 impl StreamSerialize for LargeMessage {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
-        let data = format!("{},{},{},{},{},{}", 
-            self.batch_id, self.metadata, self.data_points[0], self.flags[0], self.data_points[1], self.flags[1]);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{},{},{}",
+            self.batch_id,
+            self.metadata,
+            self.data_points[0],
+            self.flags[0],
+            self.data_points[1],
+            self.flags[1]
+        );
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
         Ok(())

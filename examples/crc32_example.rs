@@ -1,5 +1,5 @@
-use flatstream_rs::*;
 use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 

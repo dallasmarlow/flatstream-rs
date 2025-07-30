@@ -13,8 +13,14 @@ struct SensorReading {
 }
 
 impl StreamSerialize for SensorReading {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
-        let data = format!("{},{},{},{}", &self.sensor_id, self.timestamp, self.temperature, "C");
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{}",
+            &self.sensor_id, self.timestamp, self.temperature, "C"
+        );
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
         Ok(())
@@ -32,8 +38,14 @@ struct SystemEvent {
 }
 
 impl StreamSerialize for SystemEvent {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
-        let data = format!("{},{},{},{}", &self.event_type, "timestamp", self.severity, &self.message);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
+        let data = format!(
+            "{},{},{},{}",
+            &self.event_type, "timestamp", self.severity, &self.message
+        );
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
         Ok(())

@@ -117,8 +117,14 @@ fn main() -> Result<()> {
         }
 
         impl StreamSerialize for SensorData {
-            fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
-                let data = format!("{},{},{},{}", self.sensor_id, self.timestamp, self.value, &self.unit);
+            fn serialize<A: flatbuffers::Allocator>(
+                &self,
+                builder: &mut FlatBufferBuilder<A>,
+            ) -> Result<()> {
+                let data = format!(
+                    "{},{},{},{}",
+                    self.sensor_id, self.timestamp, self.value, &self.unit
+                );
                 let data_str = builder.create_string(&data);
                 builder.finish(data_str, None);
                 Ok(())
@@ -131,7 +137,7 @@ fn main() -> Result<()> {
                 timestamp: 1640995200000 + (i * 1000), // Unix timestamp in ms
                 sensor_id: (i % 10) as u32,            // 10 different sensors
                 value: 20.0 + (i as f64 * 0.1),        // Temperature-like values
-                unit: "C".to_string(), // Added unit field
+                unit: "C".to_string(),                 // Added unit field
             })
             .collect();
 

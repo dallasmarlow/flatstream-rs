@@ -14,8 +14,8 @@ use std::io::Write;
 /// The writer can operate in two modes:
 /// 1. **Expert mode**: User provides a custom `FlatBufferBuilder` (e.g., with arena allocation)
 /// 2. **Simple mode**: Writer manages its own builder internally
-pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator> 
-where 
+pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator>
+where
     A: flatbuffers::Allocator,
 {
     writer: W,
@@ -35,8 +35,8 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     }
 }
 
-impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A> 
-where 
+impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
+where
     A: flatbuffers::Allocator,
 {
     /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
@@ -54,7 +54,7 @@ where
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
         // Reset the internal builder for reuse
         self.builder.reset();
-        
+
         // Use the StreamSerialize trait to build the message
         item.serialize(&mut self.builder)?;
 

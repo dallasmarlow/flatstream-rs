@@ -364,24 +364,24 @@ mod tests {
         let mut count = 0;
         let result = reader.process_all(|_payload| {
             count += 1;
-            
+
             // Simulate an error on the third message
             if count == 3 {
                 return Err(crate::error::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Simulated processing error"
+                    "Simulated processing error",
                 )));
             }
-            
+
             Ok(())
         });
 
         // Should get an error
         assert!(result.is_err());
-        
+
         // Should have processed exactly 3 messages before the error
         assert_eq!(count, 3);
-        
+
         // Verify the error is the one we created
         match result.unwrap_err() {
             crate::error::Error::Io(e) => {

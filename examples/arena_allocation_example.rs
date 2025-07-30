@@ -30,9 +30,15 @@ struct HighFrequencyEvent {
 }
 
 impl StreamSerialize for HighFrequencyEvent {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<()> {
         let symbol = builder.create_string(&self.symbol);
-        let data = format!("{},{},{},{}", self.timestamp, self.price, self.volume, &self.symbol);
+        let data = format!(
+            "{},{},{},{}",
+            self.timestamp, self.price, self.volume, &self.symbol
+        );
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
         Ok(())

@@ -2,10 +2,12 @@
 // Comparative benchmarks between flatstream-rs and alternative serialization approaches
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use flatbuffers::FlatBufferBuilder;
+use flatstream_rs::{
+    self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
+};
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
-use flatstream_rs::{self as flatstream, StreamWriter, StreamReader, DefaultFramer, DefaultDeframer, StreamSerialize};
-use flatbuffers::FlatBufferBuilder;
 
 // Import checksum types when features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -34,23 +36,26 @@ struct TelemetryEvent {
 // PROPER FlatBuffer implementation using binary tables instead of strings
 
 impl StreamSerialize for TelemetryEvent {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> flatstream::Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> flatstream::Result<()> {
         // Create a proper FlatBuffer table structure
         // This is much more efficient than string formatting
-        
+
         // For this benchmark, we'll create a simple binary structure
         // In a real implementation, you'd use FlatBuffer schema files
-        
+
         // Create a binary representation: [device_id: u64][timestamp: u64][value: f64]
         let mut data = Vec::with_capacity(24); // 8 + 8 + 8 bytes
-        
+
         // Add device_id (little-endian)
         data.extend_from_slice(&self.device_id.to_le_bytes());
         // Add timestamp (little-endian)
         data.extend_from_slice(&self.timestamp.to_le_bytes());
         // Add value (little-endian)
         data.extend_from_slice(&self.value.to_le_bytes());
-        
+
         // Create a FlatBuffer string from our binary data
         let data_vec = builder.create_vector(&data);
         builder.finish(data_vec, None);
@@ -62,7 +67,7 @@ impl StreamSerialize for TelemetryEvent {
 
 fn benchmark_alternatives_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("Small Dataset (100 events)");
-    
+
     // Create test data - 100 telemetry events
     let events: Vec<TelemetryEvent> = (0..100)
         .map(|i| TelemetryEvent {
@@ -82,14 +87,16 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -107,16 +114,18 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = XxHash64::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -134,16 +143,18 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = Crc32::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -161,16 +172,18 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = Crc16::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -184,19 +197,21 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             let mut buffer = Vec::new();
             // Write phase with builder reuse (simulates arena allocation benefits)
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            
+
             for event in &events {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -213,7 +228,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 buffer.write_all(&encoded).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = Cursor::new(&buffer);
             let mut len_bytes = [0u8; 4];
@@ -241,7 +256,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
                 buffer.write_all(&encoded).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = Cursor::new(&buffer);
             let mut len_bytes = [0u8; 4];
@@ -262,7 +277,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
 
 fn benchmark_alternatives_large(c: &mut Criterion) {
     let mut group = c.benchmark_group("Large Dataset (~10MB)");
-    
+
     // Create test data - approximately 10MB of telemetry events
     // Each event is roughly 100 bytes, so we need about 100,000 events
     let events: Vec<TelemetryEvent> = (0..100_000)
@@ -283,14 +298,16 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -308,16 +325,18 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = XxHash64::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -335,16 +354,18 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = Crc32::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -362,16 +383,18 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let checksum = Crc16::new();
             let deframer = ChecksumDeframer::new(checksum);
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -385,19 +408,21 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             let mut buffer = Vec::new();
             // Write phase with builder reuse (simulates arena allocation benefits)
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            
+
             for event in &events {
                 writer.write(event).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
             let mut count = 0;
-            reader.process_all(|_payload| { 
-                count += 1; 
-                Ok(()) 
-            }).unwrap();
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
             black_box(count);
         });
     });
@@ -414,7 +439,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 buffer.write_all(&encoded).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = Cursor::new(&buffer);
             let mut len_bytes = [0u8; 4];
@@ -442,7 +467,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
                 buffer.write_all(&encoded).unwrap();
             }
             black_box(&buffer);
-            
+
             // Read phase
             let mut reader = Cursor::new(&buffer);
             let mut len_bytes = [0u8; 4];
@@ -463,5 +488,9 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
 
 // --- Boilerplate to run the benchmarks ---
 
-criterion_group!(benches, benchmark_alternatives_small, benchmark_alternatives_large);
-criterion_main!(benches); 
+criterion_group!(
+    benches,
+    benchmark_alternatives_small,
+    benchmark_alternatives_large
+);
+criterion_main!(benches);

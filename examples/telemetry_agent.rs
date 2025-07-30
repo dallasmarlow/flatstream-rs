@@ -22,9 +22,19 @@ struct TelemetryEvent {
 }
 
 impl StreamSerialize for TelemetryEvent {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<(), flatstream_rs::Error> {
-        let data = format!("{},{},{},{},{},{}", 
-            &self.device_id, self.timestamp, self.speed_kph, self.rpm, self.temperature_celsius, self.battery_level);
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> Result<(), flatstream_rs::Error> {
+        let data = format!(
+            "{},{},{},{},{},{}",
+            &self.device_id,
+            self.timestamp,
+            self.speed_kph,
+            self.rpm,
+            self.temperature_celsius,
+            self.battery_level
+        );
         let data_str = builder.create_string(&data);
         builder.finish(data_str, None);
         Ok(())
