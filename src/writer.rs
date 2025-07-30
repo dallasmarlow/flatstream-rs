@@ -14,6 +14,20 @@ use std::io::Write;
 /// The writer can operate in two modes:
 /// 1. **Simple mode**: Writer manages its own builder internally (default allocator)
 /// 2. **Expert mode**: User provides a custom `FlatBufferBuilder` (e.g., with arena allocation)
+///
+/// ## Custom Allocators
+///
+/// While `flatstream-rs` supports custom allocators through the `with_builder` constructor,
+/// the current design of the `flatbuffers` crate's `Allocator` trait makes it difficult
+/// to achieve significant performance gains over the default allocator's buffer reuse strategy.
+///
+/// The default `StreamWriter::new()` constructor already provides efficient builder reuse,
+/// which eliminates most of the allocation overhead that custom allocators aim to solve.
+/// For most use cases, the simple mode provides excellent performance with zero complexity.
+///
+/// If you need custom allocation strategies, you can use the expert mode with
+/// `StreamWriter::with_builder()`, but benchmark carefully to ensure the complexity
+/// is justified by measurable performance improvements.
 pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator>
 where
     A: flatbuffers::Allocator,
