@@ -22,6 +22,130 @@ use flatstream_rs::Crc32;
 #[cfg(feature = "crc16")]
 use flatstream_rs::Crc16;
 
+// Arena allocation bridge
+#[cfg(feature = "bumpalo")]
+use bumpalo::Bump;
+#[cfg(feature = "bumpalo")]
+use flatbuffers::Allocator;
+#[cfg(feature = "bumpalo")]
+use std::ops::{Deref, DerefMut};
+#[cfg(feature = "bumpalo")]
+use std::ptr::NonNull;
+
+// This is the bridge that connects bumpalo with flatbuffers::Allocator
+// It uses bumpalo to manage a growable buffer that FlatBuffers can index into
+#[cfg(feature = "bumpalo")]
+struct BumpaloAllocator<'a> {
+    arena: &'a Bump,
+    buffer_ptr: NonNull<u8>,
+    buffer_len: usize,
+    buffer_capacity: usize,
+}
+
+#[cfg(feature = "bumpalo")]
+impl<'a> BumpaloAllocator<'a> {
+    fn new(arena: &'a Bump) -> Self {
+        // Start with a reasonable initial capacity
+        let initial_capacity = 1024;
+        let layout = std::alloc::Layout::from_size_align(initial_capacity, 8).unwrap();
+        let buffer_ptr = arena.alloc_layout(layout);
+
+        // Initialize the buffer with zeros
+        unsafe {
+            std::ptr::write_bytes(buffer_ptr.as_ptr(), 0, initial_capacity);
+        }
+
+        Self {
+            arena,
+            buffer_ptr,
+            buffer_len: initial_capacity,
+            buffer_capacity: initial_capacity,
+        }
+    }
+}
+
+#[cfg(feature = "bumpalo")]
+impl<'a> Deref for BumpaloAllocator<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.buffer_ptr.as_ptr(), self.buffer_len) }
+    }
+}
+
+#[cfg(feature = "bumpalo")]
+impl<'a> DerefMut for BumpaloAllocator<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.buffer_ptr.as_ptr(), self.buffer_len) }
+    }
+}
+
+#[cfg(feature = "bumpalo")]
+unsafe impl<'a> Allocator for BumpaloAllocator<'a> {
+    type Error = std::io::Error;
+
+    fn grow_downwards(&mut self) -> Result<(), Self::Error> {
+        // Double the capacity
+        let new_capacity = std::cmp::max(1, self.buffer_capacity * 2);
+        let new_layout = std::alloc::Layout::from_size_align(new_capacity, 8).unwrap();
+
+        // Allocate new buffer from arena
+        let new_buffer_ptr = self.arena.alloc_layout(new_layout);
+
+        // Initialize new buffer with zeros
+        unsafe {
+            std::ptr::write_bytes(new_buffer_ptr.as_ptr(), 0, new_capacity);
+        }
+
+        // Copy existing data to the end of the new buffer
+        unsafe {
+            let new_buffer_slice =
+                std::slice::from_raw_parts_mut(new_buffer_ptr.as_ptr(), new_capacity);
+            let old_data_start = new_capacity - self.buffer_len;
+            new_buffer_slice[old_data_start..].copy_from_slice(&self[..]);
+        }
+
+        // Update our state
+        self.buffer_ptr = new_buffer_ptr;
+        self.buffer_capacity = new_capacity;
+
+        Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.buffer_len
+    }
+}
+
+// --- Test function to verify BumpaloAllocator ---
+#[cfg(feature = "bumpalo")]
+fn test_bumpalo_allocator() {
+    use flatbuffers::FlatBufferBuilder;
+
+    // Create arena
+    let arena = Bump::new();
+
+    // Create our allocator
+    let allocator = BumpaloAllocator::new(&arena);
+
+    // Create FlatBufferBuilder with our allocator
+    let mut builder = FlatBufferBuilder::new_in(allocator);
+
+    // Test basic functionality
+    let test_string = builder.create_string("Hello, Arena!");
+    builder.finish(test_string, None);
+
+    // Get the finished data
+    let data = builder.finished_data();
+
+    // Verify we got some data
+    assert!(!data.is_empty(), "BumpaloAllocator should produce data");
+    println!(
+        "BumpaloAllocator test passed! Produced {} bytes",
+        data.len()
+    );
+}
+
 // --- Common Data Structure ---
 // A simple struct that can be used by serde and flatstream.
 
@@ -67,6 +191,12 @@ impl StreamSerialize for TelemetryEvent {
 
 fn benchmark_alternatives_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("Small Dataset (100 events)");
+
+    // Test our BumpaloAllocator first
+    #[cfg(feature = "bumpalo")]
+    {
+        test_bumpalo_allocator();
+    }
 
     // Create test data - 100 telemetry events
     let events: Vec<TelemetryEvent> = (0..100)
@@ -188,15 +318,24 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 5: flatstream-rs with arena allocation (simulated)
-    // Note: Current flatbuffers version doesn't support bumpalo allocators directly
-    // This benchmark simulates arena allocation benefits by reusing the same builder
+    // Benchmark 5: flatstream-rs with true arena allocation using bumpalo
     #[cfg(feature = "bumpalo")]
     group.bench_function("flatstream_arena", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
-            // Write phase with builder reuse (simulates arena allocation benefits)
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
+
+            // Create the arena allocator
+            let arena = Bump::new();
+
+            // Create our custom allocator wrapper
+            let allocator = BumpaloAllocator::new(&arena);
+
+            // Create the builder using our arena-backed allocator
+            let builder = FlatBufferBuilder::new_in(allocator);
+
+            // Create the writer with our arena-backed builder
+            let mut writer =
+                StreamWriter::with_builder(Cursor::new(&mut buffer), DefaultFramer, builder);
 
             for event in &events {
                 writer.write(event).unwrap();
@@ -399,15 +538,24 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 5: flatstream-rs with arena allocation (simulated)
-    // Note: Current flatbuffers version doesn't support bumpalo allocators directly
-    // This benchmark simulates arena allocation benefits by reusing the same builder
+    // Benchmark 5: flatstream-rs with true arena allocation using bumpalo
     #[cfg(feature = "bumpalo")]
     group.bench_function("flatstream_arena", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
-            // Write phase with builder reuse (simulates arena allocation benefits)
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
+
+            // Create the arena allocator
+            let arena = Bump::new();
+
+            // Create our custom allocator wrapper
+            let allocator = BumpaloAllocator::new(&arena);
+
+            // Create the builder using our arena-backed allocator
+            let builder = FlatBufferBuilder::new_in(allocator);
+
+            // Create the writer with our arena-backed builder
+            let mut writer =
+                StreamWriter::with_builder(Cursor::new(&mut buffer), DefaultFramer, builder);
 
             for event in &events {
                 writer.write(event).unwrap();

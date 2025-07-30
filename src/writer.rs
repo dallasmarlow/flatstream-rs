@@ -12,8 +12,8 @@ use std::io::Write;
 /// each message is framed in the byte stream (e.g., with or without a checksum).
 ///
 /// The writer can operate in two modes:
-/// 1. **Expert mode**: User provides a custom `FlatBufferBuilder` (e.g., with arena allocation)
-/// 2. **Simple mode**: Writer manages its own builder internally
+/// 1. **Simple mode**: Writer manages its own builder internally (default allocator)
+/// 2. **Expert mode**: User provides a custom `FlatBufferBuilder` (e.g., with arena allocation)
 pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator>
 where
     A: flatbuffers::Allocator,
@@ -51,11 +51,14 @@ where
 
     /// Writes a serializable item to the stream using the internally managed builder.
     /// The builder is reset before serialization.
+    ///
+    /// This method maintains zero-copy performance by directly using the builder
+    /// without any temporary allocations or data copying.
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
         // Reset the internal builder for reuse
         self.builder.reset();
 
-        // Use the StreamSerialize trait to build the message
+        // Direct serialization to the builder - no temporary allocations or copying
         item.serialize(&mut self.builder)?;
 
         // Get the finished payload from the builder
