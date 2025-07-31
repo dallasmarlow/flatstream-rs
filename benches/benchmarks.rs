@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::checksum::Checksum;
-use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter, StreamSerialize};
+use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -56,10 +56,6 @@ fn create_telemetry_events(count: usize) -> Vec<TelemetryEvent> {
         .collect()
 }
 
-fn create_large_messages(count: usize) -> Vec<String> {
-    (0..count).map(|i| format!("large benchmark message number {} with additional data to simulate real-world telemetry events containing sensor readings, timestamps, and metadata", i)).collect()
-}
-
 // Benchmark configuration
 const SMALL_MESSAGE_COUNT: usize = 100;
 const LARGE_MESSAGE_COUNT: usize = 50;
@@ -73,30 +69,26 @@ const HIGH_FREQUENCY_COUNT: usize = 1000;
 fn bench_writer<C: Checksum + Default + Copy>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     checksum_name: &str,
-    messages: &[String],
+    events: &[TelemetryEvent],
 ) {
     use flatstream_rs::framing::ChecksumFramer;
 
     // Calculate total throughput in bytes for fair comparison
-    let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
+    let total_bytes: usize = events.len() * 24; // Each TelemetryEvent is 24 bytes
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     group.bench_with_input(
         BenchmarkId::new("write_100_messages", checksum_name),
-        messages,
-        |b, msgs| {
+        events,
+        |b, evts| {
             b.iter(|| {
                 let mut buffer = Vec::new();
                 let checksum = C::default();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let mut builder = FlatBufferBuilder::new();
 
-                for message in msgs {
-                    builder.reset();
-                    let data = builder.create_string(message);
-                    builder.finish(data, None);
-                    writer.write(&mut builder).unwrap();
+                for event in evts {
+                    writer.write(event).unwrap();
                 }
 
                 black_box(buffer);
@@ -119,13 +111,9 @@ fn bench_reader<C: Checksum + Default + Copy>(
         let checksum = C::default();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        let mut builder = FlatBufferBuilder::new();
-        let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-        for message in &messages {
-            builder.reset();
-            let data = builder.create_string(message);
-            builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+        let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
+        for event in &events {
+            writer.write(event).unwrap();
         }
     }
 
@@ -161,30 +149,26 @@ fn bench_reader<C: Checksum + Default + Copy>(
 fn bench_write_read_cycle<C: Checksum + Default + Copy>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     checksum_name: &str,
-    messages: &[String],
+    events: &[TelemetryEvent],
 ) {
     use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
 
-    let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
+    let total_bytes: usize = events.len() * 24; // Each TelemetryEvent is 24 bytes
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     group.bench_with_input(
         BenchmarkId::new("write_read_cycle_100_messages", checksum_name),
-        messages,
-        |b, msgs| {
+        events,
+        |b, evts| {
             b.iter(|| {
                 // Write phase
                 let mut buffer = Vec::new();
                 let checksum = C::default();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let mut builder = FlatBufferBuilder::new();
 
-                for message in msgs {
-                    builder.reset();
-                    let data = builder.create_string(message);
-                    builder.finish(data, None);
-                    writer.write(&mut builder).unwrap();
+                for event in evts {
+                    writer.write(event).unwrap();
                 }
 
                 // Read phase
@@ -210,18 +194,18 @@ fn bench_write_read_cycle<C: Checksum + Default + Copy>(
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 fn benchmark_checksum_writers(c: &mut Criterion) {
     let mut group = c.benchmark_group("Checksum Writers");
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     // Call the generic function for each checksum type
     // The #[cfg] attributes are now localized and simple
     #[cfg(feature = "xxhash")]
-    bench_writer::<XxHash64>(&mut group, "XXHash64", &messages);
+    bench_writer::<XxHash64>(&mut group, "XXHash64", &events);
 
     #[cfg(feature = "crc32")]
-    bench_writer::<Crc32>(&mut group, "CRC32", &messages);
+    bench_writer::<Crc32>(&mut group, "CRC32", &events);
 
     #[cfg(feature = "crc16")]
-    bench_writer::<Crc16>(&mut group, "CRC16", &messages);
+    bench_writer::<Crc16>(&mut group, "CRC16", &events);
 
     group.finish();
 }
@@ -248,17 +232,17 @@ fn benchmark_checksum_readers(c: &mut Criterion) {
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 fn benchmark_checksum_cycles(c: &mut Criterion) {
     let mut group = c.benchmark_group("Checksum Write-Read Cycles");
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     // Call the generic function for each checksum type
     #[cfg(feature = "xxhash")]
-    bench_write_read_cycle::<XxHash64>(&mut group, "XXHash64", &messages);
+    bench_write_read_cycle::<XxHash64>(&mut group, "XXHash64", &events);
 
     #[cfg(feature = "crc32")]
-    bench_write_read_cycle::<Crc32>(&mut group, "CRC32", &messages);
+    bench_write_read_cycle::<Crc32>(&mut group, "CRC32", &events);
 
     #[cfg(feature = "crc16")]
-    bench_write_read_cycle::<Crc16>(&mut group, "CRC16", &messages);
+    bench_write_read_cycle::<Crc16>(&mut group, "CRC16", &events);
 
     group.finish();
 }
@@ -269,14 +253,22 @@ fn benchmark_write_default_framer(c: &mut Criterion) {
     let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     c.bench_function("write_default_framer_100_messages", |b| {
+        // The builder is now created ONCE, outside the hot loop.
+        let mut builder = FlatBufferBuilder::new();
+
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
             for event in &events {
-                // Now we are using the StreamSerialize implementation for TelemetryEvent
-                writer.write(event).unwrap();
+                // This is the realistic high-performance pattern:
+                // 1. Reset the builder (reuses its memory).
+                // 2. Serialize the new data.
+                // 3. Write the finished buffer.
+                builder.reset();
+                event.serialize(&mut builder).unwrap();
+                writer.write_finished(&mut builder).unwrap();
             }
 
             black_box(buffer);
@@ -319,18 +311,14 @@ fn benchmark_read_default_deframer(c: &mut Criterion) {
 // === ZERO-ALLOCATION READING BENCHMARKS ===
 
 fn benchmark_zero_allocation_reading(c: &mut Criterion) {
-    // Prepare test data
+    // Prepare test data using realistic TelemetryEvent data
     let mut buffer = Vec::new();
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        let mut builder = FlatBufferBuilder::new();
-        let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-        for message in &messages {
-            builder.reset();
-            let data = builder.create_string(message);
-            builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+        let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
+        for event in &events {
+            writer.write(event).unwrap();
         }
     }
 
@@ -355,19 +343,15 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
 
 #[cfg(feature = "xxhash")]
 fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
-    // Prepare test data
+    // Prepare test data using realistic TelemetryEvent data
     let mut buffer = Vec::new();
     {
         let checksum = XxHash64::new();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        let mut builder = FlatBufferBuilder::new();
-        let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-        for message in &messages {
-            builder.reset();
-            let data = builder.create_string(message);
-            builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+        let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
+        for event in &events {
+            writer.write(event).unwrap();
         }
     }
 
@@ -394,21 +378,17 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
 // === WRITE BATCHING BENCHMARKS ===
 
 fn benchmark_write_batch_vs_iterative(c: &mut Criterion) {
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     c.bench_function("write_iterative_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            // Explicit for loop (v2.5 pattern)
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            // Explicit for loop (v2.5 pattern) with realistic data
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -418,7 +398,7 @@ fn benchmark_write_batch_vs_iterative(c: &mut Criterion) {
 
 #[cfg(feature = "xxhash")]
 fn benchmark_write_batch_with_checksum(c: &mut Criterion) {
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     c.bench_function("write_iterative_xxhash64_100_messages", |b| {
         b.iter(|| {
@@ -426,14 +406,10 @@ fn benchmark_write_batch_with_checksum(c: &mut Criterion) {
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            // Explicit for loop with checksum
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            // Explicit for loop with checksum and realistic data
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -444,7 +420,7 @@ fn benchmark_write_batch_with_checksum(c: &mut Criterion) {
 // === END-TO-END BENCHMARKS ===
 
 fn benchmark_write_read_cycle_default(c: &mut Criterion) {
-    let messages = create_test_messages(LARGE_MESSAGE_COUNT);
+    let events = create_telemetry_events(LARGE_MESSAGE_COUNT);
 
     c.bench_function("write_read_cycle_default_50_messages", |b| {
         b.iter(|| {
@@ -454,12 +430,8 @@ fn benchmark_write_read_cycle_default(c: &mut Criterion) {
             {
                 let framer = DefaultFramer;
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let mut builder = FlatBufferBuilder::new();
-                for message in &messages {
-                    builder.reset();
-                    let data = builder.create_string(message);
-                    builder.finish(data, None);
-                    writer.write(&mut builder).unwrap();
+                for event in &events {
+                    writer.write(event).unwrap();
                 }
             }
 
@@ -491,13 +463,9 @@ fn benchmark_write_read_cycle_with_checksum(c: &mut Criterion) {
                 let checksum = XxHash64::new();
                 let framer = ChecksumFramer::new(checksum);
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let mut builder = FlatBufferBuilder::new();
-                let messages = create_test_messages(LARGE_MESSAGE_COUNT);
-                for message in &messages {
-                    builder.reset();
-                    let data = builder.create_string(message);
-                    builder.finish(data, None);
-                    writer.write(&mut builder).unwrap();
+                let events = create_telemetry_events(LARGE_MESSAGE_COUNT);
+                for event in &events {
+                    writer.write(event).unwrap();
                 }
             }
 
@@ -522,21 +490,17 @@ fn benchmark_write_read_cycle_with_checksum(c: &mut Criterion) {
 // === HIGH-FREQUENCY TELEMETRY BENCHMARKS ===
 
 fn benchmark_high_frequency_telemetry(c: &mut Criterion) {
-    let messages = create_test_messages(HIGH_FREQUENCY_COUNT);
+    let events = create_telemetry_events(HIGH_FREQUENCY_COUNT);
 
     c.bench_function("high_frequency_telemetry_1000_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
             // Simulate high-frequency telemetry writing with explicit for loop
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -545,18 +509,14 @@ fn benchmark_high_frequency_telemetry(c: &mut Criterion) {
 }
 
 fn benchmark_high_frequency_reading(c: &mut Criterion) {
-    // Prepare test data
+    // Prepare test data using realistic TelemetryEvent data
     let mut buffer = Vec::new();
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        let mut builder = FlatBufferBuilder::new();
-        let messages = create_test_messages(HIGH_FREQUENCY_COUNT);
-        for message in &messages {
-            builder.reset();
-            let data = builder.create_string(message);
-            builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+        let events = create_telemetry_events(HIGH_FREQUENCY_COUNT);
+        for event in &events {
+            writer.write(event).unwrap();
         }
     }
 
@@ -582,20 +542,16 @@ fn benchmark_high_frequency_reading(c: &mut Criterion) {
 // === LARGE MESSAGE BENCHMARKS ===
 
 fn benchmark_large_messages(c: &mut Criterion) {
-    let messages = create_large_messages(LARGE_MESSAGE_COUNT);
+    let events = create_telemetry_events(LARGE_MESSAGE_COUNT);
 
     c.bench_function("large_messages_50_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -605,7 +561,7 @@ fn benchmark_large_messages(c: &mut Criterion) {
 
 #[cfg(feature = "xxhash")]
 fn benchmark_large_messages_with_checksum(c: &mut Criterion) {
-    let messages = create_large_messages(LARGE_MESSAGE_COUNT);
+    let events = create_telemetry_events(LARGE_MESSAGE_COUNT);
 
     c.bench_function("large_messages_xxhash64_50_messages", |b| {
         b.iter(|| {
@@ -613,13 +569,9 @@ fn benchmark_large_messages_with_checksum(c: &mut Criterion) {
             let checksum = XxHash64::new();
             let framer = ChecksumFramer::new(checksum);
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -630,21 +582,17 @@ fn benchmark_large_messages_with_checksum(c: &mut Criterion) {
 // === MEMORY EFFICIENCY BENCHMARKS ===
 
 fn benchmark_memory_efficiency(c: &mut Criterion) {
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     c.bench_function("memory_efficiency_write_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            // Measure memory usage during explicit for loop
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            // Measure memory usage during explicit for loop with realistic data
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             let buffer_size = buffer.len();
@@ -746,7 +694,7 @@ fn benchmark_comparative_formats(c: &mut Criterion) {
 // architectural changes.
 
 fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     // Test 1: Small message writing (most sensitive to dispatch overhead)
     c.bench_function("regression_small_messages", |b| {
@@ -754,14 +702,10 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
             // Write many small messages to detect dispatch overhead
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -774,14 +718,10 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
             // Mix different operations to test compiler optimization boundaries
-            for (i, message) in messages.iter().enumerate() {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -797,12 +737,8 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
             for _ in 0..10 {
                 let framer = DefaultFramer;
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-                let mut builder = FlatBufferBuilder::new();
-                for message in &messages[..10] {
-                    builder.reset();
-                    let data = builder.create_string(message);
-                    builder.finish(data, None);
-                    writer.write(&mut builder).unwrap();
+                for event in &events[..10] {
+                    writer.write(event).unwrap();
                 }
             }
 
