@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::checksum::Checksum;
-use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
+use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter, StreamSerialize};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -17,10 +17,42 @@ use flatstream_rs::Crc32;
 #[cfg(feature = "crc16")]
 use flatstream_rs::Crc16;
 
-// Test data generation utilities
-fn create_test_messages(count: usize) -> Vec<String> {
-    (0..count)
-        .map(|i| format!("benchmark message number {}", i))
+// --- Realistic Test Data Structure ---
+
+#[derive(Clone)]
+struct TelemetryEvent {
+    device_id: u64,
+    timestamp: u64,
+    value: f64,
+}
+
+// This teaches the benchmark how to serialize our new data structure.
+// It's a more accurate workload than just serializing a string.
+impl StreamSerialize for TelemetryEvent {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> flatstream::Result<()> {
+        // This simulates a more realistic serialization process by creating a binary vector.
+        let mut data = Vec::with_capacity(24); // 8 bytes for each field (u64, u64, f64)
+        data.extend_from_slice(&self.device_id.to_le_bytes());
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data.extend_from_slice(&self.value.to_le_bytes());
+
+        let data_vec = builder.create_vector(&data);
+        builder.finish(data_vec, None);
+        Ok(())
+    }
+}
+
+// --- New Data Generation Utility ---
+fn create_telemetry_events(count: usize) -> Vec<TelemetryEvent> {
+    (0..count as u64)
+        .map(|i| TelemetryEvent {
+            device_id: i,
+            timestamp: 1672531200 + i,
+            value: i as f64 * 1.5,
+        })
         .collect()
 }
 
@@ -234,20 +266,17 @@ fn benchmark_checksum_cycles(c: &mut Criterion) {
 // === WRITE BENCHMARKS ===
 
 fn benchmark_write_default_framer(c: &mut Criterion) {
-    let messages = create_test_messages(SMALL_MESSAGE_COUNT);
+    let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
     c.bench_function("write_default_framer_100_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             let framer = DefaultFramer;
             let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
 
-            for message in &messages {
-                builder.reset();
-                let data = builder.create_string(message);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
+            for event in &events {
+                // Now we are using the StreamSerialize implementation for TelemetryEvent
+                writer.write(event).unwrap();
             }
 
             black_box(buffer);
@@ -258,18 +287,16 @@ fn benchmark_write_default_framer(c: &mut Criterion) {
 // === READ BENCHMARKS ===
 
 fn benchmark_read_default_deframer(c: &mut Criterion) {
-    // Prepare test data
+    // Prepare test data using the realistic TelemetryEvent struct
     let mut buffer = Vec::new();
     {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        let mut builder = FlatBufferBuilder::new();
-        let messages = create_test_messages(SMALL_MESSAGE_COUNT);
-        for message in &messages {
-            builder.reset();
-            let data = builder.create_string(message);
-            builder.finish(data, None);
-            writer.write(&mut builder).unwrap();
+        let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
+
+        // This loop now correctly uses the StreamSerialize trait
+        for event in &events {
+            writer.write(event).unwrap();
         }
     }
 
