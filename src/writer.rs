@@ -11,87 +11,49 @@ use std::io::Write;
 /// This writer is generic over a `Framer` strategy, which defines how
 /// each message is framed in the byte stream (e.g., with or without a checksum).
 ///
-/// The writer can operate in two modes:
-/// 1. **Simple mode**: Writer manages its own builder internally (default allocator)
-/// 2. **Expert mode**: User provides a custom `FlatBufferBuilder` (e.g., with arena allocation)
-///
-/// ## Custom Allocators
-///
-/// While `flatstream-rs` supports custom allocators through the `with_builder` constructor,
-/// the current design of the `flatbuffers` crate's `Allocator` trait makes it difficult
-/// to achieve significant performance gains over the default allocator's buffer reuse strategy.
-///
-/// The default `StreamWriter::new()` constructor already provides efficient builder reuse,
-/// which eliminates most of the allocation overhead that custom allocators aim to solve.
-/// For most use cases, the simple mode provides excellent performance with zero complexity.
-///
-/// If you need custom allocation strategies, you can use the expert mode with
-/// `StreamWriter::with_builder()`, but benchmark carefully to ensure the complexity
-/// is justified by measurable performance improvements.
-pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator>
-where
-    A: flatbuffers::Allocator,
-{
+/// The writer provides three levels of API:
+/// 1. `write()` - Simple API that allocates a builder internally
+/// 2. `write_with_builder()` - Zero-allocation API with external builder
+/// 3. `write_finished()` - Lowest-level API for pre-built buffers
+pub struct StreamWriter<W: Write, F: Framer> {
     writer: W,
     framer: F,
-    builder: FlatBufferBuilder<'a, A>,
 }
 
-impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
-    /// Creates a new `StreamWriter` with a default `FlatBufferBuilder`.
-    /// This is the simple mode for most use cases.
+impl<W: Write, F: Framer> StreamWriter<W, F> {
+    /// Creates a new `StreamWriter`.
     pub fn new(writer: W, framer: F) -> Self {
-        Self {
-            writer,
-            framer,
-            builder: FlatBufferBuilder::new(),
-        }
-    }
-}
-
-impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
-where
-    A: flatbuffers::Allocator,
-{
-    /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
-    /// This is the expert mode for custom allocation strategies like arena allocation.
-    pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
-        Self {
-            writer,
-            framer,
-            builder,
-        }
+        Self { writer, framer }
     }
 
-    /// Writes a serializable item to the stream using the internally managed builder.
-    /// The builder is reset before serialization.
-    ///
-    /// This method maintains zero-copy performance by directly using the builder
-    /// without any temporary allocations or data copying.
+    /// Writes a serializable item to the stream.
+    /// This is a convenience method that allocates a builder internally.
+    /// For zero-allocation writes, use `write_with_builder`.
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
-        // Reset the internal builder for reuse
-        self.builder.reset();
+        let mut builder = FlatBufferBuilder::new();
+        item.serialize_to(&mut builder)?;
+        let payload = builder.finished_data();
+        self.framer.frame_and_write(&mut self.writer, payload)
+    }
 
-        // Direct serialization to the builder - no temporary allocations or copying
-        item.serialize(&mut self.builder)?;
-
-        // Get the finished payload from the builder
-        let payload = self.builder.finished_data();
-
-        // Delegate framing and writing to the strategy
+    /// Writes a serializable item to the stream using an external builder.
+    /// This is the zero-allocation path for high-performance use cases.
+    /// The builder will be reset and reused for serialization.
+    pub fn write_with_builder<T: StreamSerialize>(
+        &mut self,
+        builder: &mut FlatBufferBuilder,
+        item: &T,
+    ) -> Result<()> {
+        item.serialize_to(builder)?;
+        let payload = builder.finished_data();
         self.framer.frame_and_write(&mut self.writer, payload)
     }
 
     /// Writes a finished FlatBuffer message to the stream.
-    /// This is the expert mode where the user manages the builder lifecycle.
-    ///
-    /// The user is responsible for calling `builder.finish()` before this method.
-    /// This method will access the finished data and frame it according to the framer strategy.
+    /// This is the lowest-level API for users who need complete control.
+    /// The user is responsible for building and finishing the buffer.
     pub fn write_finished(&mut self, builder: &mut FlatBufferBuilder) -> Result<()> {
-        // Get the finished payload from the builder
         let payload = builder.finished_data();
-
-        // Delegate framing and writing to the strategy
         self.framer.frame_and_write(&mut self.writer, payload)
     }
 
@@ -122,12 +84,8 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        // Create and finish a builder
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-
-        assert!(writer.write_finished(&mut builder).is_ok());
+        // Test the convenience write method
+        assert!(writer.write(&"test data").is_ok());
 
         let data = buffer;
         assert!(!data.is_empty());
@@ -143,12 +101,8 @@ mod tests {
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        // Create and finish a builder
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-
-        assert!(writer.write_finished(&mut builder).is_ok());
+        // Test the convenience write method
+        assert!(writer.write(&"test data").is_ok());
 
         let data = buffer;
         assert!(!data.is_empty());
@@ -162,12 +116,8 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        // Create and finish a builder
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("no checksum");
-        builder.finish(data, None);
-
-        assert!(writer.write_finished(&mut builder).is_ok());
+        // Test the convenience write method
+        assert!(writer.write(&"no checksum").is_ok());
 
         let data = buffer;
         assert!(!data.is_empty());
@@ -182,10 +132,7 @@ mod tests {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            assert!(writer.write_finished(&mut builder).is_ok());
+            assert!(writer.write(&format!("message {}", i)).is_ok());
         }
 
         let data = buffer;
@@ -201,10 +148,7 @@ mod tests {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            assert!(writer.write_finished(&mut builder).is_ok());
+            assert!(writer.write(&format!("message {}", i)).is_ok());
         }
 
         let data = buffer;
@@ -217,7 +161,7 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        // Test the simple write mode with a string
+        // Test the convenience write method
         assert!(writer.write(&"test message").is_ok());
 
         let data = buffer;
@@ -232,7 +176,7 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        // Test multiple simple writes
+        // Test multiple writes using the convenience method
         assert!(writer.write(&"message 1").is_ok());
         assert!(writer.write(&"message 2").is_ok());
         assert!(writer.write(&"message 3").is_ok());

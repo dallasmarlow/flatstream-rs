@@ -1,8 +1,8 @@
 [package]
 name = "flatstream-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-authors = ["Dallas Marlow <dallas@example.com>"]
+authors = ["Dallas Marlow <dallasmarlow@gmail.com>"]
 description = "High-performance FlatBuffers streaming with data integrity"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dallasmarlow/flatstream-rs"
@@ -11,7 +11,8 @@ categories = ["encoding", "data-structures"]
 publish = false  # Initially for private repo
 
 [dependencies]
-flatbuffers = "24.3.25"
+# flatbuffers = "24.3.25"
+flatbuffers = { git = "https://github.com/dallasmarlow/flatbuffers.git", branch = "external-allocators", package = "flatbuffers" }
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"], optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }

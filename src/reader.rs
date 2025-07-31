@@ -143,7 +143,6 @@ mod tests {
     use crate::framing::DefaultDeframer;
     use crate::framing::DefaultFramer;
     use crate::writer::StreamWriter;
-    use flatbuffers::FlatBufferBuilder;
 
     #[cfg(feature = "xxhash")]
     use crate::{ChecksumDeframer, ChecksumFramer, XxHash64};
@@ -156,10 +155,7 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
+        writer.write(&"test data").unwrap();
 
         // Now read it back
         let data = buffer;
@@ -181,10 +177,7 @@ mod tests {
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
+        writer.write(&"test data").unwrap();
 
         // Now read it back
         let data = buffer;
@@ -205,10 +198,7 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("no checksum");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
+        writer.write(&"no checksum").unwrap();
 
         // Now read it back
         let data = buffer;
@@ -229,10 +219,7 @@ mod tests {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
+            writer.write(&format!("message {}", i)).unwrap();
         }
 
         // Read them back using process_all
@@ -260,10 +247,7 @@ mod tests {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
+            writer.write(&format!("message {}", i)).unwrap();
         }
 
         // Read them back using the expert API
@@ -290,10 +274,7 @@ mod tests {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
         for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
+            writer.write(&format!("message {}", i)).unwrap();
         }
 
         // Read them back using process_all
@@ -348,12 +329,8 @@ mod tests {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
 
-        let mut builder = FlatBufferBuilder::new();
         for i in 0..5 {
-            builder.reset();
-            let data = builder.create_string(&format!("message {}", i));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
+            writer.write(&format!("message {}", i)).unwrap();
         }
 
         // Now test error propagation in process_all
