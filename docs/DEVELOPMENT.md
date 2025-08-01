@@ -79,6 +79,10 @@ criterion = { version = "0.5", features = ["html_reports"] }  # Performance benc
 
 ## 🏗️ Architecture Overview
 
+### Zero-Copy Throughout
+
+Both writing modes maintain perfect zero-copy behavior - after serialization, data is written directly from the builder's buffer to I/O without intermediate copies. This preserves the FlatBuffers philosophy: serialize once, access everywhere, copy never. See `docs/ZERO_COPY_ANALYSIS.md` for detailed analysis.
+
 ### Hybrid API Design (v2.6)
 
 The library provides both simple and expert modes for writing:
@@ -601,7 +605,8 @@ flatstream-rs/
 ├── DESIGN_EVOLUTION.md     # Architecture evolution documentation
 ├── docs/
 │   ├── DESIGN_v2_5.md      # Original v2.5 processor API proposal
-│   └── DESIGN_v2_6.md      # Current hybrid API implementation
+│   ├── DESIGN_v2_6.md      # Current hybrid API implementation
+│   └── ZERO_COPY_ANALYSIS.md # Zero-copy behavior analysis
 
 ### Related Projects
 - **FlatBuffers**: https://flatbuffers.dev/

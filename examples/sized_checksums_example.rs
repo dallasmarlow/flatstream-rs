@@ -8,7 +8,7 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -141,14 +141,18 @@ fn main() -> Result<()> {
 }
 
 fn demonstrate_checksum_sizes(
+    #[allow(unused_variables)]
     small_messages: &[SmallMessage],
+    #[allow(unused_variables)]
     medium_messages: &[MediumMessage],
+    #[allow(unused_variables)]
     large_messages: &[LargeMessage],
 ) -> Result<()> {
     println!("1. Checksum Size Comparison...");
 
     // External builder management for zero-allocation writes
-    let mut builder = FlatBufferBuilder::new();
+    #[allow(unused_variables)]
+    let builder = FlatBufferBuilder::new();
 
     // Small messages with CRC16 (2 bytes)
     #[cfg(feature = "crc16")]
@@ -305,6 +309,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
     let test_message = "performance-test-message";
 
     // External builder management
+    #[allow(unused_variables)]
     let mut builder = FlatBufferBuilder::new();
 
     // No checksum (baseline)

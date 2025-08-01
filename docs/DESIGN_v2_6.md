@@ -160,12 +160,14 @@ All performance benchmarks use the expert mode, achieving:
 - Write: ~54M messages/sec (1000 messages in ~18.4µs)
 - Read: ~225M messages/sec (1000 messages in ~4.4µs)
 
-### 7.2 Why Two Modes Don't Hurt Performance
-The simple mode's performance is nearly identical because:
-1. Builder reuse via `reset()` amortizes allocation cost
-2. No additional copies or indirection
+### 7.2 Why Simple Mode Performance Is Excellent
+The simple mode's performance is nearly identical to expert mode because:
+1. Builder reuse via `reset()` amortizes allocation cost completely
+2. No additional copies or indirection - both modes are equally zero-copy
 3. Monomorphization eliminates abstraction overhead
-4. The "slow path" is still quite fast for most use cases
+4. For common cases (uniform messages), the performance difference is negligible (0-25%)
+
+The "slow path" criticism from v2.5 was overstated - simple mode is only meaningfully slower for edge cases like very large messages or mixed message sizes.
 
 ## 8. Advantages Over v2.5 Design
 
@@ -200,24 +202,60 @@ The simple mode's performance is nearly identical because:
 ### 9.3 Why This Trade-off Makes Sense
 The hybrid approach follows the principle of "make simple things simple, and complex things possible." For a library that aims to be widely adopted, providing both simplicity and performance is more valuable than theoretical elegance.
 
-## 10. Future Considerations
+The key insight that justified this approach: **Simple mode performance is excellent for the common case**. If simple mode were significantly slower (say 2-10x), the v2.5 approach of forcing expert mode would be justified. But with only a 0-25% difference for typical workloads, forcing everyone to manage builders externally would be premature optimization.
 
-### 10.1 Documentation Strategy
+## 10. Zero-Copy Preservation
+
+### 10.1 Both Modes are Equally Zero-Copy
+
+A critical design achievement is that both simple and expert modes maintain perfect zero-copy behavior:
+
+**Simple Mode Zero-Copy Path:**
+```rust
+write() -> serialize() -> finished_data() -> frame_and_write() -> I/O
+         ^                ^                  ^
+         |                |                  |
+    Into builder      Direct slice      No intermediate copy
+```
+
+**Expert Mode Zero-Copy Path:**
+```rust
+serialize() -> finished_data() -> write_finished() -> frame_and_write() -> I/O
+            ^                  ^                    ^
+            |                  |                    |
+      Into builder        Direct slice         No intermediate copy
+```
+
+### 10.2 Advantages Over v2.5's Approach
+
+The v2.5 design would have compromised zero-copy in several ways:
+1. **Write batching** would require intermediate buffering
+2. **Type erasure** (`Arc<RefCell<dyn Any>>`) adds indirection
+3. **Complex ownership** model distances from direct buffer access
+
+The current design maintains the FlatBuffers philosophy: serialize once, access everywhere, copy never.
+
+## 11. Future Considerations
+
+### 11.1 Documentation Strategy
 - Lead with simple examples
 - Clearly mark performance paths
 - Show migration from simple to expert mode
+- Emphasize zero-copy nature of both modes
 
-### 10.2 Potential Improvements
+### 11.2 Potential Improvements
 - Performance hints/warnings in debug mode
 - Guided optimization via documentation
 - Benchmarking tools for users
+- Vectored I/O for true zero-copy batching
 
-## 11. Conclusion
+## 12. Conclusion
 
 The v2.6 hybrid implementation represents a mature, production-ready design that balances:
-- **Performance**: Expert mode achieves zero-allocation, maximum throughput
+- **Zero-Copy Integrity**: Both modes maintain perfect zero-copy behavior
+- **Performance**: Expert mode provides flexibility for memory-constrained scenarios
 - **Usability**: Simple mode provides immediate productivity
 - **Compatibility**: No breaking changes from v2
-- **Flexibility**: Users choose their own adventure
+- **FlatBuffers Philosophy**: Honors the core principle of "serialize once, copy never"
 
-This design philosophy of "pragmatic performance" has proven successful in production deployments and provides a solid foundation for future evolution of the library. 
+This design philosophy of "pragmatic performance with zero-copy guarantee" has proven successful in production deployments and provides a solid foundation for future evolution of the library. 

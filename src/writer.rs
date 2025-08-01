@@ -11,6 +11,10 @@ use std::io::Write;
 /// This writer is generic over a `Framer` strategy, which defines how
 /// each message is framed in the byte stream (e.g., with or without a checksum).
 ///
+/// **Zero-Copy Guarantee**: Both writing modes maintain perfect zero-copy behavior.
+/// After serialization, `builder.finished_data()` returns a direct slice that's
+/// written to I/O without any intermediate copies.
+///
 /// The writer can operate in two modes:
 /// 1. **Simple mode**: Writer manages its own builder internally
 ///    - Use `write()` method for convenience
@@ -19,7 +23,7 @@ use std::io::Write;
 /// 2. **Expert mode**: User manages builder externally
 ///    - Use `write_finished()` method
 ///    - Enables multiple builders for different message types
-///    - Up to 2x faster for large messages, better memory control
+///    - Better memory control for mixed workloads
 ///
 /// ## Custom Allocators
 ///

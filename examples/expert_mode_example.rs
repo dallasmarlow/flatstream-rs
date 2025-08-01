@@ -16,9 +16,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::Instant;
 
-// Import framing types when checksum features are enabled
-#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+
 
 // Define a high-frequency event type
 #[derive(Debug, Clone)]
