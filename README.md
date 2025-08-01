@@ -1,4 +1,4 @@
-# flatstream-rs
+# FlatStream
 
 [![Rust](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml)
 [![Crates.io](https://img.shields.io/crates/v/flatstream-rs.svg)](https://crates.io/crates/flatstream-rs)
@@ -6,11 +6,11 @@
 
 A lightweight, zero-copy, high-performance Rust library for streaming framed FlatBuffers.
 
-`flatstream-rs` provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages. It is designed for high-throughput, low-latency applications such as telemetry capture, network protocols, and high-speed data logging.
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages. It is designed for high-throughput, low-latency applications such as telemetry capture and high-speed data logging as the initial use cases. While FlatStream
 
-## Why flatstream-rs?
+## Why FlatStream?
 
-High-performance systems require efficient serialization and transmission of structured data. While FlatBuffers offers an excellent serialization format due to its zero-copy access and cross-platform compatibility, it does not inherently provide a streaming or framing protocol.
+High-performance systems require efficient serialization and transmission of structured data. While FlatBuffers offers a good serialization format due to its zero-copy access and cross-platform compatibility, it does not provide a streaming or framing protocol suitable for existing use cases.
 
 When writing multiple messages to a continuous byte stream (like a file or TCP socket), developers face several challenges:
 
