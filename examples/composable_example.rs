@@ -8,6 +8,7 @@ use std::io::{BufReader, BufWriter};
 struct SensorReading {
     sensor_id: String,
     temperature: f32,
+    #[allow(dead_code)]
     humidity: f32,
     timestamp: u64,
 }

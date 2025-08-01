@@ -176,7 +176,7 @@ fn main() -> Result<()> {
             let mut total_value = 0.0;
 
             // Process all sensor readings with zero-allocation
-            stream_reader.process_all(|payload| {
+            stream_reader.process_all(|_payload| {
                 // In a real application, you would deserialize the FlatBuffer here
                 // For this example, we just count and simulate processing
                 count += 1;

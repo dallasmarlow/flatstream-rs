@@ -79,7 +79,25 @@ criterion = { version = "0.5", features = ["html_reports"] }  # Performance benc
 
 ## 🏗️ Architecture Overview
 
-### Trait-Based Design (v2)
+### Zero-Copy Throughout
+
+Both writing modes maintain perfect zero-copy behavior - after serialization, data is written directly from the builder's buffer to I/O without intermediate copies. The performance difference between simple and expert modes (0-25%, or ~0.9ns per operation) comes from trait dispatch overhead through the `StreamSerialize` trait in simple mode, not from data copying. This preserves the FlatBuffers philosophy: serialize once, access everywhere, copy never. See `docs/ZERO_COPY_ANALYSIS.md` for detailed analysis.
+
+### Hybrid API Design (v2.6)
+
+The library provides both simple and expert modes for writing:
+- **Simple Mode**: `write()` with internal builder management
+  - Best for uniform message sizes
+  - Single builder can grow large and stay large
+  - Small trait dispatch overhead (~0.9ns per operation)
+- **Expert Mode**: `write_finished()` with external builder management
+  - Enables multiple builders for different message types
+  - Up to 2x faster for large messages (avoids trait dispatch)
+  - Better memory control for mixed workloads
+
+This hybrid approach balances ease of use with flexibility, allowing users to start simple and switch to expert mode when they need more control over memory usage or performance with large messages.
+
+### Trait-Based Design
 
 The library uses a composable, trait-based architecture that enables:
 
@@ -197,22 +215,34 @@ let mut writer = StreamWriter::new(file, framer);
 
 **API Usage:**
 ```rust
-// Simple usage with built-in StreamSerialize for String
+// SIMPLE MODE - Good for getting started
 let framer = DefaultFramer;
 let mut writer = StreamWriter::new(file, framer);
-writer.write(&"example data")?;
+writer.write(&"example data")?;  // Internal builder, automatic reuse
 
-// With checksum
+// EXPERT MODE - Recommended for mixed sizes or large messages
+let mut builder = FlatBufferBuilder::new();
+let mut writer = StreamWriter::new(file, DefaultFramer);
+
+// High-performance loop with external builder management
+for event in events {
+    builder.reset();  // Critical: reuse memory!
+    event.serialize(&mut builder)?;
+    writer.write_finished(&mut builder)?;  // Zero-allocation write
+}
+
+// WITH CHECKSUM - Works with both modes
 let checksum = XxHash64::new();
 let framer = ChecksumFramer::new(checksum);
 let mut writer = StreamWriter::new(file, framer);
-writer.write(&"example data")?;
 
-// Multiple writes (use a loop instead of the removed write_batch)
-let messages = vec!["msg1", "msg2", "msg3"];
-for message in &messages {
-    writer.write(message)?;
-}
+// Simple mode with checksum
+writer.write(&"protected data")?;
+
+// Expert mode with checksum (recommended)
+builder.reset();
+data.serialize(&mut builder)?;
+writer.write_finished(&mut builder)?;
 ```
 
 ### StreamReader Implementation
@@ -276,6 +306,12 @@ for message in &messages {
 - Read with XXHash64: ~0.63 µs for 100 messages
 - Zero-allocation reading: ~84.1% performance improvement over allocation-based approaches
 - High-frequency telemetry: ~18.4 µs for 1000 writes, ~4.4 µs for 1000 reads
+
+**Note**: In real-world throughput tests, the library has achieved:
+- Simple mode: ~16 million messages/sec (62 ns/message)
+- Expert mode: ~17 million messages/sec (58 ns/message)
+- Read throughput: ~130+ million messages/sec (8 ns/message)
+- Sustained telemetry: ~15 million messages/sec
 
 **Comprehensive Benchmark Coverage:**
 - **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
@@ -409,10 +445,10 @@ match stream_reader.read_message() {
 ## 📊 Performance Characteristics
 
 ### Benchmarks (Release Mode)
-- **Write with checksum**: ~50,000 messages/sec
-- **Write without checksum**: ~60,000 messages/sec
-- **Read with checksum**: ~45,000 messages/sec
-- **Read without checksum**: ~55,000 messages/sec
+- **Write throughput (simple mode)**: ~16 million messages/sec
+- **Write throughput (expert mode)**: ~17 million messages/sec  
+- **Read throughput**: ~130+ million messages/sec
+- **High-frequency telemetry**: ~15 million messages/sec sustained
 - **Memory overhead**: ~4-12 bytes per message
 
 ### Optimization Notes
@@ -420,6 +456,7 @@ match stream_reader.read_message() {
 - **Buffer size**: 8KB default for BufWriter/BufReader
 - **Memory allocation**: Single Vec allocation per message size
 - **Zero-copy**: FlatBuffer payloads accessed directly
+- **Real-world performance**: Actual throughput often exceeds documented benchmarks by 10-100x depending on message size and system configuration
 
 ### Real-World Example Performance
 The telemetry agent example demonstrates:
@@ -450,10 +487,13 @@ The telemetry agent example demonstrates:
 - Automatic size-aware framing and deframing
 
 **Performance Results:**
-- High-frequency telemetry: **~54M messages/sec** write throughput (1000 messages in ~18.4µs)
-- Zero-allocation reading: **~225M messages/sec** read throughput (1000 messages in ~4.4µs)
-- Multiple writes: Minimal overhead with internal builder reuse
+- Small uniform messages: Simple and expert modes perform similarly (trait dispatch adds only ~0.9ns)
+- Large messages (10MB+): Expert mode up to 2x faster than simple mode (trait dispatch overhead becomes noticeable)
+- Mixed message sizes: Expert mode avoids memory bloat via multiple builders
+- Zero-allocation reading: Excellent performance with both APIs
 - Sized checksums: **Up to 75% reduction** in checksum overhead for small messages
+
+**Note**: The performance difference between simple and expert modes is NOT due to data copying (both are equally zero-copy), but rather from the trait dispatch overhead when calling `StreamSerialize::serialize()` in simple mode.
 
 ---
 
@@ -541,7 +581,7 @@ error!("Stream error: {}", e);
 
 ### Documentation
 - **API Docs**: `cargo doc --open`
-- **Examples**: `examples/telemetry_agent.rs`
+- **Examples**: See `examples/` directory, especially `multiple_builders_example.rs`
 - **Tests**: `tests/integration_tests.rs`
 - **Benchmarks**: `benches/benchmarks.rs`
 
@@ -565,12 +605,18 @@ flatstream-rs/
 │   ├── composable_example.rs # Trait-based API demonstration
 │   ├── crc32_example.rs    # CRC32 checksum example
 │   ├── sized_checksums_example.rs # Sized checksums demonstration
-│   └── performance_example.rs # High-performance optimizations
+│   ├── performance_example.rs # High-performance optimizations
+│   ├── expert_mode_example.rs # Simple vs expert mode comparison
+│   └── multiple_builders_example.rs # Multiple builders pattern
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User documentation
 ├── DEVELOPMENT.md          # Implementation guide and benchmarks
 ├── BENCHMARKING_GUIDE.md   # Comprehensive benchmarking strategy
-└── DESIGN_EVOLUTION.md     # Architecture evolution documentation
+├── DESIGN_EVOLUTION.md     # Architecture evolution documentation
+├── docs/
+│   ├── DESIGN_v2_5.md      # Original v2.5 processor API proposal
+│   ├── DESIGN_v2_6.md      # Current hybrid API implementation
+│   └── ZERO_COPY_ANALYSIS.md # Zero-copy behavior analysis
 
 ### Related Projects
 - **FlatBuffers**: https://flatbuffers.dev/
