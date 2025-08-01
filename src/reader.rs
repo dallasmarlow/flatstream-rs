@@ -18,9 +18,11 @@ use std::marker::PhantomData;
 /// The `process_all()` method provides the highest performance by using a closure
 /// that receives borrowed slices (`&[u8]`) directly from the internal buffer. This
 /// eliminates all allocations and provides zero-copy access to message payloads.
+/// Performance: Excellent - zero-copy access to message payloads.
 ///
 /// The `messages()` method provides manual iteration control for cases where you
 /// need more complex control flow or want to process messages conditionally.
+/// Performance: Same as `process_all()` - both use zero-copy access.
 ///
 /// ```rust
 /// # use flatstream_rs::{StreamReader, DefaultDeframer, Result};

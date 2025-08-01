@@ -136,7 +136,7 @@ for item in items {
 ### Example Updates (7 examples)
 - `performance_example.rs`: Demonstrates zero-allocation patterns
 - `expert_processing_example.rs`: Shows Expert Path usage
-- `arena_allocation_example.rs`: Extreme performance optimization
+- `expert_mode_example.rs`: Expert mode performance optimization
 - `telemetry_agent.rs`: Real-world application patterns
 - All examples updated to v2.5 API patterns
 
