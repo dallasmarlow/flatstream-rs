@@ -32,7 +32,7 @@ impl StreamSerialize for TelemetryEvent {
     fn serialize<A: flatbuffers::Allocator>(
         &self,
         builder: &mut FlatBufferBuilder<A>,
-    ) -> flatstream::Result<()> {
+    ) -> flatstream_rs::Result<()> {
         // This simulates a more realistic serialization process by creating a binary vector.
         let mut data = Vec::with_capacity(24); // 8 bytes for each field (u64, u64, f64)
         data.extend_from_slice(&self.device_id.to_le_bytes());
