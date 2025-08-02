@@ -151,7 +151,7 @@ Optional functionality is controlled by feature flags:
 
 **Usage Pattern:**
 ```rust
-use flatstream_rs::{Error, Result};
+use flatstream::{Error, Result};
 
 fn process_stream() -> Result<()> {
     // Operations return Result<T, Error>
@@ -358,7 +358,7 @@ flatbuffers = "24.3.25"
 ```rust
 use std::fs::File;
 use std::io::BufWriter;
-use flatstream_rs::*;
+use flatstream::*;
 
 // Setup writer with checksum
 let file = File::create("telemetry.bin")?;
@@ -377,7 +377,7 @@ stream_writer.flush()?;
 **3. Reading for Reprocessing:**
 ```rust
 use std::io::BufReader;
-use flatstream_rs::*;
+use flatstream::*;
 
 let file = File::open("telemetry.bin")?;
 let reader = BufReader::new(file);
