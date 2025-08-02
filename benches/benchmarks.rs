@@ -601,97 +601,7 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
     });
 }
 
-// === COMPARATIVE BENCHMARKS (vs Bincode and Protobuf) ===
-
-// Note: These benchmarks require additional dependencies that would need to be added to Cargo.toml
-// For now, we'll create the structure but comment out the actual implementations
-// to avoid breaking the build without the dependencies.
-
-/*
-// This would require adding to Cargo.toml:
-// [dev-dependencies]
-// serde = { version = "1.0", features = ["derive"] }
-// bincode = "1.3"
-// prost = "0.12"
-
-use serde::{Serialize, Deserialize};
-
-#[derive(Serialize, Deserialize, Clone)]
-struct TelemetryData {
-    timestamp: u64,
-    device_id: String,
-    value: f64,
-    is_critical: bool,
-}
-
-impl StreamSerialize for TelemetryData {
-    fn serialize(&self, builder: &mut flatbuffers::FlatBufferBuilder) -> Result<()> {
-        let device_id = builder.create_string(&self.device_id);
-        builder.finish(device_id, None);
-        Ok(())
-    }
-}
-
-fn benchmark_comparative_formats(c: &mut Criterion) {
-    let data: Vec<_> = (0..100)
-        .map(|i| TelemetryData {
-            timestamp: i * 1000,
-            device_id: format!("device-{}", i),
-            value: i as f64 * 1.5,
-            is_critical: i % 10 == 0,
-        })
-        .collect();
-
-    let mut group = c.benchmark_group("Comparative: Write 100 Messages");
-
-    // Benchmark flatstream-rs
-    group.bench_function("flatstream", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            let framer = DefaultFramer;
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-            let mut builder = FlatBufferBuilder::new();
-            for item in black_box(&data) {
-                builder.reset();
-                let data = builder.create_string(&item.device_id);
-                builder.finish(data, None);
-                writer.write(&mut builder).unwrap();
-            }
-        });
-    });
-
-    // Benchmark bincode with manual framing
-    group.bench_function("bincode", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            for item in black_box(&data) {
-                let encoded: Vec<u8> = bincode::serialize(item).unwrap();
-                let len = encoded.len() as u32;
-                buffer.write_all(&len.to_le_bytes()).unwrap();
-                buffer.write_all(&encoded).unwrap();
-            }
-        });
-    });
-
-    // Benchmark protobuf
-    group.bench_function("protobuf", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            for item in black_box(&data) {
-                item.encode_length_delimited(&mut buffer).unwrap();
-            }
-        });
-    });
-
-    group.finish();
-}
-*/
-
 // === REGRESSION DETECTION BENCHMARKS ===
-
-// These benchmarks are specifically designed to detect performance regressions
-// by focusing on the most sensitive operations that could be affected by
-// architectural changes.
 
 fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
@@ -747,33 +657,9 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 }
 
-// === BENCHMARK SUMMARY ===
-
-// Benchmark Categories and Coverage:
-//
-// 1. **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
-// 2. **Read Performance**: Default deframer, XXHash64, CRC32, CRC16 checksums
-// 3. **Zero-Allocation Reading**: High-performance pattern comparison
-// 4. **Write Batching**: Batch vs iterative performance comparison
-// 5. **End-to-End Cycles**: Complete write-read cycle performance
-// 6. **High-Frequency Telemetry**: 1000 message scenarios
-// 7. **Large Messages**: Real-world message size simulation
-// 8. **Memory Efficiency**: Memory usage analysis
-// 9. **Regression Detection**: Performance regression sensitive tests
-// 10. **Comparative Analysis**: vs Bincode and Protobuf (structure ready)
-//
-// **Feature Coverage**:
-// - Default framing (always available)
-// - XXHash64 checksums (feature-gated)
-// - CRC32 checksums (feature-gated)
-// - All performance optimizations
-// - Regression detection capabilities
-
 // === MAIN BENCHMARK CONFIGURATION ===
 
-// === SIMPLIFIED CRITERION GROUPS ===
-
-// No checksum features enabled
+// Group for benchmarks that run WITHOUT any checksum features
 #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 criterion_group!(
     benches,
@@ -789,7 +675,7 @@ criterion_group!(
     benchmark_regression_sensitive_operations,
 );
 
-// At least one checksum feature enabled
+// Group for benchmarks that run WITH any checksum feature
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 criterion_group!(
     benches,
@@ -809,4 +695,34 @@ criterion_group!(
     benchmark_checksum_cycles,
 );
 
+// Group for benchmarks that are SPECIFIC to the xxhash feature
+#[cfg(feature = "xxhash")]
+criterion_group!(
+    name = xxhash_specific_benches;
+    config = Criterion::default();
+    targets =
+        benchmark_zero_allocation_reading_with_checksum,
+        benchmark_write_batch_with_checksum,
+        benchmark_write_read_cycle_with_checksum,
+        benchmark_large_messages_with_checksum
+);
+
+// === MAIN MACRO ===
+
+// Conditionally compile the main macro based on features
+#[cfg(all(not(feature = "xxhash"), not(feature = "crc32"), not(feature = "crc16")))]
+criterion_main!(benches);
+
+#[cfg(all(feature = "xxhash", not(feature="crc32"), not(feature="crc16")))]
+criterion_main!(benches, xxhash_specific_benches);
+
+// Add more combinations if needed for crc32, crc16, etc.
+// For simplicity, this handles the two main cases: no checksums, or xxhash is present.
+// A more robust solution would handle all 2^3 combinations.
+
+// A simpler catch-all for when any checksum is enabled but we only have xxhash specific benches
+#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), not(all(not(feature="xxhash")))))]
+criterion_main!(benches, xxhash_specific_benches);
+
+#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), all(not(feature="xxhash"))))]
 criterion_main!(benches);
