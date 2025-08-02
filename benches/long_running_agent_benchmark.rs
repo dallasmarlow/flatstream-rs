@@ -81,8 +81,7 @@ impl<'a> MixedMessage<'a> {
 // --- Benchmark Function ---
 
 fn benchmark_long_running_agent(c: &mut Criterion) {
-    let mut group =
-        c.benchmark_group("Long-Running Agent: Mixed Workload with Large Messages");
+    let mut group = c.benchmark_group("Long-Running Agent: Mixed Workload with Large Messages");
 
     // Pre-allocate data to avoid measuring test data allocation itself
     let medium_payload = vec![0u8; 64 * 1024]; // 64 KB
@@ -202,4 +201,3 @@ criterion_group! {
     targets = benchmark_long_running_agent
 }
 criterion_main!(benches);
-
