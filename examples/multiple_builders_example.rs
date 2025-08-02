@@ -96,20 +96,17 @@ fn main() -> Result<()> {
             command: "SET_RATE=100".to_string(),
             timestamp: 1001,
         }),
-        
         // Medium telemetry batch
         Message::Telemetry(TelemetryBatch {
             device_id: "sensor-001".to_string(),
             readings: vec![23.5, 24.1, 23.8, 24.0, 23.9],
         }),
-        
         // Large file chunk (1MB)
         Message::FileTransfer(FileChunk {
             file_id: "firmware-v2.0.bin".to_string(),
             chunk_number: 1,
             data: vec![0xAB; 1024 * 1024], // 1MB chunk
         }),
-        
         // More control messages after the large transfer
         Message::Control(ControlMessage {
             command: "STATUS".to_string(),
@@ -141,7 +138,7 @@ fn main() -> Result<()> {
                 file_builder.reset();
                 msg.serialize(&mut file_builder)?;
                 stream_writer.write_finished(&mut file_builder)?;
-                
+
                 // Optional: For very rare large messages, you could even drop
                 // and recreate the builder to free memory immediately
                 // file_builder = FlatBufferBuilder::new();
@@ -154,10 +151,12 @@ fn main() -> Result<()> {
 
     // Memory efficiency analysis
     println!("\nMemory Efficiency:");
-    println!("- Control messages used a small builder (~1KB capacity)");
-    println!("- Telemetry messages used a medium builder (~10KB capacity)");
-    println!("- File transfer used a large builder (~1MB capacity)");
-    println!("\nWithout multiple builders, ALL messages would use 1MB+ after the file transfer!");
+    println!("- Control messages: Small, frequent messages");
+    println!("- Telemetry messages: Medium-sized batches");
+    println!("- File transfer: Large 1MB chunks");
+    println!("\nNote: After large messages, builders retain their expanded capacity");
+    println!("Using separate builders prevents small messages from using oversized buffers.");
+    println!("This pattern is especially important for mixed message size workloads.");
 
     Ok(())
-} 
+}
