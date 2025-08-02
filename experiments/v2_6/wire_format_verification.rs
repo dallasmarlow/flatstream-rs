@@ -1,7 +1,7 @@
 //! Verification that the wire format matches the documentation exactly:
 //! [4-byte Payload Length (u32, LE) | Variable Checksum (0-8 bytes) | FlatBuffer Payload]
 
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 
 fn main() {

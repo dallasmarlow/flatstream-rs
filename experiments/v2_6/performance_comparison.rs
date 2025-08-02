@@ -3,7 +3,7 @@
 //! between the two writing modes in v2.6.
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 use std::time::Instant;
 

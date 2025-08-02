@@ -1,6 +1,6 @@
 [package]
-name = "flatstream-rs"
-version = "0.1.0"
+name = "flatstream"
+version = "0.2.6"
 edition = "2021"
 authors = ["Dallas Marlow <dallas@example.com>"]
 description = "High-performance FlatBuffers streaming with data integrity"
@@ -21,7 +21,6 @@ bumpalo = { version = "3.14", optional = true }
 
 [features]
 default = []
-async = ["tokio"]
 xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
 crc16 = ["dep:crc16"]

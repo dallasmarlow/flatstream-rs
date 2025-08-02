@@ -4,7 +4,7 @@
 //! vastly different sizes, preventing memory waste from builder bloat.
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::fs::File;
 use std::io::BufWriter;
 

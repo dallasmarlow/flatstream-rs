@@ -3,7 +3,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::{
+use flatstream::{
     self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
 };
 use serde::{Deserialize, Serialize};
@@ -11,16 +11,16 @@ use std::io::{Cursor, Read, Write};
 
 // Import checksum types when features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "xxhash")]
-use flatstream_rs::XxHash64;
+use flatstream::XxHash64;
 
 #[cfg(feature = "crc32")]
-use flatstream_rs::Crc32;
+use flatstream::Crc32;
 
 #[cfg(feature = "crc16")]
-use flatstream_rs::Crc16;
+use flatstream::Crc16;
 
 // --- Common Data Structure ---
 // A simple struct that can be used by serde and flatstream.

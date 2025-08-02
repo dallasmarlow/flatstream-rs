@@ -2,7 +2,7 @@
 //! This script tracks memory addresses to prove no data is copied after serialization
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 
 struct TestMessage {

@@ -6,14 +6,14 @@
 //! - XXHash64 (8 bytes) for large, critical messages
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::fs::File;
 #[allow(unused_imports)]
 use std::io::{BufReader, BufWriter};
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
 // Define different message types for demonstration
 #[derive(Debug)]

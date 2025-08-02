@@ -1,7 +1,7 @@
 //! Verification of error handling behavior as documented
 //! Tests all error types: Io, ChecksumMismatch, InvalidFrame, UnexpectedEof
 
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::{self, Cursor, Read, Write};
 
 struct TestMessage(String);

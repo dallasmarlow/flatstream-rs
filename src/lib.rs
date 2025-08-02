@@ -20,7 +20,7 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use flatstream_rs::*;
+//! use flatstream::*;
 //! use std::fs::File;
 //! use flatbuffers::FlatBufferBuilder;
 //!

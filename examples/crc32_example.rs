@@ -1,11 +1,11 @@
-use flatstream_rs::*;
+use flatstream::*;
 use flatbuffers::FlatBufferBuilder;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 
 // Import the framing types directly since we need them for CRC32
 #[cfg(feature = "crc32")]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
 // This example demonstrates how easy it is to add new checksum algorithms
 // to the flatstream-rs library using the v2.5 trait-based architecture.
