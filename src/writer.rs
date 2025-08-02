@@ -48,7 +48,7 @@ where
 
 impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// Creates a new `StreamWriter` with a default `FlatBufferBuilder`.
-    /// 
+    ///
     /// This enables **simple mode** - the writer manages an internal builder
     /// and provides the convenient `write()` method. Perfect for getting started
     /// and moderate-throughput applications.
@@ -69,7 +69,7 @@ where
     A: flatbuffers::Allocator,
 {
     /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
-    /// 
+    ///
     /// This enables **expert mode** with custom allocation strategies like arena allocation.
     /// Use this when you need the absolute maximum performance or zero-allocation guarantees.
     ///
@@ -96,7 +96,7 @@ where
     /// The builder is reset before serialization.
     ///
     /// This is the **simple mode** API - convenient for uniform message sizes.
-    /// 
+    ///
     /// # Performance
     /// - Excellent for uniform, small-to-medium messages
     /// - Builder grows to accommodate largest message and stays that size

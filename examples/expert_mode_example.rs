@@ -16,8 +16,6 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::Instant;
 
-
-
 // Define a high-frequency event type
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -118,14 +116,23 @@ fn demonstrate_mode_comparison() -> Result<()> {
     println!("   Simple mode:");
     println!("     Time:       {:?}", simple_time);
     println!("     Throughput: {:.0} messages/sec", simple_throughput);
-    println!("     Latency:    {:.3} µs/msg", simple_time.as_micros() as f64 / num_events as f64);
-    
+    println!(
+        "     Latency:    {:.3} µs/msg",
+        simple_time.as_micros() as f64 / num_events as f64
+    );
+
     println!("\n   Expert mode:");
     println!("     Time:       {:?}", expert_time);
     println!("     Throughput: {:.0} messages/sec", expert_throughput);
-    println!("     Latency:    {:.3} µs/msg", expert_time.as_micros() as f64 / num_events as f64);
-    
-    println!("\n   Performance gain: {:.1}x faster", simple_throughput / expert_throughput);
+    println!(
+        "     Latency:    {:.3} µs/msg",
+        expert_time.as_micros() as f64 / num_events as f64
+    );
+
+    println!(
+        "\n   Performance gain: {:.1}x faster",
+        expert_throughput / simple_throughput
+    );
     println!("   ✓ Mode comparison completed\n");
     Ok(())
 }
@@ -172,7 +179,10 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
     println!("   Write performance:");
     println!("     Time:       {:?}", write_time);
     println!("     Throughput: {:.0} events/second", throughput);
-    println!("     Latency:    {:.3} µs per event", write_time.as_micros() as f64 / num_events as f64);
+    println!(
+        "     Latency:    {:.3} µs per event",
+        write_time.as_micros() as f64 / num_events as f64
+    );
 
     // Read back using processor API for maximum performance
     println!("\n   Reading events with zero-copy processor API...");
@@ -195,7 +205,10 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
         println!("   Read performance:");
         println!("     Time:       {:?}", read_time);
         println!("     Throughput: {:.0} events/second", read_throughput);
-        println!("     Latency:    {:.3} µs per event", read_time.as_micros() as f64 / count as f64);
+        println!(
+            "     Latency:    {:.3} µs per event",
+            read_time.as_micros() as f64 / count as f64
+        );
     }
 
     println!("   ✓ High-frequency scenario completed\n");
@@ -214,9 +227,9 @@ fn demonstrate_best_practices() -> Result<()> {
 
         // GOOD: Single builder, reused via reset()
         let mut builder = FlatBufferBuilder::new();
-        
+
         println!("      ✓ Create builder once, outside the loop");
-        
+
         for i in 0..100 {
             let event = HighFrequencyEvent {
                 timestamp: i,
@@ -224,13 +237,13 @@ fn demonstrate_best_practices() -> Result<()> {
                 volume: 100,
                 symbol: "TEST".to_string(),
             };
-            
+
             // GOOD: Reset reuses existing allocations
             builder.reset();
             event.serialize(&mut builder)?;
             writer.write_finished(&mut builder)?;
         }
-        
+
         println!("      ✓ Reset builder for each message (reuses memory)");
         println!("      ✓ Use write_finished() for maximum control");
     }
@@ -243,7 +256,7 @@ fn demonstrate_best_practices() -> Result<()> {
         let buffered_writer = BufWriter::new(file);
         let _writer = StreamWriter::new(buffered_writer, DefaultFramer);
         println!("      ✓ BufWriter reduces system calls");
-        
+
         // BAD: Direct file handle (example only - don't do this!)
         // let file = File::create("unbuffered.bin")?;
         // let writer = StreamWriter::new(file, DefaultFramer);
