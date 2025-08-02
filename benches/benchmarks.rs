@@ -1,7 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::checksum::Checksum;
-use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
+use flatstream::{
+    DefaultDeframer, DefaultFramer, SafeTakeDeframer, StreamReader, StreamSerialize, StreamWriter,
+    UnsafeDeframer,
+};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -657,6 +660,70 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 }
 
+// === READ PATH ALTERNATIVES BENCHMARKS ===
+
+// In: benches/benchmarks.rs
+
+fn benchmark_read_path_alternatives(c: &mut Criterion) {
+    // 1. Prepare a consistent set of test data
+    let mut buffer = Vec::new();
+    {
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
+        for i in 0..100 {
+            let msg = format!("message {}", i);
+            writer.write(&msg).unwrap();
+        }
+    }
+
+    let mut group = c.benchmark_group("Read Path Implementations");
+
+    // ADD THIS BLOCK TO YOUR FUNCTION
+    // --- Benchmark the original DefaultDeframer as a baseline ---
+    group.bench_function("DefaultDeframer (Original)", |b| {
+        b.iter(|| {
+            let deframer = DefaultDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    // 2. Benchmark the safe `Read::take` implementation
+    group.bench_function("SafeTakeDeframer", |b| {
+        b.iter(|| {
+            let deframer = SafeTakeDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    // 3. Benchmark the `unsafe` implementation
+    group.bench_function("UnsafeDeframer", |b| {
+        b.iter(|| {
+            let deframer = UnsafeDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
 // === MAIN BENCHMARK CONFIGURATION ===
 
 // Group for benchmarks that run WITHOUT any checksum features
@@ -673,6 +740,7 @@ criterion_group!(
     benchmark_large_messages,
     benchmark_memory_efficiency,
     benchmark_regression_sensitive_operations,
+    benchmark_read_path_alternatives,
 );
 
 // Group for benchmarks that run WITH any checksum feature
@@ -710,10 +778,14 @@ criterion_group!(
 // === MAIN MACRO ===
 
 // Conditionally compile the main macro based on features
-#[cfg(all(not(feature = "xxhash"), not(feature = "crc32"), not(feature = "crc16")))]
+#[cfg(all(
+    not(feature = "xxhash"),
+    not(feature = "crc32"),
+    not(feature = "crc16")
+))]
 criterion_main!(benches);
 
-#[cfg(all(feature = "xxhash", not(feature="crc32"), not(feature="crc16")))]
+#[cfg(all(feature = "xxhash", not(feature = "crc32"), not(feature = "crc16")))]
 criterion_main!(benches, xxhash_specific_benches);
 
 // Add more combinations if needed for crc32, crc16, etc.
@@ -721,8 +793,14 @@ criterion_main!(benches, xxhash_specific_benches);
 // A more robust solution would handle all 2^3 combinations.
 
 // A simpler catch-all for when any checksum is enabled but we only have xxhash specific benches
-#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), not(all(not(feature="xxhash")))))]
+#[cfg(all(
+    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
+    not(all(not(feature = "xxhash")))
+))]
 criterion_main!(benches, xxhash_specific_benches);
 
-#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), all(not(feature="xxhash"))))]
+#[cfg(all(
+    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
+    all(not(feature = "xxhash"))
+))]
 criterion_main!(benches);

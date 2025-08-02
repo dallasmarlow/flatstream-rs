@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{self as flatstream, DefaultFramer, StreamWriter, StreamSerialize};
+use flatstream::{self as flatstream, DefaultFramer, StreamSerialize, StreamWriter};
 use std::io::BufWriter;
 use tempfile::NamedTempFile;
 
@@ -35,7 +35,8 @@ impl<'a> StreamSerialize for LargeMessage<'a> {
 // --- Benchmark Function ---
 
 fn benchmark_long_running_agent(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Long-Running Agent: 10 cycles of [1 Large (5MB) + 1000 Small]");
+    let mut group =
+        c.benchmark_group("Long-Running Agent: 10 cycles of [1 Large (5MB) + 1000 Small]");
 
     // Pre-allocate data to avoid measuring allocation of the test data itself
     let small_messages: Vec<_> = (0..1000).map(SmallMessage).collect();

@@ -183,3 +183,66 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         Ok(Some(()))
     }
 }
+
+/// A high-performance deframer that uses an `unsafe` block to avoid unnecessary buffer zeroing.
+pub struct UnsafeDeframer;
+
+// Implementation for the unsafe version
+impl Deframer for UnsafeDeframer {
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
+        let mut len_bytes = [0u8; 4];
+        if reader.read_exact(&mut len_bytes).is_err() {
+            return Ok(None); // Clean EOF
+        }
+
+        let payload_len = u32::from_le_bytes(len_bytes) as usize;
+
+        buffer.clear();
+        if buffer.capacity() < payload_len {
+            buffer.reserve(payload_len - buffer.capacity());
+        }
+
+        unsafe {
+            buffer.set_len(payload_len);
+        }
+
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+        Ok(Some(()))
+    }
+}
+
+/// Deframer using the safe `Read::take` method.
+pub struct SafeTakeDeframer;
+
+// Implementation for the safe version
+impl Deframer for SafeTakeDeframer {
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
+        let mut len_bytes = [0u8; 4];
+        if reader.read_exact(&mut len_bytes).is_err() {
+            return Ok(None); // Clean EOF
+        }
+
+        let payload_len = u32::from_le_bytes(len_bytes) as usize;
+
+        buffer.clear();
+        buffer.reserve(payload_len);
+
+        reader.take(payload_len as u64).read_to_end(buffer)?;
+
+        if buffer.len() != payload_len {
+            return Err(Error::UnexpectedEof);
+        }
+
+        Ok(Some(()))
+    }
+}
