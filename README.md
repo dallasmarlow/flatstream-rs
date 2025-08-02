@@ -1,12 +1,12 @@
 # FlatStream
 
 [![Rust](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml)
-[![Crates.io](https://img.shields.io/crates/v/flatstream-rs.svg)](https://crates.io/crates/flatstream-rs)
-[![Docs.rs](https://docs.rs/flatstream-rs/badge.svg)](https://docs.rs/flatstream-rs)
+[![Crates.io](https://img.shields.io/crates/v/flatstream.svg)](https://crates.io/crates/flatstream)
+[![Docs.rs](https://docs.rs/flatstream/badge.svg)](https://docs.rs/flatstream)
 
 A lightweight, zero-copy, high-performance Rust library for streaming framed FlatBuffers.
 
-FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages. It is designed for high-throughput, low-latency applications such as telemetry capture and high-speed data logging as the initial use cases. While FlatStream
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages. It is designed for high-throughput, low-latency applications such as telemetry capture and high-speed data logging as the primary design influencing use cases. While FlatStream may be suitable for streaming data over network connections using protocols like TCP and is readily compaitble with the most common ways of doing so in Rust, this has not been the focus of the library in terms of development and testing.
 
 ## Why FlatStream?
 
@@ -15,23 +15,23 @@ High-performance systems require efficient serialization and transmission of str
 When writing multiple messages to a continuous byte stream (like a file or TCP socket), developers face several challenges:
 
 - **Framing**: A mechanism is needed to delineate where one message ends and the next begins.
-- **Memory Allocation Overhead**: Frequently allocating new buffers for every message creates excessive pressure on the memory allocator, introducing latency jitter and reducing throughput.
+- **Memory Allocation Overhead**: Frequently allocating new buffers for every message can create pressure on the memory allocator which at times can result in introducing latency jitter and reducing throughput.
 - **Data Integrity**: Streams may require checksums to validate that messages were not corrupted in transit or at rest.
 
-`flatstream-rs` solves these problems by providing a standardized, highly optimized, and composable framing layer specifically designed for FlatBuffers in Rust. This library is engineered for demanding use cases like telemetry data capture, where sub-millisecond updates need to be reliably stored and reprocessed.
+FlatStream solves these problems by providing a standardized, optimized, and composable framing layer designed for FlatBuffers in Rust. This library is engineered for use cases such as high frequency and/or low latency telemetry data capture, where sub-millisecond updates need to be reliably stored and reprocessed. FlatStream provides a simple a durable format to reliably encode series of FlatBuffer messages which can then be later read with all of the benifits of normal FlatBuffers across different platforms and programming languages.
 
 ## Architecture and Design Principles
 
-The library is designed around composability and zero-cost abstractions to maximize performance in demanding environments.
+The library is designed around composability and zero-cost abstractions to maximize performance in demanding and/or resource constrained environments.
 
 ### Performance: Zero-Copy Throughout
 
 Performance is achieved through maintaining FlatBuffers' zero-copy philosophy at every level.
 
-- **Zero-Copy Writing (Both Modes)**: Both simple and expert modes maintain perfect zero-copy behavior. After serialization, `builder.finished_data()` returns a direct slice that's written to I/O without any intermediate copies. The performance differences between modes come from trait dispatch overhead (~0.9ns per operation in simple mode) and memory management flexibility, not from data copying.
+- **Zero-Copy Writing (Both Modes)**: Both simple and expert modes maintain perfect zero-copy behavior. After serialization, `builder.finished_data()` returns a direct slice that's written to I/O without any intermediate copies. The performance differences between modes come mostly from trait dispatch overhead (~0.9ns per operation in simple mode) and memory management flexibility, not from data copying. NEEDS PROFILING TO CONFIRM
 - **Zero-Copy Reading**: `StreamReader` provides true zero-copy access through `process_all()` and `messages()` APIs. These deliver borrowed slices (`&[u8]`) directly from the read buffer - no allocations, no copies.
-- **FlatBuffers Philosophy**: The serialized format IS the wire format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths.
-- **Comprehensive Benchmarking**: Extensive performance analysis with feature-gated benchmarks for all configurations. Real-world performance often exceeds documented benchmarks, with throughput tests showing 15+ million messages/sec.
+- **FlatBuffers Philosophy**: The serialized format IS the wire format, and in some cases a suitable final storage format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths and a convenience writer method with optimized, but not ultimate performance.
+- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests are used to validate design choices and influence the development of the library with feature-gated criterion benchmarks for all library configurations. Real-world performance often exceeds documented benchmarks, with throughput tests consistently resulting in 15+ million messages/sec throughput on a modern mackbook pro.
 
 ### Composability and Static Dispatch
 
@@ -45,34 +45,34 @@ The core types (`StreamWriter`/`StreamReader`) are generic over these traits. Th
 
 ## Writing Modes: Simple vs Expert
 
-`flatstream-rs` provides two modes for writing data, allowing you to choose based on your performance requirements:
+FlatStream provides two modes for writing data, allowing you to choose based on your performance requirements:
 
-### Simple Mode (Default)
-Best for: Getting started, prototyping, uniform message sizes
+### Simple Mode - Internal FlatBuffers Builder (Default)
+Best for: Convenience, smaller number of messages per-stream and uniform/consistent message sizes
 
 ```rust
 let mut writer = StreamWriter::new(file, DefaultFramer);
 writer.write(&"Hello, world!")?;  // Internal builder management
 ```
 
-- **Pros**: Zero configuration, automatic builder reuse, easy to use
-- **Cons**: Single internal builder can cause memory bloat with mixed sizes
+- **Pros**: Zero configuration, automatic optimized builder reuse to avoid unnecessary heap allcoations and memory copy operations, easy to use
+- **Cons**: Single internal builder can cause memory bloat with mixed sizes due to the FlatBuffers default grow-downward allocator behaivor
 - **Performance**: Excellent for uniform messages (within 0-25% of expert mode)
 
-### Expert Mode (Production)
+### Expert Mode - Self Managed FlatBuffers Builder(s)
 Best for: Mixed message sizes, large messages, memory-constrained systems
 
 ```rust
 let mut builder = FlatBufferBuilder::new();
 let mut writer = StreamWriter::new(file, DefaultFramer);
 
-// Explicit builder management for zero-allocation writes
+// Self managed builder for zero-allocation writes
 builder.reset();
 event.serialize(&mut builder)?;
 writer.write_finished(&mut builder)?;
 ```
 
-- **Pros**: Multiple builders for different message types, better memory control
+- **Pros**: Multiple builders for different message types or size groups, better memory control, better performance for larger streams in length and message size
 - **Cons**: More verbose, requires understanding of FlatBuffers
 - **Performance**: Up to 2x faster for large messages, better memory efficiency
 
@@ -91,12 +91,12 @@ The performance overhead in simple mode (0-25%, or ~0.9ns per operation) comes f
 
 ## Installation
 
-Add `flatstream-rs` and the `flatbuffers` dependency to your `Cargo.toml`:
+Add `flatstream` and the `flatbuffers` dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 flatbuffers = "24.3.25" # Use the appropriate version
-flatstream-rs = "0.1.0"
+flatstream-rs = "0.2.6"
 ```
 
 ### Feature Flags
@@ -111,7 +111,7 @@ Data integrity checks (checksums) are optional and managed via feature flags.
 ```toml
 [dependencies]
 # Example: Installing with XxHash support
-flatstream-rs = { version = "0.1.0", features = ["xxhash"] }
+flatstream = { version = "0.2.6", features = ["xxhash"] }
 ```
 
 For comprehensive testing with all checksums enabled:
@@ -127,7 +127,7 @@ cargo bench --features all_checksums  # Run comprehensive benchmarks
 Users must define how their data maps to a FlatBuffer builder by implementing the `StreamSerialize` trait.
 
 ```rust
-use flatstream_rs::{StreamSerialize, Result};
+use flatstream::{StreamSerialize, Result};
 use flatbuffers::FlatBufferBuilder;
 
 // Your application data structure
@@ -165,7 +165,7 @@ Choose between simple mode (easy) or expert mode (fast) based on your needs:
 
 #### Simple Mode
 ```rust
-use flatstream_rs::{StreamWriter, DefaultFramer, Result};
+use flatstream::{StreamWriter, DefaultFramer, Result};
 use std::io::BufWriter;
 use std::fs::File;
 
@@ -220,7 +220,7 @@ fn write_expert() -> Result<()> {
 The `StreamReader` provides a high-performance `process_all` API for zero-copy access.
 
 ```rust
-use flatstream_rs::{StreamReader, DefaultDeframer, Result};
+use flatstream::{StreamReader, DefaultDeframer, Result};
 use std::io::Cursor;
 
 fn read_data(data: Vec<u8>) -> Result<()> {
