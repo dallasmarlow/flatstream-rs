@@ -114,10 +114,6 @@ let stream_reader = StreamReader::new(reader, ChecksumType::None);
 
 This library is ideally suited for a telemetry capturing agent process that needs to emit long-running streams of data (up to 24 hours). The agent can continuously write FlatBuffers messages to a local file using `flatstream-rs`. This file then serves as a durable record for later reprocessing, analysis, or transfer. The optional checksums provide an essential layer of protection against data corruption during capture and storage.
 
-## Contributing
-
-Contributions are welcome\! If you find this library useful or have suggestions for improvements, please open an issue or submit a pull request.
-
 -----
 
 **Note on Timestamp Accuracy:** The FlatBuffers schema uses `u64` for `timestamp_nanos`, allowing for nanosecond precision, which fully supports the sub-millisecond granularity requirement. The `std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos() as u64` conversion ensures this precision is captured.
