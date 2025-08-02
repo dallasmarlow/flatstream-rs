@@ -8,7 +8,8 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream_rs::*;
 use std::fs::File;
-use std::io::BufWriter;
+#[allow(unused_imports)]
+use std::io::{BufReader, BufWriter};
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
@@ -141,18 +142,11 @@ fn main() -> Result<()> {
 }
 
 fn demonstrate_checksum_sizes(
-    #[allow(unused_variables)]
-    small_messages: &[SmallMessage],
-    #[allow(unused_variables)]
-    medium_messages: &[MediumMessage],
-    #[allow(unused_variables)]
-    large_messages: &[LargeMessage],
+    #[allow(unused_variables)] small_messages: &[SmallMessage],
+    #[allow(unused_variables)] medium_messages: &[MediumMessage],
+    #[allow(unused_variables)] large_messages: &[LargeMessage],
 ) -> Result<()> {
     println!("1. Checksum Size Comparison...");
-
-    // External builder management for zero-allocation writes
-    #[allow(unused_variables)]
-    let builder = FlatBufferBuilder::new();
 
     // Small messages with CRC16 (2 bytes)
     #[cfg(feature = "crc16")]
@@ -163,6 +157,7 @@ fn demonstrate_checksum_sizes(
         let checksum = Crc16::new();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(writer, framer);
+        let mut builder = FlatBufferBuilder::new();
 
         for message in small_messages {
             builder.reset();
@@ -188,6 +183,7 @@ fn demonstrate_checksum_sizes(
         let checksum = Crc32::new();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(writer, framer);
+        let mut builder = FlatBufferBuilder::new();
 
         for message in medium_messages {
             builder.reset();
@@ -213,6 +209,7 @@ fn demonstrate_checksum_sizes(
         let checksum = XxHash64::new();
         let framer = ChecksumFramer::new(checksum);
         let mut writer = StreamWriter::new(writer, framer);
+        let mut builder = FlatBufferBuilder::new();
 
         for message in large_messages {
             builder.reset();
@@ -304,6 +301,7 @@ fn demonstrate_checksum_sizes(
 
 fn demonstrate_performance_comparison() -> Result<()> {
     println!("2. Performance Comparison...");
+    println!("   Note: This measures write performance including checksum computation\n");
 
     let num_messages = 10_000;
     let test_message = "performance-test-message";
