@@ -3,7 +3,7 @@
 //! and mixed message sizes.
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 use std::time::Instant;
 

@@ -2,7 +2,7 @@
 //! Verifies the claims about CRC16 having 75% less overhead than XXHash64
 
 #[cfg(feature = "all_checksums")]
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 use std::time::Instant;
 

@@ -271,8 +271,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "flatstream-rs"
-version = "0.1.0"
+name = "flatstream"
+version = "0.2.6"
 dependencies = [
  "bincode",
  "bumpalo",

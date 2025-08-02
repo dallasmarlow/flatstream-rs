@@ -2,7 +2,7 @@
 //! This demonstrates the memory efficiency claims in the documentation
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 
 struct MemoryTrackingMessage {

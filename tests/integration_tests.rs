@@ -1,7 +1,7 @@
 // tests/integration_tests.rs
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use tempfile::NamedTempFile;

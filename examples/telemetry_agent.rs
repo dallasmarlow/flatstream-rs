@@ -1,5 +1,5 @@
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
+use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,7 +25,7 @@ impl StreamSerialize for TelemetryEvent {
     fn serialize<A: flatbuffers::Allocator>(
         &self,
         builder: &mut FlatBufferBuilder<A>,
-    ) -> Result<(), flatstream_rs::Error> {
+    ) -> Result<(), flatstream::Error> {
         let data = format!(
             "{},{},{},{},{},{}",
             &self.device_id,
