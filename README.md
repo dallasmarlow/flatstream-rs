@@ -96,7 +96,7 @@ Add `flatstream` and the `flatbuffers` dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
 flatbuffers = "24.3.25" # Use the appropriate version
-flatstream-rs = "0.2.6"
+flatstream = "0.2.6"
 ```
 
 ### Feature Flags
@@ -262,7 +262,7 @@ To protect against data corruption, use the `ChecksumFramer` and `ChecksumDefram
 ```rust
 #[cfg(feature = "xxhash")]
 {
-    use flatstream_rs::{
+    use flatstream::{
         StreamWriter, ChecksumFramer, XxHash64, Result
     };
     use std::io::Cursor;
@@ -298,7 +298,7 @@ All checksums are pluggable and composable, allowing you to choose the optimal s
 
 ## Wire Format Specification
 
-The format written to the stream is determined by the `Framer` implementation. `flatstream-rs` ensures all metadata (lengths and checksums) is written in Little Endian (LE) format to guarantee cross-platform consistency and interoperability.
+The format written to the stream is determined by the `Framer` implementation. FlatStream ensures all metadata (lengths and checksums) is written in Little Endian (LE) format to guarantee cross-platform consistency and interoperability.
 
 ### DefaultFramer Format
 
@@ -323,7 +323,7 @@ Where N is:
 
 ## Performance Considerations
 
-While `flatstream-rs` is optimized for high performance, achieving the lowest latency requires correct integration into your application architecture.
+While FlatStream is optimized for high performance, achieving the lowest latency requires correct integration into your application architecture.
 
 ### Critical: I/O Buffering
 
@@ -336,7 +336,7 @@ If you provide an unbuffered handle (like a raw `std::fs::File` or `std::net::Tc
 ```rust
 use std::fs::File;
 use std::io::BufWriter;
-use flatstream_rs::{StreamWriter, DefaultFramer};
+use flatstream::{StreamWriter, DefaultFramer};
 
 let file = File::create("telemetry.bin").unwrap();
 
@@ -419,7 +419,7 @@ writer.write_finished(&mut builder)?;
 ### Performance Checklist
 
 - [ ] **Always use buffered I/O** (`BufWriter`/`BufReader`)
-- [ ] **Use expert mode for production** (`write_finished()`)
-- [ ] **Reuse builders** (call `reset()` not `new()`)
+- [ ] **Use expert for direct builder and memory management control** (`write_finished()`)
+- [ ] **Reuse builders for most use cases** (call `reset()` not `new()`)
 - [ ] **Consider custom allocators** for specialized memory management
-- [ ] **Profile before optimizing** (the simple mode might be enough!)
+- [ ] **Profile and/or benchmark before optimizing** (the simple mode might be enough!)

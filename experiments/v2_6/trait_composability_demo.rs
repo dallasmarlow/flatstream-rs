@@ -1,7 +1,7 @@
 //! Demonstrating the trait-based composability and static dispatch architecture
 //! This verifies claims about the Strategy Pattern and monomorphization
 
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::{Cursor, Write};
 use std::marker::PhantomData;
 

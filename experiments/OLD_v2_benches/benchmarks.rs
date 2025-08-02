@@ -1,20 +1,20 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use flatstream_rs::checksum::Checksum;
-use flatstream_rs::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
+use flatstream::checksum::Checksum;
+use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
-use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "xxhash")]
-use flatstream_rs::XxHash64;
+use flatstream::XxHash64;
 
 #[cfg(feature = "crc32")]
-use flatstream_rs::Crc32;
+use flatstream::Crc32;
 
 #[cfg(feature = "crc16")]
-use flatstream_rs::Crc16;
+use flatstream::Crc16;
 
 // Test data generation utilities
 fn create_test_messages(count: usize) -> Vec<String> {
@@ -42,7 +42,7 @@ fn bench_writer<C: Checksum + Default + Copy>(
     checksum_name: &str,
     messages: &[String],
 ) {
-    use flatstream_rs::framing::ChecksumFramer;
+    use flatstream::framing::ChecksumFramer;
 
     // Calculate total throughput in bytes for fair comparison
     let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
@@ -74,7 +74,7 @@ fn bench_reader<C: Checksum + Default + Copy>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     checksum_name: &str,
 ) {
-    use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+    use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
     // Prepare test data with the specific checksum
     let mut buffer = Vec::new();
@@ -115,7 +115,7 @@ fn bench_write_read_cycle<C: Checksum + Default + Copy>(
     checksum_name: &str,
     messages: &[String],
 ) {
-    use flatstream_rs::framing::{ChecksumDeframer, ChecksumFramer};
+    use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
     let total_bytes: usize = messages.iter().map(|msg| msg.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));

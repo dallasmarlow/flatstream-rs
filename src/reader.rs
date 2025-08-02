@@ -30,7 +30,7 @@ use std::marker::PhantomData;
 /// Performance: Same as `process_all()` - both use zero-copy access.
 ///
 /// ```rust
-/// # use flatstream_rs::{StreamReader, DefaultDeframer, Result};
+/// # use flatstream::{StreamReader, DefaultDeframer, Result};
 /// # use std::io::Cursor;
 /// # let mut reader = StreamReader::new(Cursor::new(vec![]), DefaultDeframer);
 ///

@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::{self as flatstream, DefaultFramer, StreamWriter, StreamSerialize};
+use flatstream::{self as flatstream, DefaultFramer, StreamWriter, StreamSerialize};
 use std::io::Cursor;
 
 // --- Message Types ---

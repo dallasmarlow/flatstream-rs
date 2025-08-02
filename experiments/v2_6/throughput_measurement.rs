@@ -2,7 +2,7 @@
 //! This demonstrates the library's capability for high-frequency telemetry
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream_rs::*;
+use flatstream::*;
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 
