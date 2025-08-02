@@ -55,3 +55,23 @@ harness = false
 name = "comparative_benchmarks"
 harness = false
 required-features = ["comparative_bench"]
+
+[[bench]]
+name = "write_path_benchmarks"
+harness = false
+
+[[bench]]
+name = "memory_pressure_benchmark"
+harness = false
+
+[[bench]]
+name = "file_io_pressure_benchmark"
+harness = false
+
+[[bench]]
+name = "long_running_agent_benchmark"
+harness = false
+
+[[bench]]
+name = "sustained_performance_benchmark"
+harness = false
