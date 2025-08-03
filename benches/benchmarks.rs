@@ -1,7 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::checksum::Checksum;
-use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
+use flatstream::{
+    DefaultDeframer, DefaultFramer, SafeTakeDeframer, StreamReader, StreamSerialize, StreamWriter,
+    UnsafeDeframer,
+};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -657,6 +660,190 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 }
 
+// === READ PATH ALTERNATIVES BENCHMARKS ===
+
+// In: benches/benchmarks.rs
+
+fn benchmark_read_path_alternatives(c: &mut Criterion) {
+    // 1. Prepare a consistent set of test data
+    let mut buffer = Vec::new();
+    {
+        let framer = DefaultFramer;
+        let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
+        for i in 0..100 {
+            let msg = format!("message {}", i);
+            writer.write(&msg).unwrap();
+        }
+    }
+
+    let mut group = c.benchmark_group("Read Path Implementations");
+
+    // ADD THIS BLOCK TO YOUR FUNCTION
+    // --- Benchmark the original DefaultDeframer as a baseline ---
+    group.bench_function("DefaultDeframer (Original)", |b| {
+        b.iter(|| {
+            let deframer = DefaultDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    // 2. Benchmark the safe `Read::take` implementation
+    group.bench_function("SafeTakeDeframer", |b| {
+        b.iter(|| {
+            let deframer = SafeTakeDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    // 3. Benchmark the `unsafe` implementation
+    group.bench_function("UnsafeDeframer", |b| {
+        b.iter(|| {
+            let deframer = UnsafeDeframer;
+            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
+            reader
+                .process_all(|payload| {
+                    black_box(payload);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+// === IMPROVED DEFRAMER MICRO-BENCHMARK ===
+
+use flatstream::framing::Deframer;
+
+// A mock reader to isolate deframer performance from I/O overhead.
+struct MockReader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> std::io::Read for MockReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_to_read = std::cmp::min(buf.len(), self.data.len() - self.pos);
+        if bytes_to_read == 0 {
+            // Correctly return Ok(0) for EOF, as per the Read trait's contract.
+            return Ok(0);
+        }
+        buf[..bytes_to_read].copy_from_slice(&self.data[self.pos..self.pos + bytes_to_read]);
+        self.pos += bytes_to_read;
+        Ok(bytes_to_read)
+    }
+}
+
+fn benchmark_deframer_micro(c: &mut Criterion) {
+    // Prepare a buffer containing a single, reasonably sized message frame.
+    let mut buffer = Vec::new();
+    let framer = DefaultFramer;
+    let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
+    let msg = "x".repeat(4096); // 4KB message
+    writer.write(&msg).unwrap();
+
+    let mut group = c.benchmark_group("Deframer Micro-Benchmark (Buffer Initialization)");
+
+    // This buffer will be reused by the deframers in the hot loop.
+    let mut read_buffer = Vec::with_capacity(8192);
+
+    group.bench_function("DefaultDeframer (zeroing)", |b| {
+        b.iter(|| {
+            let deframer = DefaultDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            // We are timing ONLY the deframing logic here.
+            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            black_box(&read_buffer);
+        });
+    });
+
+    // ADDED: Benchmark for SafeTakeDeframer
+    group.bench_function("SafeTakeDeframer", |b| {
+        b.iter(|| {
+            let deframer = SafeTakeDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            black_box(&read_buffer);
+        });
+    });
+
+    group.bench_function("UnsafeDeframer (no zeroing)", |b| {
+        b.iter(|| {
+            let deframer = UnsafeDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            black_box(&read_buffer);
+        });
+    });
+
+    group.finish();
+}
+
+// === NEW: LARGER SCALE DEFRAMER THROUGHPUT BENCHMARK ===
+
+fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
+    // Prepare a large buffer with 1,000 messages. Total size will be ~4MB.
+    let mut buffer = Vec::new();
+    let framer = DefaultFramer;
+    let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
+    let msg = "x".repeat(4096); // 4KB message
+    for _ in 0..1000 {
+        writer.write(&msg).unwrap();
+    }
+
+    let mut group = c.benchmark_group("Deframer Sustained Throughput (1000 msgs)");
+    group.throughput(criterion::Throughput::Bytes(buffer.len() as u64));
+
+    let mut read_buffer = Vec::with_capacity(8192);
+
+    group.bench_function("DefaultDeframer (zeroing)", |b| {
+        b.iter(|| {
+            let deframer = DefaultDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            // Process all messages in the buffer
+            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+                black_box(&read_buffer);
+            }
+        });
+    });
+
+    // ADDED: Benchmark for SafeTakeDeframer
+    group.bench_function("SafeTakeDeframer", |b| {
+        b.iter(|| {
+            let deframer = SafeTakeDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+                black_box(&read_buffer);
+            }
+        });
+    });
+
+    group.bench_function("UnsafeDeframer (no zeroing)", |b| {
+        b.iter(|| {
+            let deframer = UnsafeDeframer;
+            let mut reader = MockReader { data: &buffer, pos: 0 };
+            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+                black_box(&read_buffer);
+            }
+        });
+    });
+
+    group.finish();
+}
+
 // === MAIN BENCHMARK CONFIGURATION ===
 
 // Group for benchmarks that run WITHOUT any checksum features
@@ -673,6 +860,9 @@ criterion_group!(
     benchmark_large_messages,
     benchmark_memory_efficiency,
     benchmark_regression_sensitive_operations,
+    benchmark_read_path_alternatives,
+    benchmark_deframer_micro,
+    benchmark_deframer_sustained_throughput,
 );
 
 // Group for benchmarks that run WITH any checksum feature
@@ -710,10 +900,14 @@ criterion_group!(
 // === MAIN MACRO ===
 
 // Conditionally compile the main macro based on features
-#[cfg(all(not(feature = "xxhash"), not(feature = "crc32"), not(feature = "crc16")))]
+#[cfg(all(
+    not(feature = "xxhash"),
+    not(feature = "crc32"),
+    not(feature = "crc16")
+))]
 criterion_main!(benches);
 
-#[cfg(all(feature = "xxhash", not(feature="crc32"), not(feature="crc16")))]
+#[cfg(all(feature = "xxhash", not(feature = "crc32"), not(feature = "crc16")))]
 criterion_main!(benches, xxhash_specific_benches);
 
 // Add more combinations if needed for crc32, crc16, etc.
@@ -721,8 +915,14 @@ criterion_main!(benches, xxhash_specific_benches);
 // A more robust solution would handle all 2^3 combinations.
 
 // A simpler catch-all for when any checksum is enabled but we only have xxhash specific benches
-#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), not(all(not(feature="xxhash")))))]
+#[cfg(all(
+    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
+    not(all(not(feature = "xxhash")))
+))]
 criterion_main!(benches, xxhash_specific_benches);
 
-#[cfg(all(any(feature = "xxhash", feature = "crc32", feature = "crc16"), all(not(feature="xxhash"))))]
+#[cfg(all(
+    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
+    all(not(feature = "xxhash"))
+))]
 criterion_main!(benches);

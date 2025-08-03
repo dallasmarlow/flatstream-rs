@@ -49,6 +49,17 @@ use std::marker::PhantomData;
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// ## Choosing a Deframer
+///
+/// This reader is generic over a `Deframer` strategy. You can choose from several built-in implementations based on your performance and safety needs:
+///
+/// * **`DefaultDeframer` (Recommended)**: The standard, safe implementation. It reads the exact number of bytes specified by the length prefix. It is safe and performs well for almost all use cases.
+///
+/// * **`SafeTakeDeframer`**: An alternative safe implementation that uses `Read::take`. Its performance may vary depending on the underlying reader, but it provides another safe option.
+///
+/// * **`UnsafeDeframer` (Expert)**: The highest-performance option, intended for scenarios where you have a trusted data source (e.g., reading a file you just wrote). It avoids initializing the buffer by using `unsafe` code, which can provide a speed boost by eliminating writes to memory. **Only use this if you have benchmarked it and understand the risks.**
+///
 pub struct StreamReader<R: Read, D: Deframer> {
     reader: R,
     deframer: D,

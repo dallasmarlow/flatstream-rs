@@ -85,7 +85,7 @@ pub mod writer;
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
 pub use error::{Error, Result};
-pub use framing::{DefaultDeframer, DefaultFramer};
+pub use framing::{DefaultDeframer, DefaultFramer, Deframer, Framer, SafeTakeDeframer, UnsafeDeframer};
 pub use reader::{Messages, StreamReader};
 pub use traits::StreamSerialize;
 pub use writer::StreamWriter;
