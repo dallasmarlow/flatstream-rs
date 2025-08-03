@@ -4,13 +4,13 @@
 [![Crates.io](https://img.shields.io/crates/v/flatstream.svg)](https://crates.io/crates/flatstream)
 [![Docs.rs](https://docs.rs/flatstream/badge.svg)](https://docs.rs/flatstream)
 
-A lightweight, zero-copy, high-performance Rust library for streaming framed FlatBuffers.
+A lightweight, zero-copy oriented, high-performance Rust library for encoding and decoding sequences of framed FlatBuffers messages.
 
-FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages. It is designed for high-throughput, low-latency applications such as telemetry capture and high-speed data logging as the primary design influencing use cases. While FlatStream may be suitable for streaming data over network connections using protocols like TCP and is readily compaitble with the most common ways of doing so in Rust, this has not been the focus of the library in terms of development and testing.
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages with a focus on adhering to zero-copy where possible and appropriate. It is designed for high-throughput, low-latency applications such as telemetry capture agents and/or high-speed data logging systems (where the focus is to efficiently encode data in a cross-platform portable format) as the primary design influencing use cases. While FlatStream may be suitable for streaming data over network connections using protocols like TCP and is readily compaitble with the most common ways of doing so in Rust, this has not been the focus of the library in terms of development and testing.
 
 ## Why FlatStream?
 
-High-performance systems require efficient serialization and transmission of structured data. While FlatBuffers offers a good serialization format due to its zero-copy access and cross-platform compatibility, it does not provide a streaming or framing protocol suitable for existing use cases.
+High-performance systems require efficient serialization and transmission of structured data. While FlatBuffers offers a good serialization format due to its zero-copy access and cross-platform compatibility, it does not directly provide a reusable streaming or framing protocol suitable for existing use cases.
 
 When writing multiple messages to a continuous byte stream (like a file or TCP socket), developers face several challenges:
 
