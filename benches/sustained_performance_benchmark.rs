@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{self as flatstream, DefaultFramer, StreamSerialize, StreamWriter};
-use std::io::{BufWriter, Cursor};
+use std::io::BufWriter;
 use tempfile::NamedTempFile;
 
 // --- Message Types ---
