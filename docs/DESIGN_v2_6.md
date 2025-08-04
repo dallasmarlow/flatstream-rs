@@ -1,9 +1,9 @@
 # Design Document: flatstream-rs v2.6 - The Hybrid API
 
-**Version:** 1.0  
+**Version:** 0.2.6  
 **Status:** Implemented  
 **Author:** Dallas Marlow  
-**Date:** 2025-01-27
+**Date:** 2025-07-26
 
 ## 1. Overview
 
@@ -17,21 +17,44 @@ The v2.5 design proposed a radical simplification:
 - Single `write(&mut builder)` method only
 - "Pure I/O Engine" philosophy
 
-However, during implementation, we discovered that this approach, while theoretically elegant, created unnecessary friction for users and broke backward compatibility. The v2.6 hybrid approach was born from these learnings.
+However, during implementation, we discovered that this approach, while theoretically elegant, created unnecessary friction for users and broke backward compatibility. It was also assumed that avoiding internal managed builders would yield performance improvements, but practical testing showed that re-using an internal builder was a high performance / simple approach that is appropriate for many workloads. The difference between internal and external builder write paths is ultimately more about control over memory usage patterns and applying specific strategies for when/whey to allocate memory. 
+
+v2.5 was an attempt to force users on a single, singular high performance path, when after extensive testing in simulations (unit tests, benchmarks) and within a single real-world telemetry program, the ultimate performance difference between the simple and expert write paths can be very similar when correctly managing the FlatBufferBuilder behaivor for the given workload. The foundational use case benifits from having a varying message size and type stream as part of the way it ensure message sequencing integrity, but it would be possible to avoid some of the common issues being described by using separate streams to optimize for message size uniformity.
+
+The v2.6 hybrid writer API approach was born from these learnings.
 
 ## 3. The Hybrid API Philosophy
 
 The current implementation provides two distinct modes of operation, allowing users to choose based on their specific needs:
 
 ### 3.1 Simple Mode (Default Path)
+
+#### Summary
+- ***Mechanism:*** The StreamWriter manages an internal FlatBufferBuilder. Users call write<T: StreamSerialize>(&mut self, item: &T).
+- ***Behavior:*** A single internal builder is automatically reset and reused for the lifetime of the stream, providing optimized builder reuse out of the box.
+- ***Suitable For:*** Short-lived streams and/or streams containing uniformly sized FlatBuffer messages.
+- ***Trade-off:*** This mode can suffer from "memory bloat." When a large message causes the internal builder to grow, it never shrinks back down. This can lead to poor performance and inefficient memory usage if the stream contains messages of greatly varying sizes, as the CPU must manage a larger-than-necessary buffer for subsequent small messages.
+
+#### Raw Notes
 - `StreamWriter` manages an internal `FlatBufferBuilder`
 - Users call `write<T: StreamSerialize>(&mut self, item: &T)`
-- Builder is automatically reset and reused
-- Zero configuration, works out of the box
-- Suitable for prototyping and moderate-performance scenarios
+- A single internal builder is automatically reset and reused for the lifetime of the stream
+- Zero configuration, works out of the box with optimized builder reuse behavior
+- Suitable for short lived streams and/or streams of uniformly sized FlatBuffers messages
+- Can suffer from "memory bloat" issues due to frequent buffer re-size and memcpy operations if FlatBuffers messages vary greatly
+- The aforemention "memory bloat" issue caused by the re-used FlatBufferBuilder never reduing buffer sizes after growing can yield poor performance beyond just increased memory usage as CPU efficiency measurably degrades when having to use and maintain the larger than nessasary buffer size over time.
 
 ### 3.2 Expert Mode (Performance Path)
-- Users manage their own `FlatBufferBuilder` externally
+
+#### Summary
+- ***Mechanism:*** The user manages one or more FlatBufferBuilder instances externally and calls write_finished(&mut self, builder: &mut FlatBufferBuilder).
+- ***Behavior:*** Provides complete control over the builder's lifecycle and memory footprint. This is the recommended pattern for high-performance, production systems.
+- ***Suitable For:*** Long-running agents, streams with mixed message sizes, large messages (>1MB), and memory-constrained systems where precise control is paramount.
+- ***Trade-off:*** This mode allows for memory-efficient patterns, such as using separate, right-sized builders for different message types, which entirely sidesteps the memory bloat issue. For infrequent large messages, a temporary builder can be created and dropped, freeing its memory immediately after use. Greater control adds opportunities for misconfiguration and increased LoC.
+
+#### Raw Notes
+- Users manage their own `FlatBufferBuilder` or N builders for specific message types, sizes or other application specific reasons externally
+- More verbose and users can make mishandle their workload by not re-using message builders when their use case could benefit from it for example
 - Call `write_finished(&mut self, builder: &mut FlatBufferBuilder)`
 - Full control over builder lifecycle and allocation strategy
 - Enables custom memory management strategies
