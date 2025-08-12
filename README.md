@@ -6,19 +6,51 @@
 
 A lightweight, zero-copy oriented, high-performance Rust library for encoding and decoding sequences of framed FlatBuffers messages.
 
-FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffer messages with a focus on adhering to zero-copy behaivors where possible and appropriate. It is designed for high-throughput, low-latency applications such as telemetry capture and/or high-speed data logging (where the focus is efficient data encoding using a cross-platform portable format) as the primary design influencing use cases. While FlatStream may be suitable for streaming data over network connections using protocols such as TCP, and is readily compaitble with the most common ways of doing so in Rust this has not been the focus of the library in terms of development and testing.
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on adhering to zero-copy behaviors. It originated from the demands of a high-frequency telemetry capture agent and has evolved into a general-purpose library suitable for any high-throughput, low-latency application.
+
+    Note on Performance: The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
 
 ## Why FlatStream?
 
-High-performance systems require efficient serialization and transmission of structured data. While FlatBuffers offers a good serialization format due to its zero-copy access and cross-platform compatibility, it does not directly provide a reusable streaming or framing protocol suitable for existing use cases.
+While FlatBuffers provides an efficient zero-copy serialization format, it does not specify a protocol or offer utilities for common streaming use cases. This typically requires developers to create custom solutions for message framing, memory management, and data integrity when writing sequences of messages.
 
-When writing multiple messages to a continuous byte stream (like a file or TCP socket), developers face several challenges:
+Such recurring implementations can be inconsistent and may fail to adhere to zero-copy principles or leverage the most performant patterns of the FlatBuffers API.
 
-- **Framing**: A mechanism is needed to delineate where one message ends and the next begins.
-- **Memory Allocation Overhead**: Frequently allocating new buffers for every message can create pressure on the memory allocator which at times can result in introducing latency jitter and reducing throughput.
-- **Data Integrity**: Streams may require checksums to validate that messages were not corrupted in transit or at rest.
+### Origin
 
-FlatStream solves these problems by providing a standardized, optimized, and composable framing layer designed for FlatBuffers in Rust. This library is engineered for use cases such as high frequency and/or low latency telemetry data capture, where sub-millisecond updates need to be reliably stored and reprocessed. FlatStream provides a simple a durable format to reliably encode series of FlatBuffer messages which can then be later read with all of the benifits of normal FlatBuffers across different platforms and programming languages.
+FlatStream was developed as a solution for a foundational use case: a high-frequency telemetry capture agent that required a durable, replayable stream format with minimal overhead. This application required capturing wide frames of mixed data types at sub-millisecond intervals, and FlatBuffers was selected for its efficiency and cross-platform compatibility.
+
+The library's current architecture is the direct result of the performance-driven refactoring and experimentation required to optimize for this initial scenario. It encapsulates these validated, high-performance patterns into a general-purpose and composable library that provides a standardized framing layer for FlatBuffers in Rust.
+
+## Architecture and Design Principles
+
+FlatStream is designed around composability and zero-cost abstractions to solve common streaming challenges with a focus on zero-copy behaivor and performance.
+
+### Composability and Static Dispatch
+
+The library utilizes a trait-based Strategy Pattern to separate concerns:
+
+- ***StreamSerialize:*** Defines how user data is serialized into the FlatBufferBuilder.
+- ***Framer / Deframer:*** Defines the wire/file format (e.g., DefaultFramer or ChecksumFramer).
+- ***Checksum:*** Defines the algorithm used for data integrity (e.g., XxHash64, Crc32).
+
+The core types (StreamWriter/StreamReader) are generic over these traits. This allows the Rust compiler to use monomorphization, resulting in static dispatch in many cases and avoiding the overhead of dynamic dispatch (vtable lookups) on the critical path.
+
+
+### Performance: Zero-Copy Throughout
+
+Performance is achieved by maintaining the FlatBuffers zero-copy philosophy at every level.
+
+- ***Zero-Copy Writing:*** Both simple and expert modes are zero-copy. After serialization, builder.finished_data() returns a direct slice that is written to I/O without any intermediate copies.
+- ***Zero-Copy Reading:*** The StreamReader provides true zero-copy access through its process_all() and messages() APIs, which deliver borrowed slices (&[u8]) directly from the internal read buffer.
+
+FlatStream solves common streaming challenges by adhering to a few core principles:
+
+- ***Composability and Static Dispatch:*** The library is built on a trait-based Strategy Pattern (Framer, Deframer, Checksum). This allows the Rust compiler to use monomorphization to create specialized, optimized code for your specific configuration, eliminating runtime overhead.
+
+- ***Zero-Copy by Default:*** The library is designed to maintain FlatBuffers' zero-copy philosophy. The StreamReader provides true zero-copy access to data via borrowed slices (&[u8]), eliminating memory allocations and copies on the read path.
+
+- ***Pragmatic Performance:*** The StreamWriter offers two modes: a simple, convenient API for common use cases, and an expert-level API that provides fine-grained control over the FlatBufferBuilder lifecycle. This allows developers to avoid common performance pitfalls like memory bloat when dealing with mixed message sizes.
 
 ## Architecture and Design Principles
 
