@@ -77,6 +77,15 @@ pub trait Deframer {
     /// Returns Ok(Some(())) on success, Ok(None) on clean EOF.
     fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>)
         -> Result<Option<()>>;
+
+    /// Fast-path: called when the 4-byte little-endian payload length has already been read.
+    /// Implementations must read any additional header fields (e.g., checksum), then the payload.
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>>;
 }
 
 /// The default deframing strategy.
@@ -106,6 +115,19 @@ impl Deframer for DefaultDeframer {
             .read_exact(buffer)
             .map_err(|_| Error::UnexpectedEof)?;
 
+        Ok(Some(()))
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        buffer.resize(payload_len, 0);
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
         Ok(Some(()))
     }
 }
@@ -188,6 +210,55 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        let checksum_size = self.checksum_alg.size();
+
+        let expected_checksum = match checksum_size {
+            0 => 0,
+            2 => {
+                let mut checksum_bytes = [0u8; 2];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u16::from_le_bytes(checksum_bytes) as u64
+            }
+            4 => {
+                let mut checksum_bytes = [0u8; 4];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u32::from_le_bytes(checksum_bytes) as u64
+            }
+            8 => {
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+            _ => {
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+        };
+
+        buffer.resize(payload_len, 0);
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+
+        self.checksum_alg.verify(expected_checksum, buffer)?;
+        Ok(Some(()))
+    }
 }
 
 /// A high-performance deframer that uses an `unsafe` block to avoid unnecessary buffer zeroing.
@@ -221,6 +292,25 @@ impl Deframer for UnsafeDeframer {
             buffer.set_len(payload_len);
         }
 
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+        Ok(Some(()))
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        buffer.clear();
+        if buffer.capacity() < payload_len {
+            buffer.reserve(payload_len - buffer.capacity());
+        }
+        unsafe {
+            buffer.set_len(payload_len);
+        }
         reader
             .read_exact(buffer)
             .map_err(|_| Error::UnexpectedEof)?;
@@ -261,6 +351,21 @@ impl Deframer for SafeTakeDeframer {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        buffer.clear();
+        buffer.reserve(payload_len);
+        reader.take(payload_len as u64).read_to_end(buffer)?;
+        if buffer.len() != payload_len {
+            return Err(Error::UnexpectedEof);
+        }
+        Ok(Some(()))
+    }
 }
 
 /// A composable adapter that enforces a maximum frame length for any deframer
@@ -276,28 +381,7 @@ impl<D: Deframer> BoundedDeframer<D> {
     }
 }
 
-struct PrependReader<'a, R: Read> {
-    head: [u8; 4],
-    pos: usize,
-    inner: &'a mut R,
-}
-
-impl<'a, R: Read> Read for PrependReader<'a, R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.pos < 4 {
-            let remaining = 4 - self.pos;
-            let n = remaining.min(buf.len());
-            buf[..n].copy_from_slice(&self.head[self.pos..self.pos + n]);
-            self.pos += n;
-            if n < buf.len() {
-                let m = self.inner.read(&mut buf[n..])?;
-                return Ok(n + m);
-            }
-            return Ok(n);
-        }
-        self.inner.read(buf)
-    }
-}
+// (no shim needed)
 
 impl<D: Deframer> Deframer for BoundedDeframer<D> {
     fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
@@ -313,12 +397,19 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
             return Err(Error::invalid_frame("frame length exceeds configured limit"));
         }
 
-        let mut prepend = PrependReader {
-            head: len_bytes,
-            pos: 0,
-            inner: reader,
-        };
-        self.inner.read_and_deframe(&mut prepend, buffer)
+        self.inner.read_after_length(reader, buffer, payload_len)
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        if payload_len > self.max {
+            return Err(Error::invalid_frame("frame length exceeds configured limit"));
+        }
+        self.inner.read_after_length(reader, buffer, payload_len)
     }
 }
 
@@ -384,6 +475,21 @@ impl<D: Deframer, C: Fn(&[u8])> ObserverDeframer<D, C> {
 impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
     fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
         match self.inner.read_and_deframe(reader, buffer)? {
+            Some(()) => {
+                (self.callback)(buffer);
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        match self.inner.read_after_length(reader, buffer, payload_len)? {
             Some(()) => {
                 (self.callback)(buffer);
                 Ok(Some(()))

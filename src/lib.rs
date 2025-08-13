@@ -97,7 +97,7 @@ pub use writer::StreamWriter;
 
 #[cfg(feature = "xxhash")]
 pub use checksum::XxHash64;
-#[cfg(any(feature = "xxhash", feature = "crc32"))]
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 pub use framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "crc32")]

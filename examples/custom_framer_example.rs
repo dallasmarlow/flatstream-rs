@@ -45,6 +45,22 @@ impl Deframer for MagicHeaderDeframer {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        // MagicHeaderDeframer expects to consume the magic number before length,
+        // so this fast-path is only usable when the caller has already ensured the
+        // magic header is present and consumed. In our library, bounded deframer
+        // only pre-reads the 4-byte length for standard formats, so we keep the
+        // simple payload read here.
+        buffer.resize(payload_len, 0);
+        reader.read_exact(buffer).map_err(|_| Error::UnexpectedEof)?;
+        Ok(Some(()))
+    }
 }
 
 fn main() -> Result<()> {
