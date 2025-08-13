@@ -286,6 +286,41 @@ fn fluent_bounded_equivalence_deframer() {
 }
 
 #[test]
+fn fluent_observed_equivalence_framer() {
+    let payload = b"xyz";
+    let mut a = Vec::new();
+    let mut b = Vec::new();
+
+    let manual = ObserverFramer::new(DefaultFramer, |_p: &[u8]| {});
+    let fluent = DefaultFramer.observed(|_p: &[u8]| {});
+
+    manual.frame_and_write(&mut a, payload).unwrap();
+    fluent.frame_and_write(&mut b, payload).unwrap();
+
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fluent_observed_equivalence_deframer() {
+    let payload = b"observe".to_vec();
+    let mut framed = Vec::new();
+    DefaultFramer.frame_and_write(&mut framed, &payload).unwrap();
+
+    let manual = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| {});
+    let fluent = DefaultDeframer.observed(|_p: &[u8]| {});
+
+    let mut buf_m = Vec::new();
+    let mut cur_m = Cursor::new(&framed);
+    manual.read_and_deframe(&mut cur_m, &mut buf_m).unwrap().unwrap();
+
+    let mut buf_f = Vec::new();
+    let mut cur_f = Cursor::new(&framed);
+    fluent.read_and_deframe(&mut cur_f, &mut buf_f).unwrap().unwrap();
+
+    assert_eq!(buf_m, buf_f);
+}
+
+#[test]
 fn stream_reader_ergonomics_capacity_and_reserve() {
     let reader = Cursor::new(Vec::<u8>::new());
     let mut sr = StreamReader::with_capacity(reader, DefaultDeframer, 1024);

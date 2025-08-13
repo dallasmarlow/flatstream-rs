@@ -610,6 +610,14 @@ match message {
 }
 ```
 
+### Performance Checklist
+
+- [ ] **Always use buffered I/O** (`BufWriter`/`BufReader`)
+- [ ] **Use expert for direct builder and memory management control** (`write_finished()`)
+- [ ] **Reuse builders for most use cases** (call `reset()` not `new()`)
+- [ ] **Consider custom allocators** for specialized memory management
+- [ ] **Profile and/or benchmark before optimizing** (the simple mode might be enough!)
+
 ## Comparative benchmarks (current snapshot: 2025/08/13)
 
 The following performance figures come from the criterion comparative benchmarks in this repo (feature `comparative_bench`), run on an ARM-based MacBook Pro. They reflect medians for the named groups. Results vary by hardware and workload.
@@ -693,13 +701,6 @@ Brief test description:
   - Numeric: default ~226M (442.57 ns), unsafe ~239M (419.33 ns)
   - String16: default ~208M (480.18 ns), unsafe ~224M (445.18 ns)
 
-### Performance Checklist
-
-- [ ] **Always use buffered I/O** (`BufWriter`/`BufReader`)
-- [ ] **Use expert for direct builder and memory management control** (`write_finished()`)
-- [ ] **Reuse builders for most use cases** (call `reset()` not `new()`)
-- [ ] **Consider custom allocators** for specialized memory management
-- [ ] **Profile and/or benchmark before optimizing** (the simple mode might be enough!)
 
 ## Benchmarking and updating performance figures
 

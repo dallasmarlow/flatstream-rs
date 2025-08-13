@@ -508,6 +508,11 @@ pub trait FramerExt: Framer + Sized {
     fn bounded(self, max: usize) -> BoundedFramer<Self> {
         BoundedFramer::new(self, max)
     }
+
+    /// Observe payloads on the write path without copying. Useful for metrics/logging.
+    fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
+        ObserverFramer::new(self, callback)
+    }
 }
 
 impl<T: Framer> FramerExt for T {}
@@ -517,6 +522,11 @@ pub trait DeframerExt: Deframer + Sized {
     /// Enforce a maximum payload length.
     fn bounded(self, max: usize) -> BoundedDeframer<Self> {
         BoundedDeframer::new(self, max)
+    }
+
+    /// Observe payloads on the read path without copying. Useful for metrics/logging.
+    fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
+        ObserverDeframer::new(self, callback)
     }
 }
 

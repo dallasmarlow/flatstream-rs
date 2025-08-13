@@ -68,6 +68,17 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a>) -> Self {
         Self { writer, framer, builder }
     }
+
+    /// Creates a new `StreamWriter` with an internal builder pre-allocated to `capacity` bytes.
+    /// Mirrors `StreamReader::with_capacity` for API symmetry.
+    /// Useful when you know typical payload sizes and want to avoid early growth.
+    pub fn with_capacity(writer: W, framer: F, capacity: usize) -> Self {
+        Self {
+            writer,
+            framer,
+            builder: FlatBufferBuilder::with_capacity(capacity),
+        }
+    }
 }
 
 impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
