@@ -62,6 +62,12 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             builder: FlatBufferBuilder::new(),
         }
     }
+
+    /// Creates a new `StreamWriter` with a pre-constructed builder.
+    /// Useful for pre-sizing.
+    pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a>) -> Self {
+        Self { writer, framer, builder }
+    }
 }
 
 impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
@@ -82,9 +88,9 @@ where
     /// // With a hypothetical custom allocator
     /// let allocator = MyCustomAllocator::new();
     /// let builder = FlatBufferBuilder::new_with_allocator(allocator);
-    /// let writer = StreamWriter::with_builder(file, framer, builder);
+    /// let writer = StreamWriter::with_builder_alloc(file, framer, builder);
     /// ```
-    pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
+    pub fn with_builder_alloc(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
         Self {
             writer,
             framer,
@@ -147,7 +153,10 @@ where
     /// # Requirements
     /// The user must call `builder.finish()` within their `serialize()` implementation
     /// before calling this method.
-    pub fn write_finished(&mut self, builder: &mut FlatBufferBuilder) -> Result<()> {
+    pub fn write_finished<A2: flatbuffers::Allocator>(
+        &mut self,
+        builder: &mut FlatBufferBuilder<A2>,
+    ) -> Result<()> {
         // Get the finished payload from the builder
         let payload = builder.finished_data();
 
@@ -164,6 +173,21 @@ where
     /// Consumes the writer, returning the underlying writer.
     pub fn into_inner(self) -> W {
         self.writer
+    }
+
+    /// Returns a reference to the underlying writer.
+    pub fn get_ref(&self) -> &W {
+        &self.writer
+    }
+
+    /// Returns a mutable reference to the underlying writer.
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
+    /// Returns a reference to the framer strategy.
+    pub fn framer(&self) -> &F {
+        &self.framer
     }
 }
 

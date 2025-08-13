@@ -56,6 +56,7 @@
 //!     let deframer = DefaultDeframer;
 //!     let mut reader = StreamReader::new(file, deframer);
 //!
+//!     // Note: `payload` is valid only until the next successful read.
 //!     reader.process_all(|payload| {
 //!         println!("Read message: {} bytes", payload.len());
 //!         Ok(())
@@ -85,7 +86,11 @@ pub mod writer;
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
 pub use error::{Error, Result};
-pub use framing::{DefaultDeframer, DefaultFramer, Deframer, Framer, SafeTakeDeframer, UnsafeDeframer};
+#[allow(deprecated)]
+pub use framing::{
+    BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
+    SafeTakeDeframer, UnsafeDeframer,
+};
 pub use reader::{Messages, StreamReader};
 pub use traits::StreamSerialize;
 pub use writer::StreamWriter;
