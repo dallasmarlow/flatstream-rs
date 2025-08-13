@@ -307,10 +307,11 @@ writer.write_finished(&mut builder)?;
 - Zero-allocation reading: ~84.1% performance improvement over allocation-based approaches
 - High-frequency telemetry: ~18.4 µs for 1000 writes, ~4.4 µs for 1000 reads
 
-**Note**: In real-world throughput tests, the library has achieved:
-- Simple mode: ~16 million messages/sec (62 ns/message)
-- Expert mode: ~17 million messages/sec (58 ns/message)
-- Read throughput: ~130+ million messages/sec (8 ns/message)
+**Note**: Throughput figures reflect different scopes:
+- End-to-end (serialize + frame + deframe) for small in-memory streams: ~30–33 million messages/sec (see README and bench_results)
+- Simple mode (write path only): ~16 million messages/sec (62 ns/message)
+- Expert mode (write path only): ~17 million messages/sec (58 ns/message)
+- Read-only microbenchmark (deframe only, no serialization/I/O): ~130+ million messages/sec (8 ns/message)
 - Sustained telemetry: ~15 million messages/sec
 
 **Comprehensive Benchmark Coverage:**

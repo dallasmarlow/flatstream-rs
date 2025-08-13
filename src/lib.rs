@@ -1,4 +1,4 @@
-//! # flatstream-rs (v2.5)
+//! # FlatStream (v0.2.7)
 //!
 //! A lightweight, composable, high-performance Rust library for streaming FlatBuffers.
 //!

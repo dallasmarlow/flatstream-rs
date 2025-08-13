@@ -1,0 +1,413 @@
+
+running 24 tests
+test checksum::tests::test_checksum_consistency ... ignored
+test checksum::tests::test_checksum_sizes ... ignored
+test checksum::tests::test_crc16_checksum ... ignored
+test checksum::tests::test_crc32_checksum ... ignored
+test checksum::tests::test_no_checksum ... ignored
+test checksum::tests::test_xxhash64_checksum ... ignored
+test reader::tests::test_checksum_mismatch ... ignored
+test reader::tests::test_messages_expert_api ... ignored
+test reader::tests::test_process_all ... ignored
+test reader::tests::test_process_all_empty_stream ... ignored
+test reader::tests::test_process_all_error_propagation ... ignored
+test reader::tests::test_process_all_with_checksum ... ignored
+test reader::tests::test_read_empty_stream ... ignored
+test reader::tests::test_read_message_with_checksum ... ignored
+test reader::tests::test_read_message_with_checksum_feature ... ignored
+test reader::tests::test_read_message_without_checksum ... ignored
+test writer::tests::test_flush ... ignored
+test writer::tests::test_multiple_messages ... ignored
+test writer::tests::test_multiple_messages_with_checksum ... ignored
+test writer::tests::test_multiple_simple_writes ... ignored
+test writer::tests::test_simple_write_mode ... ignored
+test writer::tests::test_write_with_checksum ... ignored
+test writer::tests::test_write_with_checksum_feature ... ignored
+test writer::tests::test_write_without_checksum ... ignored
+
+test result: ok. 0 passed; 0 failed; 24 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+write_default_framer_100_messages
+                        time:   [2.1014 µs 2.1150 µs 2.1305 µs]
+                        change: [-0.7619% +0.0568% +0.9451%] (p = 0.89 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+
+read_default_deframer_100_messages
+                        time:   [430.76 ns 434.33 ns 438.55 ns]
+                        change: [-0.1127% +0.9792% +1.9509%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  9 (9.00%) high severe
+
+zero_allocation_reading_100_messages
+                        time:   [408.07 ns 414.44 ns 421.88 ns]
+                        change: [+2.0305% +3.6245% +5.3521%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+
+write_iterative_100_messages
+                        time:   [2.2607 µs 2.2748 µs 2.2895 µs]
+                        change: [-1.2880% -0.7226% -0.1247%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+
+write_read_cycle_default_50_messages
+                        time:   [1.5447 µs 1.5581 µs 1.5720 µs]
+                        change: [+1.0638% +1.8494% +2.6705%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+high_frequency_telemetry_1000_messages
+                        time:   [19.331 µs 19.467 µs 19.611 µs]
+                        change: [+1.0091% +1.7366% +2.5170%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+high_frequency_reading_1000_messages
+                        time:   [3.9246 µs 3.9589 µs 3.9979 µs]
+                        change: [-4.2812% -3.0497% -1.7278%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+
+large_messages_50_messages
+                        time:   [1.3210 µs 1.3279 µs 1.3349 µs]
+                        change: [-0.5730% +0.1353% +0.8423%] (p = 0.72 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+
+memory_efficiency_write_100_messages
+                        time:   [2.3212 µs 2.3362 µs 2.3538 µs]
+                        change: [+0.8615% +1.4056% +2.0149%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+regression_small_messages
+                        time:   [2.3188 µs 2.3291 µs 2.3391 µs]
+                        change: [-1.3563% -0.7683% -0.1789%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+regression_monomorphization
+                        time:   [2.3076 µs 2.3156 µs 2.3234 µs]
+                        change: [-7.1077% -3.2962% -0.7980%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+regression_instruction_cache
+                        time:   [2.9493 µs 2.9691 µs 2.9907 µs]
+                        change: [-1.3934% -0.8216% -0.2645%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Checksum Writers/write_100_messages/XXHash64
+                        time:   [2.5546 µs 2.5683 µs 2.5832 µs]
+                        thrpt:  [886.05 MiB/s 891.17 MiB/s 895.96 MiB/s]
+                 change:
+                        time:   [-0.5735% -0.0326% +0.5315%] (p = 0.91 > 0.05)
+                        thrpt:  [-0.5287% +0.0326% +0.5768%]
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+Checksum Writers/write_100_messages/CRC32
+                        time:   [2.6800 µs 2.6930 µs 2.7071 µs]
+                        thrpt:  [845.50 MiB/s 849.92 MiB/s 854.04 MiB/s]
+                 change:
+                        time:   [-6.1845% -4.4148% -3.0207%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.1148% +4.6187% +6.5921%]
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Checksum Writers/write_100_messages/CRC16
+                        time:   [4.6707 µs 4.6820 µs 4.6943 µs]
+                        thrpt:  [487.58 MiB/s 488.86 MiB/s 490.03 MiB/s]
+                 change:
+                        time:   [-2.7151% -2.2886% -1.8423%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.8768% +2.3422% +2.7908%]
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+
+Checksum Readers/read_100_messages/XXHash64
+                        time:   [593.84 ns 595.82 ns 598.14 ns]
+                        thrpt:  [6.8509 GiB/s 6.8776 GiB/s 6.9005 GiB/s]
+                 change:
+                        time:   [-2.6758% -1.9086% -1.3263%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.3441% +1.9458% +2.7493%]
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Checksum Readers/read_100_messages/CRC32
+                        time:   [739.76 ns 743.24 ns 746.90 ns]
+                        thrpt:  [4.9876 GiB/s 5.0122 GiB/s 5.0358 GiB/s]
+                 change:
+                        time:   [-3.0016% -1.8871% -0.7338%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.7392% +1.9234% +3.0945%]
+                        Change within noise threshold.
+Found 14 outliers among 100 measurements (14.00%)
+  10 (10.00%) high mild
+  4 (4.00%) high severe
+Checksum Readers/read_100_messages/CRC16
+                        time:   [2.4048 µs 2.4084 µs 2.4122 µs]
+                        thrpt:  [1.4672 GiB/s 1.4695 GiB/s 1.4716 GiB/s]
+                 change:
+                        time:   [-3.9020% -3.4579% -3.0418%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.1372% +3.5818% +4.0605%]
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+Checksum Write-Read Cycles/write_read_cycle_100_messages/XXHash64
+                        time:   [3.1166 µs 3.1294 µs 3.1433 µs]
+                        thrpt:  [728.17 MiB/s 731.40 MiB/s 734.40 MiB/s]
+                 change:
+                        time:   [-2.2428% -1.6700% -1.0897%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.1017% +1.6984% +2.2943%]
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+Checksum Write-Read Cycles/write_read_cycle_100_messages/CRC32
+                        time:   [3.4351 µs 3.4489 µs 3.4630 µs]
+                        thrpt:  [660.93 MiB/s 663.64 MiB/s 666.30 MiB/s]
+                 change:
+                        time:   [-3.2225% -2.7831% -2.3450%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.4013% +2.8627% +3.3298%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) low severe
+Checksum Write-Read Cycles/write_read_cycle_100_messages/CRC16
+                        time:   [7.1518 µs 7.1787 µs 7.2085 µs]
+                        thrpt:  [317.52 MiB/s 318.84 MiB/s 320.04 MiB/s]
+                 change:
+                        time:   [-2.1167% -1.7665% -1.3951%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.4148% +1.7982% +2.1625%]
+                        Performance has improved.
+Found 13 outliers among 100 measurements (13.00%)
+  3 (3.00%) low mild
+  5 (5.00%) high mild
+  5 (5.00%) high severe
+
+zero_allocation_reading_xxhash64_100_messages
+                        time:   [599.07 ns 602.65 ns 607.45 ns]
+                        change: [-1.4873% -1.0306% -0.5766%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 14 outliers among 100 measurements (14.00%)
+  1 (1.00%) low severe
+  7 (7.00%) low mild
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+
+write_iterative_xxhash64_100_messages
+                        time:   [2.5634 µs 2.5731 µs 2.5833 µs]
+                        change: [-1.7034% -1.1186% -0.5874%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+
+write_read_cycle_xxhash64_50_messages
+                        time:   [1.8071 µs 1.8126 µs 1.8180 µs]
+                        change: [-2.2104% -1.7444% -1.2785%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+
+large_messages_xxhash64_50_messages
+                        time:   [1.4536 µs 1.4589 µs 1.4646 µs]
+                        change: [-2.0301% -1.4765% -0.9285%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+
+Small Dataset (100 events)/flatstream_default
+                        time:   [2.7957 µs 2.8071 µs 2.8190 µs]
+                        change: [-1.5315% -1.0139% -0.4814%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Small Dataset (100 events)/flatstream_xxhash64
+                        time:   [3.1579 µs 3.1663 µs 3.1756 µs]
+                        change: [-0.7188% -0.2670% +0.1869%] (p = 0.25 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Small Dataset (100 events)/flatstream_crc32
+                        time:   [3.4648 µs 3.4797 µs 3.4946 µs]
+                        change: [-2.1936% -1.7120% -1.2202%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+Small Dataset (100 events)/flatstream_crc16
+                        time:   [7.2941 µs 7.3152 µs 7.3367 µs]
+                        change: [-1.3159% -0.7218% -0.0280%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+Small Dataset (100 events)/flatstream_builder_reuse
+                        time:   [2.8182 µs 2.8285 µs 2.8387 µs]
+                        change: [-0.9936% -0.5528% -0.1049%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Small Dataset (100 events)/bincode
+                        time:   [2.9356 µs 2.9441 µs 2.9527 µs]
+                        change: [-1.7088% -1.1846% -0.7159%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Small Dataset (100 events)/serde_json
+                        time:   [14.654 µs 14.722 µs 14.789 µs]
+                        change: [+0.8713% +1.4205% +1.9579%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+
+Large Dataset (~10MB)/flatstream_default
+                        time:   [2.7408 ms 2.7840 ms 2.8283 ms]
+                        change: [-9.5470% -7.0850% -4.6471%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Large Dataset (~10MB)/flatstream_xxhash64
+                        time:   [3.2188 ms 3.2832 ms 3.3516 ms]
+                        change: [-0.3585% +2.2446% +5.1410%] (p = 0.11 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Large Dataset (~10MB)/flatstream_crc32
+                        time:   [3.4307 ms 3.4839 ms 3.5396 ms]
+                        change: [-4.0932% -1.9650% +0.1726%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Large Dataset (~10MB)/flatstream_crc16
+                        time:   [7.3113 ms 7.3689 ms 7.4298 ms]
+                        change: [-10.481% -8.1436% -6.0431%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Large Dataset (~10MB)/flatstream_builder_reuse
+                        time:   [2.6036 ms 2.6139 ms 2.6247 ms]
+                        change: [-10.939% -9.5880% -8.2879%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Large Dataset (~10MB)/bincode
+                        time:   [2.7825 ms 2.7961 ms 2.8101 ms]
+                        change: [-2.8746% -2.0024% -1.1221%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Large Dataset (~10MB)/serde_json
+                        time:   [14.248 ms 14.397 ms 14.563 ms]
+                        change: [-0.7823% +1.2197% +2.8537%] (p = 0.20 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+
+File I/O Pressure: 1 Large (10MB) + 1000 Small Messages/Simple Mode
+                        time:   [5.4587 ms 5.7745 ms 6.1742 ms]
+                        change: [+16.285% +23.537% +31.709%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+File I/O Pressure: 1 Large (10MB) + 1000 Small Messages/Expert Mode (Multiple Builders)
+                        time:   [4.9965 ms 5.1625 ms 5.3778 ms]
+                        change: [-17.291% -6.4939% +4.0791%] (p = 0.30 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+Long-Running Agent: Mixed Workload with Large Messages/Simple Mode (Reuses Large Buffer)
+                        time:   [2.3750 ms 2.5797 ms 2.7790 ms]
+                        change: [-5.3059% +9.0161% +24.589%] (p = 0.25 > 0.05)
+                        No change in performance detected.
+Long-Running Agent: Mixed Workload with Large Messages/Expert Mode (Memory Efficient - Re-allocates)
+                        time:   [2.4834 ms 2.6331 ms 2.8427 ms]
+                        change: [-0.2813% +10.323% +22.439%] (p = 0.09 > 0.05)
+                        No change in performance detected.
+Long-Running Agent: Mixed Workload with Large Messages/Expert Mode (Adaptive Tiered Buffers)
+                        time:   [2.3598 ms 2.6118 ms 2.8242 ms]
+                        change: [-4.5781% +5.8307% +16.775%] (p = 0.32 > 0.05)
+                        No change in performance detected.
+
+Memory Pressure: 1 Large Message + 1000 Small Messages/Simple Mode
+                        time:   [3.4326 ms 3.5301 ms 3.6351 ms]
+                        change: [+7.7616% +13.124% +18.520%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Memory Pressure: 1 Large Message + 1000 Small Messages/Expert Mode (Multiple Builders)
+                        time:   [3.7161 ms 3.8629 ms 4.0213 ms]
+                        change: [+13.453% +18.542% +24.002%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Sustained Performance: Writing 1000 small messages/With a Bloated Builder (Simple Mode simulation)
+                        time:   [132.77 µs 136.40 µs 140.48 µs]
+                        change: [-0.1163% +4.0296% +8.4634%] (p = 0.06 > 0.05)
+                        No change in performance detected.
+Sustained Performance: Writing 1000 small messages/With a Right-Sized Builder (Expert Mode simulatio...
+                        time:   [129.40 µs 132.59 µs 136.49 µs]
+                        change: [-1.9218% +1.4105% +4.6736%] (p = 0.40 > 0.05)
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+
+Real-World Performance: Mixed Message Sizes/Simple Mode
+                        time:   [1.6796 ms 1.8100 ms 1.9694 ms]
+                        change: [+14.798% +22.797% +31.996%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Real-World Performance: Mixed Message Sizes/Expert Mode (Single Builder)
+                        time:   [1.5652 ms 1.6578 ms 1.7640 ms]
+                        change: [-0.0422% +5.8397% +11.492%] (p = 0.05 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Real-World Performance: Mixed Message Sizes/Expert Mode (Multiple Builders)
+                        time:   [1.3761 ms 1.4570 ms 1.5655 ms]
+                        change: [+6.8274% +12.642% +19.699%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+
