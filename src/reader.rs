@@ -7,12 +7,15 @@ use std::marker::PhantomData;
 
 /// A reader for streaming messages from a `flatstream`.
 ///
-/// This reader is generic over a `Deframer` strategy, which defines how
+    /// This reader is generic over a `Deframer` strategy, which defines how
 /// each message is parsed from the byte stream.
 ///
 /// **Zero-Copy Guarantee**: Both APIs provide direct access to the internal buffer
 /// as `&[u8]` slices. The FlatBuffers philosophy is preserved - no parsing, no
-/// copying, just direct access to the serialized data.
+    /// copying, just direct access to the serialized data.
+    ///
+    /// The returned `&[u8]` payload slices are borrowed from the reader's
+    /// internal buffer and are valid only until the next successful read.
 ///
 /// It provides two APIs:
 /// 1. **Processor API** (`process_all()`): High-performance closure-based processing
@@ -80,6 +83,16 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
         }
     }
 
+    /// Creates a new `StreamReader` with a pre-allocated buffer capacity.
+    pub fn with_capacity(reader: R, deframer: D, capacity: usize) -> Self {
+        Self {
+            reader,
+            deframer,
+            buffer: Vec::with_capacity(capacity),
+            _phantom: PhantomData,
+        }
+    }
+
     /// Reads the next message into the internal buffer. This is the low-level
     /// alternative to using the processor or expert APIs.
     /// Returns Ok(Some(payload)) on success, Ok(None) on clean EOF.
@@ -131,6 +144,36 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// to the message payload, providing zero-copy access.
     pub fn messages(&mut self) -> Messages<'_, R, D> {
         Messages { reader: self }
+    }
+
+    /// Returns a reference to the underlying reader.
+    pub fn get_ref(&self) -> &R {
+        &self.reader
+    }
+
+    /// Returns a mutable reference to the underlying reader.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.reader
+    }
+
+    /// Returns a reference to the deframer strategy.
+    pub fn deframer(&self) -> &D {
+        &self.deframer
+    }
+
+    /// Returns the current capacity of the internal buffer.
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffer.capacity()
+    }
+
+    /// Ensure the internal buffer can hold at least `additional` more bytes without reallocation.
+    pub fn reserve(&mut self, additional: usize) {
+        self.buffer.reserve(additional)
+    }
+
+    /// Consume the `StreamReader`, returning the underlying reader.
+    pub fn into_inner(self) -> R {
+        self.reader
     }
 }
 

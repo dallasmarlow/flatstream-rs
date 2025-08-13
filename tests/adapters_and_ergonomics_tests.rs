@@ -286,6 +286,79 @@ fn fluent_bounded_equivalence_deframer() {
 }
 
 #[test]
+fn fluent_observed_equivalence_framer() {
+    let payload = b"xyz";
+    let mut a = Vec::new();
+    let mut b = Vec::new();
+
+    let manual = ObserverFramer::new(DefaultFramer, |_p: &[u8]| {});
+    let fluent = DefaultFramer.observed(|_p: &[u8]| {});
+
+    manual.frame_and_write(&mut a, payload).unwrap();
+    fluent.frame_and_write(&mut b, payload).unwrap();
+
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fluent_observed_equivalence_deframer() {
+    let payload = b"observe".to_vec();
+    let mut framed = Vec::new();
+    DefaultFramer.frame_and_write(&mut framed, &payload).unwrap();
+
+    let manual = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| {});
+    let fluent = DefaultDeframer.observed(|_p: &[u8]| {});
+
+    let mut buf_m = Vec::new();
+    let mut cur_m = Cursor::new(&framed);
+    manual.read_and_deframe(&mut cur_m, &mut buf_m).unwrap().unwrap();
+
+    let mut buf_f = Vec::new();
+    let mut cur_f = Cursor::new(&framed);
+    fluent.read_and_deframe(&mut cur_f, &mut buf_f).unwrap().unwrap();
+
+    assert_eq!(buf_m, buf_f);
+}
+
+#[test]
+fn fluent_observed_callbacks_invoked() {
+    // Framer: callback should see payload length
+    let observed_len = Cell::new(0usize);
+    let framer = DefaultFramer.observed(|p: &[u8]| observed_len.set(p.len()));
+    let mut out = Vec::new();
+    framer.frame_and_write(&mut out, b"hello").unwrap();
+    assert_eq!(observed_len.get(), 5);
+
+    // Deframer: callback should be called once on read
+    let called = Cell::new(0usize);
+    let deframer = DefaultDeframer.observed(|_p: &[u8]| called.set(called.get() + 1));
+    let mut sr = StreamReader::new(Cursor::new(out), deframer);
+    let mut count = 0;
+    sr.process_all(|p| {
+        assert_eq!(p, b"hello");
+        count += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(called.get(), 1);
+}
+
+#[test]
+fn stream_writer_with_capacity_smoke() {
+    let mut sink = Vec::new();
+    let writer = Cursor::new(&mut sink);
+    let framer = DefaultFramer;
+    let mut sw = StreamWriter::with_capacity(writer, framer, 4096);
+
+    // Write a couple of small messages; just validate it works end-to-end
+    assert!(sw.write(&"a small message").is_ok());
+    assert!(sw.write(&"another one").is_ok());
+    sw.flush().unwrap();
+
+    assert!(!sw.into_inner().into_inner().is_empty());
+}
+#[test]
 fn stream_reader_ergonomics_capacity_and_reserve() {
     let reader = Cursor::new(Vec::<u8>::new());
     let mut sr = StreamReader::with_capacity(reader, DefaultDeframer, 1024);

@@ -77,10 +77,24 @@ pub trait Deframer {
     /// Returns Ok(Some(())) on success, Ok(None) on clean EOF.
     fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>)
         -> Result<Option<()>>;
+
+    /// Fast-path: called when the 4-byte little-endian payload length has already been read.
+    /// Implementations must read any additional header fields (e.g., checksum), then the payload.
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>>;
 }
 
 /// The default deframing strategy.
+#[derive(Clone, Copy, Default)]
 pub struct DefaultDeframer;
+
+impl DefaultDeframer {
+    // Intentionally no constructor; use `DefaultDeframer` unit value directly or `DefaultDeframer::default()`.
+}
 
 impl Deframer for DefaultDeframer {
     fn read_and_deframe<R: Read>(
@@ -103,9 +117,23 @@ impl Deframer for DefaultDeframer {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        buffer.resize(payload_len, 0);
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+        Ok(Some(()))
+    }
 }
 
 /// A deframing strategy that verifies a checksum.
+#[derive(Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
 }
@@ -182,10 +210,64 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        let checksum_size = self.checksum_alg.size();
+
+        let expected_checksum = match checksum_size {
+            0 => 0,
+            2 => {
+                let mut checksum_bytes = [0u8; 2];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u16::from_le_bytes(checksum_bytes) as u64
+            }
+            4 => {
+                let mut checksum_bytes = [0u8; 4];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u32::from_le_bytes(checksum_bytes) as u64
+            }
+            8 => {
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+            _ => {
+                let mut checksum_bytes = [0u8; 8];
+                reader
+                    .read_exact(&mut checksum_bytes)
+                    .map_err(|_| Error::UnexpectedEof)?;
+                u64::from_le_bytes(checksum_bytes)
+            }
+        };
+
+        buffer.resize(payload_len, 0);
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+
+        self.checksum_alg.verify(expected_checksum, buffer)?;
+        Ok(Some(()))
+    }
 }
 
 /// A high-performance deframer that uses an `unsafe` block to avoid unnecessary buffer zeroing.
+#[derive(Clone, Copy, Default)]
 pub struct UnsafeDeframer;
+
+impl UnsafeDeframer {
+    // Intentionally no constructor; use `UnsafeDeframer` unit value directly.
+}
 
 // Implementation for the unsafe version
 impl Deframer for UnsafeDeframer {
@@ -215,10 +297,35 @@ impl Deframer for UnsafeDeframer {
             .map_err(|_| Error::UnexpectedEof)?;
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        // Only grow the buffer if current capacity is insufficient.
+        if buffer.capacity() < payload_len {
+            // Reserve just enough additional capacity to reach payload_len.
+            buffer.reserve(payload_len - buffer.len());
+        }
+        unsafe {
+            buffer.set_len(payload_len);
+        }
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
+        Ok(Some(()))
+    }
 }
 
 /// Deframer using the safe `Read::take` method.
+#[derive(Clone, Copy, Default)]
 pub struct SafeTakeDeframer;
+
+impl SafeTakeDeframer {
+    // Intentionally no constructor; use `SafeTakeDeframer` unit value directly.
+}
 
 // Implementation for the safe version
 impl Deframer for SafeTakeDeframer {
@@ -245,4 +352,182 @@ impl Deframer for SafeTakeDeframer {
 
         Ok(Some(()))
     }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        buffer.clear();
+        buffer.reserve(payload_len);
+        reader.take(payload_len as u64).read_to_end(buffer)?;
+        if buffer.len() != payload_len {
+            return Err(Error::UnexpectedEof);
+        }
+        Ok(Some(()))
+    }
 }
+
+/// A composable adapter that enforces a maximum frame length for any deframer
+/// that begins by reading a 4-byte little-endian payload length.
+pub struct BoundedDeframer<D: Deframer> {
+    inner: D,
+    max: usize,
+}
+
+impl<D: Deframer> BoundedDeframer<D> {
+    pub fn new(inner: D, max: usize) -> Self {
+        Self { inner, max }
+    }
+}
+
+// (no shim needed)
+
+impl<D: Deframer> Deframer for BoundedDeframer<D> {
+    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
+        let mut len_bytes = [0u8; 4];
+        match reader.read_exact(&mut len_bytes) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+
+        let payload_len = u32::from_le_bytes(len_bytes) as usize;
+        if payload_len > self.max {
+            return Err(Error::invalid_frame("frame length exceeds configured limit"));
+        }
+
+        self.inner.read_after_length(reader, buffer, payload_len)
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        if payload_len > self.max {
+            return Err(Error::invalid_frame("frame length exceeds configured limit"));
+        }
+        self.inner.read_after_length(reader, buffer, payload_len)
+    }
+}
+
+/// Backward compatibility alias
+#[doc(hidden)]
+#[deprecated(since = "0.2.7", note = "Please use `BoundedDeframer` instead")]
+pub type MaxFrameLen<D> = BoundedDeframer<D>;
+
+/// A composable adapter that enforces a maximum payload length for any framer.
+pub struct BoundedFramer<F: Framer> {
+    inner: F,
+    max_len: usize,
+}
+
+impl<F: Framer> BoundedFramer<F> {
+    pub fn new(inner: F, max_len: usize) -> Self {
+        Self { inner, max_len }
+    }
+}
+
+impl<F: Framer> Framer for BoundedFramer<F> {
+    fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        if payload.len() > self.max_len {
+            return Err(Error::invalid_frame("payload length exceeds configured limit"));
+        }
+        self.inner.frame_and_write(writer, payload)
+    }
+}
+
+//--- Observer Adapters ---
+
+/// An adapter that allows observing payloads on the write path without copying or mutating.
+pub struct ObserverFramer<F: Framer, C: Fn(&[u8])> {
+    inner: F,
+    callback: C,
+}
+
+impl<F: Framer, C: Fn(&[u8])> ObserverFramer<F, C> {
+    pub fn new(inner: F, callback: C) -> Self {
+        Self { inner, callback }
+    }
+}
+
+impl<F: Framer, C: Fn(&[u8])> Framer for ObserverFramer<F, C> {
+    fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        (self.callback)(payload);
+        self.inner.frame_and_write(writer, payload)
+    }
+}
+
+/// An adapter that allows observing payloads on the read path without copying or mutating.
+pub struct ObserverDeframer<D: Deframer, C: Fn(&[u8])> {
+    inner: D,
+    callback: C,
+}
+
+impl<D: Deframer, C: Fn(&[u8])> ObserverDeframer<D, C> {
+    pub fn new(inner: D, callback: C) -> Self {
+        Self { inner, callback }
+    }
+}
+
+impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
+    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
+        match self.inner.read_and_deframe(reader, buffer)? {
+            Some(()) => {
+                (self.callback)(buffer);
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        match self.inner.read_after_length(reader, buffer, payload_len)? {
+            Some(()) => {
+                (self.callback)(buffer);
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+//--- Fluent Extension Traits ---
+
+/// Extension methods for framers to enable fluent composition without importing adapter types.
+pub trait FramerExt: Framer + Sized {
+    /// Enforce a maximum payload length.
+    fn bounded(self, max: usize) -> BoundedFramer<Self> {
+        BoundedFramer::new(self, max)
+    }
+
+    /// Observe payloads on the write path without copying. Useful for metrics/logging.
+    fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
+        ObserverFramer::new(self, callback)
+    }
+}
+
+impl<T: Framer> FramerExt for T {}
+
+/// Extension methods for deframers to enable fluent composition without importing adapter types.
+pub trait DeframerExt: Deframer + Sized {
+    /// Enforce a maximum payload length.
+    fn bounded(self, max: usize) -> BoundedDeframer<Self> {
+        BoundedDeframer::new(self, max)
+    }
+
+    /// Observe payloads on the read path without copying. Useful for metrics/logging.
+    fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
+        ObserverDeframer::new(self, callback)
+    }
+}
+
+impl<T: Deframer> DeframerExt for T {}
