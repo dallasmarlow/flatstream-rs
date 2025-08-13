@@ -700,3 +700,51 @@ Brief test description:
 - [ ] **Reuse builders for most use cases** (call `reset()` not `new()`)
 - [ ] **Consider custom allocators** for specialized memory management
 - [ ] **Profile and/or benchmark before optimizing** (the simple mode might be enough!)
+
+## Benchmarking and updating performance figures
+
+This project includes reproducible Criterion benchmarks for both realistic telemetry-style streams and simple primitive-type streams. Use the commands below to regenerate results and update the figures in this README.
+
+Prerequisites:
+
+- Run on AC power; close background tasks for consistent results.
+- Optional: use a consistent toolchain and machine when updating snapshots.
+
+Commands (write outputs to files):
+
+```bash
+# 1) Core suite (flatstream-only benches)
+cargo bench | tee bench_results.txt
+
+# 2) Comparative suite (flatstream vs bincode/serde_json)
+cargo bench --features comparative_bench --bench comparative_benchmarks | tee bench_results.comparative.txt
+
+# 3) Simple streams suite (primitive types, plus read-only deframer isolation)
+cargo bench --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt
+```
+
+Where to copy numbers from:
+
+- Simulated Telemetry Streams (comparative_benchmarks)
+  - In `bench_results.comparative.txt`, extract the median times for:
+    - Small dataset (100 events): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
+    - Large dataset (~10MB): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
+  - Update the section “Comparative benchmarks (current snapshot: YYYY/MM/DD)” in this README and refresh the date.
+
+- Simple streams (primitive types)
+  - In `bench_results.simple.txt`, extract the median times for:
+    - `Simple Streams (Numeric)/write_read_cycle_100/*`
+    - `Simple Streams (String16)/write_read_cycle_100/*`
+    - Read-only: `Simple Streams (Numeric)/read_only_100/*` and `Simple Streams (String16)/read_only_100/*`
+  - Update the “Simple streams (primitive types)” section in this README.
+
+Converting medians to messages/sec (optional, shown in this README):
+
+- For write_read_cycle_100: messages_per_sec ≈ 100 / median_seconds.
+  - Example: 3.10 µs → 3.10e-6 s → 100 / 3.10e-6 ≈ 32.3M msgs/s
+- For read_only_100: messages_per_sec ≈ 100 / median_seconds (same formula).
+
+Notes:
+
+- The medians printed by Criterion look like `[low mid high]`; use the middle value.
+- This README intentionally reports messages/sec (not byte/s), because wire overhead differs with checksum options.
