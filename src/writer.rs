@@ -66,7 +66,11 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// Creates a new `StreamWriter` with a pre-constructed builder.
     /// Useful for pre-sizing.
     pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a>) -> Self {
-        Self { writer, framer, builder }
+        Self {
+            writer,
+            framer,
+            builder,
+        }
     }
 
     /// Creates a new `StreamWriter` with an internal builder pre-allocated to `capacity` bytes.

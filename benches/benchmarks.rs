@@ -763,9 +763,14 @@ fn benchmark_deframer_micro(c: &mut Criterion) {
     group.bench_function("DefaultDeframer (zeroing)", |b| {
         b.iter(|| {
             let deframer = DefaultDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
             // We are timing ONLY the deframing logic here.
-            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap();
             black_box(&read_buffer);
         });
     });
@@ -774,8 +779,13 @@ fn benchmark_deframer_micro(c: &mut Criterion) {
     group.bench_function("SafeTakeDeframer", |b| {
         b.iter(|| {
             let deframer = SafeTakeDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
-            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
+            deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap();
             black_box(&read_buffer);
         });
     });
@@ -783,8 +793,13 @@ fn benchmark_deframer_micro(c: &mut Criterion) {
     group.bench_function("UnsafeDeframer (no zeroing)", |b| {
         b.iter(|| {
             let deframer = UnsafeDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
-            deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap();
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
+            deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap();
             black_box(&read_buffer);
         });
     });
@@ -812,9 +827,16 @@ fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
     group.bench_function("DefaultDeframer (zeroing)", |b| {
         b.iter(|| {
             let deframer = DefaultDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
             // Process all messages in the buffer
-            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+            while deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap()
+                .is_some()
+            {
                 black_box(&read_buffer);
             }
         });
@@ -824,8 +846,15 @@ fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
     group.bench_function("SafeTakeDeframer", |b| {
         b.iter(|| {
             let deframer = SafeTakeDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
-            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
+            while deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap()
+                .is_some()
+            {
                 black_box(&read_buffer);
             }
         });
@@ -834,8 +863,15 @@ fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
     group.bench_function("UnsafeDeframer (no zeroing)", |b| {
         b.iter(|| {
             let deframer = UnsafeDeframer;
-            let mut reader = MockReader { data: &buffer, pos: 0 };
-            while deframer.read_and_deframe(&mut reader, &mut read_buffer).unwrap().is_some() {
+            let mut reader = MockReader {
+                data: &buffer,
+                pos: 0,
+            };
+            while deframer
+                .read_and_deframe(&mut reader, &mut read_buffer)
+                .unwrap()
+                .is_some()
+            {
                 black_box(&read_buffer);
             }
         });

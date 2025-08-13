@@ -19,9 +19,7 @@ fn main() -> Result<()> {
     let mut bytes = Vec::new();
     let writer = Cursor::new(&mut bytes);
     let mut stream_writer = StreamWriter::new(writer, framer);
-    println!(
-        "[writer] Writing two messages with an observer framer to record total payload bytes"
-    );
+    println!("[writer] Writing two messages with an observer framer to record total payload bytes");
     stream_writer.write(&"alpha")?;
     stream_writer.write(&"beta")?;
     stream_writer.flush()?;
@@ -68,9 +66,7 @@ fn main() -> Result<()> {
             count.set(count.get() + 1);
         });
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
-        println!(
-            "[xxhash] Reading back with a checksum-deframer while observing received slices"
-        );
+        println!("[xxhash] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
         println!(
             "[xxhash] Observer summary: observed_bytes={}, observed_messages={}",
@@ -89,9 +85,7 @@ fn main() -> Result<()> {
             seen.set(seen.get() + p.len());
         });
         let mut framed_bytes = Vec::new();
-        println!(
-            "[crc32] Writing a checksum-protected payload while observing the outgoing slice"
-        );
+        println!("[crc32] Writing a checksum-protected payload while observing the outgoing slice");
         framer
             .frame_and_write(&mut framed_bytes, b"crc32 payload")
             .unwrap();
@@ -101,9 +95,7 @@ fn main() -> Result<()> {
             count.set(count.get() + 1);
         });
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
-        println!(
-            "[crc32] Reading back with a checksum-deframer while observing received slices"
-        );
+        println!("[crc32] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
         println!(
             "[crc32] Observer summary: observed_bytes={}, observed_messages={}",
@@ -122,9 +114,7 @@ fn main() -> Result<()> {
             seen.set(seen.get() + p.len());
         });
         let mut framed_bytes = Vec::new();
-        println!(
-            "[crc16] Writing a checksum-protected payload while observing the outgoing slice"
-        );
+        println!("[crc16] Writing a checksum-protected payload while observing the outgoing slice");
         framer
             .frame_and_write(&mut framed_bytes, b"crc16 payload")
             .unwrap();
@@ -134,9 +124,7 @@ fn main() -> Result<()> {
             count.set(count.get() + 1);
         });
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
-        println!(
-            "[crc16] Reading back with a checksum-deframer while observing received slices"
-        );
+        println!("[crc16] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
         println!(
             "[crc16] Observer summary: observed_bytes={}, observed_messages={}",
@@ -147,5 +135,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
-

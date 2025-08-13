@@ -75,9 +75,7 @@ fn main() -> Result<()> {
     let deframer = BoundedDeframer::new(DefaultDeframer, 64);
     let mut stream_reader = StreamReader::new(Cursor::new(&bytes), deframer);
     let mut message_count = 0usize;
-    println!(
-        "[main] Reading messages again using an explicitly constructed bounded deframer"
-    );
+    println!("[main] Reading messages again using an explicitly constructed bounded deframer");
     stream_reader.process_all(|_payload| {
         message_count += 1;
         Ok(())
@@ -89,5 +87,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
-

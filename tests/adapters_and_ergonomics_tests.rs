@@ -37,7 +37,9 @@ fn bounded_deframer_over_limit() {
     let mut reader = Cursor::new(&data);
     let mut buffer = Vec::new();
 
-    let err = deframer.read_and_deframe(&mut reader, &mut buffer).unwrap_err();
+    let err = deframer
+        .read_and_deframe(&mut reader, &mut buffer)
+        .unwrap_err();
     match err {
         Error::InvalidFrame { message } => {
             assert!(message.contains("exceeds"));
@@ -122,8 +124,8 @@ fn observer_deframer_callback_invoked() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn observer_with_checksum_xxhash_callbacks_invoked() {
-    use flatstream::XxHash64;
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
+    use flatstream::XxHash64;
 
     let payload = b"observe checksum xxhash";
 
@@ -158,8 +160,8 @@ fn observer_with_checksum_xxhash_callbacks_invoked() {
 #[cfg(feature = "crc32")]
 #[test]
 fn observer_with_checksum_crc32_callbacks_invoked() {
-    use flatstream::Crc32;
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
+    use flatstream::Crc32;
 
     let payload = b"observe checksum crc32";
 
@@ -192,8 +194,8 @@ fn observer_with_checksum_crc32_callbacks_invoked() {
 #[cfg(feature = "crc16")]
 #[test]
 fn observer_with_checksum_crc16_callbacks_invoked() {
-    use flatstream::Crc16;
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
+    use flatstream::Crc16;
 
     let payload = b"observe checksum crc16";
 
@@ -237,8 +239,12 @@ fn fluent_bounded_equivalence_framer() {
     fluent.frame_and_write(&mut b, &payload_ok).unwrap();
     assert_eq!(a, b);
 
-    let err1 = manual.frame_and_write(&mut Vec::new(), &payload_bad).unwrap_err();
-    let err2 = fluent.frame_and_write(&mut Vec::new(), &payload_bad).unwrap_err();
+    let err1 = manual
+        .frame_and_write(&mut Vec::new(), &payload_bad)
+        .unwrap_err();
+    let err2 = fluent
+        .frame_and_write(&mut Vec::new(), &payload_bad)
+        .unwrap_err();
     assert!(matches!(err1, Error::InvalidFrame { .. }));
     assert!(matches!(err2, Error::InvalidFrame { .. }));
 }
@@ -256,17 +262,13 @@ fn fluent_bounded_equivalence_deframer() {
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_bad);
-        let err = manual
-            .read_and_deframe(&mut cur, &mut buf)
-            .unwrap_err();
+        let err = manual.read_and_deframe(&mut cur, &mut buf).unwrap_err();
         assert!(matches!(err, Error::InvalidFrame { .. }));
     }
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_bad);
-        let err = fluent
-            .read_and_deframe(&mut cur, &mut buf)
-            .unwrap_err();
+        let err = fluent.read_and_deframe(&mut cur, &mut buf).unwrap_err();
         assert!(matches!(err, Error::InvalidFrame { .. }));
     }
 
@@ -274,13 +276,19 @@ fn fluent_bounded_equivalence_deframer() {
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_ok);
-        manual.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
+        manual
+            .read_and_deframe(&mut cur, &mut buf)
+            .unwrap()
+            .unwrap();
         assert_eq!(buf, &data_ok[4..]);
     }
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_ok);
-        fluent.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
+        fluent
+            .read_and_deframe(&mut cur, &mut buf)
+            .unwrap()
+            .unwrap();
         assert_eq!(buf, &data_ok[4..]);
     }
 }
@@ -304,18 +312,26 @@ fn fluent_observed_equivalence_framer() {
 fn fluent_observed_equivalence_deframer() {
     let payload = b"observe".to_vec();
     let mut framed = Vec::new();
-    DefaultFramer.frame_and_write(&mut framed, &payload).unwrap();
+    DefaultFramer
+        .frame_and_write(&mut framed, &payload)
+        .unwrap();
 
     let manual = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| {});
     let fluent = DefaultDeframer.observed(|_p: &[u8]| {});
 
     let mut buf_m = Vec::new();
     let mut cur_m = Cursor::new(&framed);
-    manual.read_and_deframe(&mut cur_m, &mut buf_m).unwrap().unwrap();
+    manual
+        .read_and_deframe(&mut cur_m, &mut buf_m)
+        .unwrap()
+        .unwrap();
 
     let mut buf_f = Vec::new();
     let mut cur_f = Cursor::new(&framed);
-    fluent.read_and_deframe(&mut cur_f, &mut buf_f).unwrap().unwrap();
+    fluent
+        .read_and_deframe(&mut cur_f, &mut buf_f)
+        .unwrap()
+        .unwrap();
 
     assert_eq!(buf_m, buf_f);
 }
@@ -424,5 +440,3 @@ fn stream_writer_with_builder_alloc() {
 
     assert!(!sw.into_inner().into_inner().is_empty());
 }
-
-

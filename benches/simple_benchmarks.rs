@@ -59,7 +59,11 @@ const COUNT: usize = 100;
 
 fn make_minimal_numeric(count: usize) -> Vec<MinimalNumeric> {
     (0..count as u64)
-        .map(|i| MinimalNumeric { a: i, b: i.wrapping_mul(3), c: i.wrapping_add(7) })
+        .map(|i| MinimalNumeric {
+            a: i,
+            b: i.wrapping_mul(3),
+            c: i.wrapping_add(7),
+        })
         .collect()
 }
 
@@ -103,8 +107,10 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
         b.iter(|| {
             let mut buffer = Vec::new();
             {
-                let mut writer =
-                    StreamWriter::new(Cursor::new(&mut buffer), BoundedFramer::new(DefaultFramer, 1 << 30));
+                let mut writer = StreamWriter::new(
+                    Cursor::new(&mut buffer),
+                    BoundedFramer::new(DefaultFramer, 1 << 30),
+                );
                 let mut builder = FlatBufferBuilder::new();
                 for e in &events {
                     builder.reset();
@@ -233,8 +239,10 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
         b.iter(|| {
             let mut buffer = Vec::new();
             {
-                let mut writer =
-                    StreamWriter::new(Cursor::new(&mut buffer), BoundedFramer::new(DefaultFramer, 1 << 30));
+                let mut writer = StreamWriter::new(
+                    Cursor::new(&mut buffer),
+                    BoundedFramer::new(DefaultFramer, 1 << 30),
+                );
                 let mut builder = FlatBufferBuilder::new();
                 for e in &events {
                     builder.reset();
@@ -466,5 +474,3 @@ criterion_group!(
     bench_simple_string_read_only
 );
 criterion_main!(benches);
-
-

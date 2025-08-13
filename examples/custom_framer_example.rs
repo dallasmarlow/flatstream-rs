@@ -1,5 +1,5 @@
-use flatstream::{Error, Framer, Deframer, Result, StreamReader, StreamWriter};
-use std::io::{Read, Write, Cursor};
+use flatstream::{Deframer, Error, Framer, Result, StreamReader, StreamWriter};
+use std::io::{Cursor, Read, Write};
 
 /// A custom framer that adds a 2-byte magic number `0xABBA` before each message.
 /// Wire format: [2-byte magic | 4-byte length | payload]
@@ -22,26 +22,36 @@ impl Framer for MagicHeaderFramer {
 struct MagicHeaderDeframer;
 
 impl Deframer for MagicHeaderDeframer {
-    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
         let mut magic_bytes = [0u8; 2];
         match reader.read_exact(&mut magic_bytes) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None), // Clean EOF
             Err(e) => return Err(e.into()),
         }
 
         // Verify the magic number
         if magic_bytes != [0xAB, 0xBA] {
-            return Err(Error::InvalidFrame { message: "Invalid magic number".to_string() });
+            return Err(Error::InvalidFrame {
+                message: "Invalid magic number".to_string(),
+            });
         }
 
         // Read length and payload (similar to DefaultDeframer)
         let mut len_bytes = [0u8; 4];
-        reader.read_exact(&mut len_bytes).map_err(|_| Error::UnexpectedEof)?;
-        
+        reader
+            .read_exact(&mut len_bytes)
+            .map_err(|_| Error::UnexpectedEof)?;
+
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
         buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|_| Error::UnexpectedEof)?;
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
 
         Ok(Some(()))
     }
@@ -58,7 +68,9 @@ impl Deframer for MagicHeaderDeframer {
         // only pre-reads the 4-byte length for standard formats, so we keep the
         // simple payload read here.
         buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|_| Error::UnexpectedEof)?;
+        reader
+            .read_exact(buffer)
+            .map_err(|_| Error::UnexpectedEof)?;
         Ok(Some(()))
     }
 }
@@ -77,7 +89,10 @@ fn main() -> Result<()> {
     println!("Reading with MagicHeaderDeframer...");
     let mut reader = StreamReader::new(Cursor::new(&buffer), MagicHeaderDeframer);
     reader.process_all(|payload| {
-        println!("Successfully read: '{}'", std::str::from_utf8(payload).unwrap());
+        println!(
+            "Successfully read: '{}'",
+            std::str::from_utf8(payload).unwrap()
+        );
         Ok(())
     })?;
 

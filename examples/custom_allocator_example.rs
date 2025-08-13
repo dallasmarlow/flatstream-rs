@@ -49,8 +49,9 @@ fn main() -> Result<()> {
     sw.write_finished(&mut b2)?;
 
     sw.flush()?;
-    println!("Wrote {} framed bytes using an explicit allocator", out.len());
+    println!(
+        "Wrote {} framed bytes using an explicit allocator",
+        out.len()
+    );
     Ok(())
 }
-
-

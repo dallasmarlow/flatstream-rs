@@ -7,15 +7,15 @@ use std::marker::PhantomData;
 
 /// A reader for streaming messages from a `flatstream`.
 ///
-    /// This reader is generic over a `Deframer` strategy, which defines how
+/// This reader is generic over a `Deframer` strategy, which defines how
 /// each message is parsed from the byte stream.
 ///
 /// **Zero-Copy Guarantee**: Both APIs provide direct access to the internal buffer
 /// as `&[u8]` slices. The FlatBuffers philosophy is preserved - no parsing, no
-    /// copying, just direct access to the serialized data.
-    ///
-    /// The returned `&[u8]` payload slices are borrowed from the reader's
-    /// internal buffer and are valid only until the next successful read.
+/// copying, just direct access to the serialized data.
+///
+/// The returned `&[u8]` payload slices are borrowed from the reader's
+/// internal buffer and are valid only until the next successful read.
 ///
 /// It provides two APIs:
 /// 1. **Processor API** (`process_all()`): High-performance closure-based processing

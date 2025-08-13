@@ -1,8 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::framing::{BoundedDeframer, BoundedFramer, DeframerExt, FramerExt, ObserverDeframer, ObserverFramer};
-use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader};
+use flatstream::framing::{
+    BoundedDeframer, BoundedFramer, DeframerExt, FramerExt, ObserverDeframer, ObserverFramer,
+};
 use flatstream::Framer;
+use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader};
 use std::cell::Cell;
 use std::io::Cursor;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -70,11 +72,12 @@ fn bench_bounded_read(c: &mut Criterion) {
     group.bench_function("baseline_default", |b| {
         b.iter(|| {
             let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap()
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap()
         })
     });
 
@@ -82,11 +85,12 @@ fn bench_bounded_read(c: &mut Criterion) {
         b.iter(|| {
             let deframer = BoundedDeframer::new(DefaultDeframer, 1 << 20);
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap()
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap()
         })
     });
 
@@ -94,11 +98,12 @@ fn bench_bounded_read(c: &mut Criterion) {
         b.iter(|| {
             let deframer = DefaultDeframer.bounded(1 << 20);
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap()
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap()
         })
     });
 
@@ -128,7 +133,9 @@ fn bench_observer_write_read(c: &mut Criterion) {
     group.bench_function("write_observer", |b| {
         let counter = Cell::new(0usize);
         b.iter(|| {
-            let framer = ObserverFramer::new(DefaultFramer, |p: &[u8]| counter.set(counter.get() + p.len()));
+            let framer = ObserverFramer::new(DefaultFramer, |p: &[u8]| {
+                counter.set(counter.get() + p.len())
+            });
             write_with_framer(black_box(&payload), &framer).unwrap()
         })
     });
@@ -138,24 +145,27 @@ fn bench_observer_write_read(c: &mut Criterion) {
     group.bench_function("read_baseline", |b| {
         b.iter(|| {
             let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap()
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap()
         })
     });
 
     group.bench_function("read_observer", |b| {
         let msgs = Cell::new(0usize);
         b.iter(|| {
-            let deframer = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| msgs.set(msgs.get() + 1));
+            let deframer =
+                ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| msgs.set(msgs.get() + 1));
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap()
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap()
         })
     });
 
@@ -170,12 +180,14 @@ fn bench_reader_capacity(c: &mut Criterion) {
     for &cap in &[0usize, 1024usize, 4096usize] {
         group.bench_with_input(BenchmarkId::from_parameter(cap), &cap, |b, &cap| {
             b.iter(|| {
-                let mut reader = StreamReader::with_capacity(Cursor::new(&bytes), DefaultDeframer, cap);
-                reader.process_all(|p| {
-                    black_box(p);
-                    Ok(())
-                })
-                .unwrap()
+                let mut reader =
+                    StreamReader::with_capacity(Cursor::new(&bytes), DefaultDeframer, cap);
+                reader
+                    .process_all(|p| {
+                        black_box(p);
+                        Ok(())
+                    })
+                    .unwrap()
             })
         });
     }
@@ -189,14 +201,20 @@ fn bench_bounded_write_sizes(c: &mut Criterion) {
         let payload = build_payload(sz);
         group.throughput(Throughput::Bytes(sz as u64));
 
-        group.bench_with_input(BenchmarkId::new("baseline_default", sz), &payload, |b, p| {
-            b.iter(|| write_with_framer(black_box(p), &DefaultFramer).unwrap())
-        });
+        group.bench_with_input(
+            BenchmarkId::new("baseline_default", sz),
+            &payload,
+            |b, p| b.iter(|| write_with_framer(black_box(p), &DefaultFramer).unwrap()),
+        );
 
-        group.bench_with_input(BenchmarkId::new("bounded_under_limit", sz), &payload, |b, p| {
-            let framer = DefaultFramer.bounded(1 << 30);
-            b.iter(|| write_with_framer(black_box(p), &framer).unwrap())
-        });
+        group.bench_with_input(
+            BenchmarkId::new("bounded_under_limit", sz),
+            &payload,
+            |b, p| {
+                let framer = DefaultFramer.bounded(1 << 30);
+                b.iter(|| write_with_framer(black_box(p), &framer).unwrap())
+            },
+        );
     }
     group.finish();
 }
@@ -208,28 +226,38 @@ fn bench_bounded_read_sizes(c: &mut Criterion) {
         let bytes = build_framed_bytes(&payload, &DefaultFramer);
         group.throughput(Throughput::Bytes(sz as u64));
 
-        group.bench_with_input(BenchmarkId::new("baseline_default", sz), &bytes, |b, data| {
-            b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(data), DefaultDeframer);
-                reader.process_all(|p| {
-                    black_box(p);
-                    Ok(())
+        group.bench_with_input(
+            BenchmarkId::new("baseline_default", sz),
+            &bytes,
+            |b, data| {
+                b.iter(|| {
+                    let mut reader = StreamReader::new(Cursor::new(data), DefaultDeframer);
+                    reader
+                        .process_all(|p| {
+                            black_box(p);
+                            Ok(())
+                        })
+                        .unwrap()
                 })
-                .unwrap()
-            })
-        });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("bounded_under_limit", sz), &bytes, |b, data| {
-            b.iter(|| {
-                let deframer = DefaultDeframer.bounded(1 << 30);
-                let mut reader = StreamReader::new(Cursor::new(data), deframer);
-                reader.process_all(|p| {
-                    black_box(p);
-                    Ok(())
+        group.bench_with_input(
+            BenchmarkId::new("bounded_under_limit", sz),
+            &bytes,
+            |b, data| {
+                b.iter(|| {
+                    let deframer = DefaultDeframer.bounded(1 << 30);
+                    let mut reader = StreamReader::new(Cursor::new(data), deframer);
+                    reader
+                        .process_all(|p| {
+                            black_box(p);
+                            Ok(())
+                        })
+                        .unwrap()
                 })
-                .unwrap()
-            })
-        });
+            },
+        );
     }
     group.finish();
 }
@@ -271,11 +299,12 @@ fn bench_file_io_adapters(c: &mut Criterion) {
             std::fs::write(tmp.path(), &data).unwrap();
             let file = std::fs::File::open(tmp.path()).unwrap();
             let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap();
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap();
         })
     });
 
@@ -286,11 +315,12 @@ fn bench_file_io_adapters(c: &mut Criterion) {
             let file = std::fs::File::open(tmp.path()).unwrap();
             let deframer = DefaultDeframer.bounded(1 << 30);
             let mut reader = StreamReader::new(BufReader::new(file), deframer);
-            reader.process_all(|p| {
-                black_box(p);
-                Ok(())
-            })
-            .unwrap();
+            reader
+                .process_all(|p| {
+                    black_box(p);
+                    Ok(())
+                })
+                .unwrap();
         })
     });
 
@@ -309,5 +339,3 @@ fn adapters_micro(c: &mut Criterion) {
 
 criterion_group!(name = micro; config = Criterion::default(); targets = adapters_micro);
 criterion_main!(micro);
-
-

@@ -32,7 +32,6 @@ impl<'a> StreamSerialize for MediumMessage<'a> {
     }
 }
 
-
 // Represents a large, rare message (e.g., a file chunk, a large state dump)
 struct LargeMessage<'a>(&'a [u8]);
 impl<'a> StreamSerialize for LargeMessage<'a> {
@@ -56,7 +55,10 @@ enum MixedMessage<'a> {
 // FIX: Implement StreamSerialize for the MixedMessage enum.
 // This allows the `Simple Mode` benchmark to call `writer.write()` directly on it.
 impl<'a> StreamSerialize for MixedMessage<'a> {
-    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> flatstream::Result<()> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> flatstream::Result<()> {
         match self {
             MixedMessage::Small(s) => s.serialize(builder),
             MixedMessage::Medium(m) => m.serialize(builder),
@@ -64,7 +66,6 @@ impl<'a> StreamSerialize for MixedMessage<'a> {
         }
     }
 }
-
 
 impl<'a> MixedMessage<'a> {
     // Helper to get an approximate size for routing to the correct buffer
@@ -77,17 +78,15 @@ impl<'a> MixedMessage<'a> {
     }
 }
 
-
 // --- Benchmark Function ---
 
 fn benchmark_long_running_agent(c: &mut Criterion) {
-    let mut group =
-        c.benchmark_group("Long-Running Agent: Mixed Workload with Large Messages");
+    let mut group = c.benchmark_group("Long-Running Agent: Mixed Workload with Large Messages");
 
     // Pre-allocate data to avoid measuring test data allocation itself
     let medium_payload = vec![0u8; 64 * 1024]; // 64 KB
     let large_payload = vec![0u8; 5 * 1024 * 1024]; // 5 MB
-    
+
     // Create a more realistic, mixed workload
     let mut workload = Vec::new();
     for i in 0..1000 {
@@ -98,7 +97,6 @@ fn benchmark_long_running_agent(c: &mut Criterion) {
     }
     // Add one large message to the workload
     workload.push(MixedMessage::Large(LargeMessage(&large_payload)));
-
 
     // --- Benchmark 1: Simple Mode (Baseline) ---
     // Will suffer from memory bloat after seeing the large message.
@@ -127,7 +125,7 @@ fn benchmark_long_running_agent(c: &mut Criterion) {
             let mut medium_builder = FlatBufferBuilder::new();
 
             for msg in &workload {
-                 match msg {
+                match msg {
                     MixedMessage::Small(s) => {
                         small_builder.reset();
                         s.serialize(&mut small_builder).unwrap();
@@ -150,7 +148,7 @@ fn benchmark_long_running_agent(c: &mut Criterion) {
             black_box(stream_writer);
         });
     });
-    
+
     // --- NEW: Benchmark 3: Expert Mode (Adaptive Tiered Buffers) ---
     // This implements your suggested pattern: a tiered set of reusable buffers.
     group.bench_function("Expert Mode (Adaptive Tiered Buffers)", |b| {
@@ -158,11 +156,11 @@ fn benchmark_long_running_agent(c: &mut Criterion) {
             let temp_file = NamedTempFile::new().unwrap();
             let writer = BufWriter::new(temp_file);
             let mut stream_writer = StreamWriter::new(writer, DefaultFramer);
-            
+
             // Create a pool of builders for different size tiers.
             let mut small_builder = FlatBufferBuilder::with_capacity(1024); // For messages < 1KB
             let mut medium_builder = FlatBufferBuilder::with_capacity(128 * 1024); // For messages < 128KB
-            
+
             for msg in &workload {
                 // Route the message to the appropriate builder based on its size.
                 match msg.size_hint() {
@@ -192,7 +190,6 @@ fn benchmark_long_running_agent(c: &mut Criterion) {
         });
     });
 
-
     group.finish();
 }
 
@@ -202,4 +199,3 @@ criterion_group! {
     targets = benchmark_long_running_agent
 }
 criterion_main!(benches);
-

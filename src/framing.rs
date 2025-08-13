@@ -385,7 +385,11 @@ impl<D: Deframer> BoundedDeframer<D> {
 // (no shim needed)
 
 impl<D: Deframer> Deframer for BoundedDeframer<D> {
-    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
         let mut len_bytes = [0u8; 4];
         match reader.read_exact(&mut len_bytes) {
             Ok(_) => {}
@@ -395,7 +399,9 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
         if payload_len > self.max {
-            return Err(Error::invalid_frame("frame length exceeds configured limit"));
+            return Err(Error::invalid_frame(
+                "frame length exceeds configured limit",
+            ));
         }
 
         self.inner.read_after_length(reader, buffer, payload_len)
@@ -408,7 +414,9 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
         payload_len: usize,
     ) -> Result<Option<()>> {
         if payload_len > self.max {
-            return Err(Error::invalid_frame("frame length exceeds configured limit"));
+            return Err(Error::invalid_frame(
+                "frame length exceeds configured limit",
+            ));
         }
         self.inner.read_after_length(reader, buffer, payload_len)
     }
@@ -434,7 +442,9 @@ impl<F: Framer> BoundedFramer<F> {
 impl<F: Framer> Framer for BoundedFramer<F> {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
         if payload.len() > self.max_len {
-            return Err(Error::invalid_frame("payload length exceeds configured limit"));
+            return Err(Error::invalid_frame(
+                "payload length exceeds configured limit",
+            ));
         }
         self.inner.frame_and_write(writer, payload)
     }
@@ -474,7 +484,11 @@ impl<D: Deframer, C: Fn(&[u8])> ObserverDeframer<D, C> {
 }
 
 impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
-    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<()>> {
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
         match self.inner.read_and_deframe(reader, buffer)? {
             Some(()) => {
                 (self.callback)(buffer);

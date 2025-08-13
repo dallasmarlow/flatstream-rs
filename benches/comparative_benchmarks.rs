@@ -4,8 +4,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
-    UnsafeDeframer,
+    self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize,
+    StreamWriter, UnsafeDeframer,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};

@@ -8,9 +8,9 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
 use std::fs::File;
-use std::io::BufWriter;
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use std::io::BufReader;
+use std::io::BufWriter;
 
 // Import framing types when checksum features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
