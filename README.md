@@ -630,7 +630,7 @@ Test description (for the info below):
   - serde_json: 14.489 µs (~6.9M msgs/s)
   - Observation: in this run, flatstream_default was ~12% faster than bincode and ~4.7× faster than serde_json. The unsafe read variant was within ~0.3% of the default.
 
-- Large dataset (~10MB):
+ - Large dataset (~2.4 MiB):
   - flatstream_default: 3.1521 ms (~31.7M msgs/s)
   - flatstream_default_unsafe_read: 3.0167 ms (~33.1M msgs/s)
   - flatstream_xxhash64: 3.5489 ms (~28.2M msgs/s)
@@ -728,7 +728,7 @@ Where to copy numbers from:
 - Simulated Telemetry Streams (comparative_benchmarks)
   - In `bench_results.comparative.txt`, extract the median times for:
     - Small dataset (100 events): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
-    - Large dataset (~10MB): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
+  - Large dataset (~2.4 MiB): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
   - Update the section “Comparative benchmarks (current snapshot: YYYY/MM/DD)” in this README and refresh the date.
 
 - Simple streams (primitive types)
@@ -748,3 +748,28 @@ Notes:
 
 - The medians printed by Criterion look like `[low mid high]`; use the middle value.
 - This README intentionally reports messages/sec (not byte/s), because wire overhead differs with checksum options.
+
+## Potential future considerations
+
+The following settings may improve benchmark consistency and absolute performance. Evaluate on your hardware and workloads before adopting.
+
+- Bench/release profiles (Cargo.toml):
+  - [profile.bench]
+    - opt-level = 3
+    - lto = "thin"
+    - codegen-units = 1
+    - panic = "abort"
+  - [profile.release]
+    - opt-level = 3
+    - lto = "thin"
+    - codegen-units = 1
+    - panic = "abort"
+
+- Native CPU features for benches (create .cargo/config.toml):
+  - [build]
+    - rustflags = ["-C", "target-cpu=native"]
+
+Notes:
+- Panic=abort reduces binary size and eliminates unwinding cost, but consider your error reporting needs.
+- target-cpu=native tailors codegen to the local machine; use with care if distributing binaries to other CPUs.
+- lto and codegen-units=1 trade compile time for runtime performance; helpful for stable, infrequent releases.
