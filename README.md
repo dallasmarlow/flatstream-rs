@@ -6,9 +6,151 @@
 
 A lightweight, zero-copy oriented, high-performance Rust library for encoding and decoding sequences of framed FlatBuffers messages.
 
-FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on adhering to zero-copy behaviors. It originated from the demands of a high-frequency telemetry capture agent and has evolved into a general-purpose library suitable for any high-throughput, low-latency application.
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on maintaining zero-copy behavior. It originated from a high-frequency telemetry capture agent and has evolved into a general-purpose library for high-throughput, low-latency applications that need durable, replayable streams and predictable performance characteristics.
+
+FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), bounded reads, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
 
     Note on Performance: The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
+
+## TL;DR
+
+FlatStream is a small framing layer around FlatBuffers for streams (files/sockets). It writes and reads sequences of messages with a minimal header and optional checksums, while preserving zero-copy access to each FlatBuffer payload as a `&[u8]`.
+
+## Wire format (at a glance)
+
+```
+[4-byte LE: payload length (u32)] [N-byte checksum (optional)] [FlatBuffer payload...]
+```
+
+- **checksum N**: 0, 2, 4, or 8 bytes depending on configured algorithm.
+- The payload is a normal FlatBuffer (not FlatBuffers’ internal size-prefixed variant).
+
+## When to use / when not to use
+
+- **Use FlatStream when**:
+  - You need to write/read many FlatBuffers messages to a file or socket.
+  - You want zero-copy access to message payloads as `&[u8]`.
+  - You want composable adapters (bounds, checksums, observers) without extra allocations.
+
+- **Probably not a fit when**:
+  - You need a full RPC protocol, service discovery, or schema negotiation.
+  - You require text/binary interop outside of FlatBuffers.
+
+## Minimal end-to-end example
+
+```rust
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter, Result};
+use std::io::{BufReader, BufWriter, Cursor};
+
+fn main() -> Result<()> {
+    // Write one message
+    let mut bytes = Vec::new();
+    {
+        let writer = BufWriter::new(Cursor::new(&mut bytes));
+        let mut stream = StreamWriter::new(writer, DefaultFramer);
+        let mut b = FlatBufferBuilder::new();
+        let s = b.create_string("hello flatstream");
+        b.finish(s, None);
+        stream.write_finished(&mut b)?;
+        stream.flush()?;
+    }
+
+    // Read it back (payload provided as &[_])
+    let reader = BufReader::new(Cursor::new(bytes));
+    let mut stream = StreamReader::new(reader, DefaultDeframer);
+    stream.process_all(|payload| {
+        println!("payload bytes: {}", payload.len());
+        Ok(())
+    })
+}
+```
+
+## Architecture at a glance
+
+```mermaid
+graph LR
+  App["App"] --> SW["StreamWriter<W,F>"]
+  SW --> F["Framer (+ adapters)"]
+  F --> Stream["Stream (file/socket)"]
+  Stream --> D["Deframer (+ adapters)"]
+  D --> SR["StreamReader<R,D>"]
+  SR --> App
+```
+
+```mermaid
+sequenceDiagram
+  participant App
+  participant Builder as FlatBufferBuilder
+  participant Writer as StreamWriter
+  participant Framer
+  participant OS as Write (OS)
+  App->>Builder: reset()
+  App->>Builder: serialize(T)
+  Builder-->>App: finished_data(&[u8])
+  App->>Writer: write_finished(&mut Builder)
+  Writer->>Framer: make_header(len[, checksum])
+  Framer-->>Writer: [len][opt checksum]
+  alt vectored write available
+    Writer->>OS: writev([header, payload])
+  else
+    Writer->>OS: write_all(header)
+    Writer->>OS: write_all(payload)
+  end
+  App->>Writer: flush()
+  Note over OS: Later / other process
+  participant Reader as StreamReader
+  participant Deframer
+  participant User as user callback
+  OS-->>Reader: bytes
+  loop read loop
+    Reader->>Deframer: fill/read
+    Deframer->>Deframer: parse len
+    alt checksum enabled
+      Deframer->>Deframer: compute & verify
+    end
+    Deframer-->>Reader: payload &slice
+    Reader-->>User: process_all(|&[u8]|)
+  end
+```
+
+```
+   StreamWriter             Framer (+ adapters)                 Stream
+        |                         |                          [len][opt checksum][payload] ...
+        v                         v                                   |
+    FlatBuffer  --->  [len][checksum][payload]  --->  write            v
+
+    read          <---  [len][checksum][payload]  <---  Deframer (+ adapters)  <---  StreamReader
+                                      |
+                                      v
+                               payload: &[u8] (zero-copy)
+```
+
+## Core concepts (cheat sheet)
+
+| Concept | What it is |
+|---|---|
+| `StreamWriter<W, F>` | Writes messages using a `Framer` to a `Write` impl |
+| `StreamReader<R, D>` | Reads messages using a `Deframer` from a `Read` impl (yields `&[u8]`) |
+| `Framer` | Defines how to encode `[len][opt checksum][payload]` |
+| `Deframer` | Defines how to decode `[len][opt checksum][payload]` |
+| `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
+| `Bounded*` adapters | Enforce max payload size on read/write |
+| `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
+
+## FAQ
+
+- **Why not use FlatBuffers’ size-prefixed buffers?**
+  - FlatStream already prefixes at the stream layer. Adding another 4-byte prefix inside the payload is redundant. Use `flatbuffers::root`/`root_with_opts` on the payload.
+
+- **Is this zero-copy?**
+  - Yes. The reader’s `process_all()`/`messages()` provide `&[u8]` borrowed from the internal buffer. No intermediate copies are introduced by adapters.
+
+- **How do I stop early?**
+  - Use `messages()` and `break`, or return an `Err` from the `process_all` closure to halt. A lightweight “stop” enum could be added in the future.
+
+- **Does this replace a protocol?**
+  - No. It’s a framing layer for FlatBuffers payloads. RPC/routing/etc. are out of scope.
 
 ## Why FlatStream?
 
@@ -60,10 +202,10 @@ The library is designed around composability and zero-cost abstractions to maxim
 
 Performance is achieved through maintaining FlatBuffers' zero-copy philosophy at every level.
 
-- **Zero-Copy Writing (Both Modes)**: Both simple and expert modes maintain perfect zero-copy behavior. After serialization, `builder.finished_data()` returns a direct slice that's written to I/O without any intermediate copies. The performance differences between modes come mostly from trait dispatch overhead (~0.9ns per operation in simple mode) and memory management flexibility, not from data copying. NEEDS PROFILING TO CONFIRM
+- **Zero-Copy Writing (Both Modes)**: Both simple and expert modes maintain perfect zero-copy behavior. After serialization, `builder.finished_data()` returns a direct slice that's written to I/O without any intermediate copies. The performance differences between modes come mostly from trait dispatch overhead (~0.9ns per operation in simple mode) and memory management flexibility, not from data copying.
 - **Zero-Copy Reading**: `StreamReader` provides true zero-copy access through `process_all()` and `messages()` APIs. These deliver borrowed slices (`&[u8]`) directly from the read buffer - no allocations, no copies.
 - **FlatBuffers Philosophy**: The serialized format IS the wire format, and in some cases a suitable final storage format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths and a convenience writer method with optimized, but not ultimate performance.
-- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests are used to validate design choices and influence the development of the library with feature-gated criterion benchmarks for all library configurations. Real-world performance often exceeds documented benchmarks, with throughput tests consistently resulting in 15+ million messages/sec throughput on a modern mackbook pro.
+- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests are used to validate design choices and influence the development of the library with feature-gated criterion benchmarks for all library configurations. Real-world performance often exceeds documented benchmarks, with throughput tests consistently resulting in 15+ million messages/sec throughput on a modern macbook pro.
 
 ### Composability and Static Dispatch
 
@@ -106,7 +248,7 @@ writer.write_finished(&mut builder)?;
 
 - **Pros**: Multiple builders for different message types or size groups, better memory control, better performance for larger streams in length and message size
 - **Cons**: More verbose, requires understanding of FlatBuffers
-- **Performance**: Up to 2x faster for large messages, better memory efficiency
+- **Performance**: Greater performance potential through improved memory control
 
 > **📊 Zero-Copy Note**: Both simple and expert modes maintain perfect zero-copy behavior - data is never copied after serialization. Expert mode is recommended when you need multiple builders for different message sizes to avoid memory bloat, not because it's "more zero-copy."
 
@@ -115,7 +257,7 @@ writer.write_finished(&mut builder)?;
 The key differences between simple and expert mode are **NOT** about zero-copy (both are equally zero-copy):
 
 1. **Memory Flexibility**: Expert mode allows multiple builders for different message sizes
-2. **Performance with Large Messages**: Less trait dispatch overhead (up to 2x faster)
+2. **Performance with Large Messages**: Less trait dispatch overhead (can be verifiably faster)
 3. **Memory Efficiency**: Avoid builder bloat when mixing large and small messages
 4. **Builder Lifecycle Control**: Drop and recreate builders as needed for rare large messages
 
@@ -271,6 +413,44 @@ fn read_data(data: Vec<u8>) -> Result<()> {
 
     Ok(())
 }
+```
+
+### Verifying FlatBuffers payloads (recommended)
+
+Because the payload is a normal (non–size-prefixed) FlatBuffer, use the FlatBuffers verifier with `root_with_opts` to validate structure before accessing fields. Configure limits appropriate to your application. If you use size-prefixed FlatBuffers in other contexts, do not use size-prefixed verification here; FlatStream payloads are not size-prefixed.
+
+#### Typed verification (preferred)
+
+```rust
+use flatbuffers::VerifierOptions;
+// use your generated types, e.g. `use my_schema::MyMessage;`
+
+reader.process_all(|payload: &[u8]| {
+    // Configure verifier limits (examples shown; tune for your data)
+    let opts = VerifierOptions {
+        // max_depth: 64,
+        // max_tables: 1_000_000,
+        // max_bytes: Some(16 * 1024 * 1024),
+        ..Default::default()
+    };
+
+    let msg = flatbuffers::root_with_opts::<my_schema::MyMessage>(&opts, payload)?;
+    // use `msg` safely here
+    Ok(())
+})?;
+```
+
+#### Generic verification (also supported)
+
+```rust
+use flatbuffers::VerifierOptions;
+
+reader.process_all(|payload: &[u8]| {
+    let opts = VerifierOptions::default();
+    // Validate structure without a generated type
+    let _ = flatbuffers::root_with_opts::<flatbuffers::Table>(&opts, payload)?;
+    Ok(())
+})?;
 ```
 
 ### Advanced: Manual Iteration Control
@@ -430,23 +610,88 @@ match message {
 }
 ```
 
-### Migration Path
+## Comparative benchmarks (current snapshot: 2025/08/13)
 
-Start with simple mode and migrate to expert mode when you need more control:
+The following performance figures come from the criterion comparative benchmarks in this repo (feature `comparative_bench`), run on an ARM-based MacBook Pro. They reflect medians for the named groups. Results vary by hardware and workload.
 
-```rust
-// Step 1: Start simple
-writer.write(&event)?;
+### Simulated Telemetry Streams
 
-// Step 2: Profile and identify bottlenecks
-// If write performance is limiting...
+Test description (for the info below):
 
-// Step 3: Migrate to expert mode
-let mut builder = FlatBufferBuilder::new();
-builder.reset();
-event.serialize(&mut builder)?;
-writer.write_finished(&mut builder)?;
-```
+- Data: a simple telemetry event consisting of three fields: `u64 device_id`, `u64 timestamp`, `f64 value` (24 bytes payload per message).
+- Stream format: `DefaultFramer` adds a 4-byte little-endian length prefix. Variants shown are default read, unsafe read (alternate deframer), and `xxhash64` checksum.
+- Execution: in-memory buffers (`Vec<u8>`/`Cursor`), Criterion medians. Small dataset = 100 events; large dataset ≈ 100,000 events (~2.4 MiB payload, 24 B/event).
+
+- Small dataset (100 events):
+  - flatstream_default: 3.1051 µs (~32.2M msgs/s)
+  - flatstream_default_unsafe_read: 3.0955 µs (~32.3M msgs/s)
+  - flatstream_xxhash64: 3.5673 µs (~28.0M msgs/s)
+  - bincode: 3.5377 µs (~28.3M msgs/s)
+  - serde_json: 14.489 µs (~6.9M msgs/s)
+  - Observation: in this run, flatstream_default was ~12% faster than bincode and ~4.7× faster than serde_json. The unsafe read variant was within ~0.3% of the default.
+
+- Large dataset (~10MB):
+  - flatstream_default: 3.1521 ms (~31.7M msgs/s)
+  - flatstream_default_unsafe_read: 3.0167 ms (~33.1M msgs/s)
+  - flatstream_xxhash64: 3.5489 ms (~28.2M msgs/s)
+  - bincode: 3.2532 ms (~30.7M msgs/s)
+  - serde_json: 14.106 ms (~7.1M msgs/s)
+  - Observation: in this run, flatstream_default was ~3% faster than bincode and ~4.5× faster than serde_json. The unsafe read variant was ~4% faster than the default on this workload.
+
+Test notes:
+
+- These benches run entirely in memory using `Vec<u8>`/`Cursor`; they do not include filesystem or network effects. Figures are Criterion medians on the stated machine.
+- Throughput is reported as messages per second, computed from medians and the number of messages per iteration. Byte throughput is intentionally omitted due to framing overhead variability.
+- The unsafe-read variant changes only the deframing path; writing is identical to the default configuration. Minor variance across runs is expected (power/thermal state, background load).
+
+Checksum configurations add predictable overhead relative to the default framer in these tests:
+
+- XXHash64: ~12–13%
+- CRC32: ~23–25%
+- CRC16: ~150%
+
+Read path alternatives:
+
+- The suite also includes focused read-path benchmarks that swap only the deframer implementation on the same input buffer.
+- Median times measured:
+  - Read Path Implementations:
+    - DefaultDeframer: 416.11 ns
+    - UnsafeDeframer: 397.97 ns
+    - SafeTakeDeframer: 1.0354 µs
+    - Observation: in this micro-benchmark, `UnsafeDeframer` was ~4–5% faster than the default.
+  - Deframer Micro-Benchmark (buffer initialization):
+    - DefaultDeframer (zeroing): 43.794 ns
+    - UnsafeDeframer (no zeroing): 44.190 ns
+    - Observation: within noise; default was slightly faster here.
+  - Deframer sustained throughput (1000 messages):
+    - DefaultDeframer (zeroing): 66.465 µs
+    - UnsafeDeframer (no zeroing): 66.943 µs
+    - Observation: within ~1% in this run.
+
+
+### Simple streams (primitive types)
+
+Brief test description:
+
+- Data shapes: Minimal numeric (3×u64) and fixed string (16 ASCII bytes)
+- Setup: 100 messages per iteration, in-memory buffers, Criterion medians
+- Comparators: flatstream (default read, unsafe read), bincode, serde_json; bincode/serde_json use a 4-byte length prefix for fairness
+
+- Simple Streams (Numeric)/write_read_cycle_100 (messages/sec, median time):
+  - flatstream_default: ~32.1M (3.1163 µs)
+  - flatstream_default_unsafe_read: ~31.6M (3.1666 µs)
+  - bincode: ~28.9M (3.4559 µs)
+  - serde_json: ~10.6M (9.3950 µs)
+
+- Simple Streams (String16)/write_read_cycle_100 (messages/sec, median time):
+  - flatstream_default: ~47.0M (2.1278 µs)
+  - flatstream_default_unsafe_read: ~47.7M (2.0993 µs)
+  - bincode: ~14.2M (7.0211 µs)
+  - serde_json: ~10.4M (9.6035 µs)
+
+- Read-only deframer isolation (100 prewritten messages, messages/sec; median time):
+  - Numeric: default ~226M (442.57 ns), unsafe ~239M (419.33 ns)
+  - String16: default ~208M (480.18 ns), unsafe ~224M (445.18 ns)
 
 ### Performance Checklist
 

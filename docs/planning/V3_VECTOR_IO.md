@@ -424,3 +424,42 @@ Vectored I/O represents a natural evolution for `flatstream-rs`, providing signi
 - **Backwards compatible migration path**
 
 This enhancement positions `flatstream-rs` as the definitive high-performance FlatBuffers streaming solution for Rust.
+
+## Review Notes (v0.2.7)
+
+Mostly aligned, but a bit over-scoped. Here’s how I’d adjust it to be simpler, correct, and immediately valuable:
+
+- Vectored write (good, keep; tighten)
+  - Keep Phase 1: implement a `VectoredFramer` that emits `[len][payload]` with `write_vectored`.
+  - Critical fix: handle partial writes in a loop; don’t assume a single `write_vectored` completes the whole frame.
+  - Avoid shared internal buffers for checksums in `&self` (your plan mutated `self.checksum_buf`). Use a small stack array per call instead.
+  - Don’t add a new “FlatBufferFramer” trait yet; the current `Framer` is enough. Extra traits add surface area without immediate gain.
+
+- Vectored checksum framer (good, keep; tighten)
+  - Same partial-write loop requirement.
+  - Prepare up to three `IoSlice`s: length, checksum, payload. Compute checksum into a stack array; slice only the used bytes (0, 2, 4, 8).
+
+- Vectored read (defer)
+  - You must read the 4-byte length before you know the payload size. `readv` can’t help combine that first length read with the payload.
+  - After length is known, a single `read_exact` for the payload is optimal on most readers (and benefits from `BufRead` internally).
+  - Conclusion: vectored read gives little benefit here; keep current two-step read (length, then payload). Defer “vectored deframer.”
+
+- Batch writer (nice to have, but defer)
+  - Useful, but non-trivial: you must manage iovec limits (e.g., UIO_MAXIOV), partial batch writes, and metadata lifetimes.
+  - Your sketch uses `write_vectored_all`, which doesn’t exist in std; you’ll need a robust loop. Also avoid `unsafe` with better metadata management.
+  - Ship single-message vectored first; add batch once benchmarks justify it.
+
+- Correctness notes to fix in the doc
+  - Atomicity: `writev` is not generally atomic across slices. Remove “all-or-nothing” claims; only certain cases (e.g., small pipes) are atomic.
+  - Platform caveats: `Write::write_vectored` may fall back to multiple `write` calls unless the underlying writer (e.g., `File`) overrides it. State this; it’s still beneficial where supported.
+  - Benchmarks: reframe claims as targets; include real measurements post-implementation.
+
+- API shape
+  - Keep changes additive: new `VectoredFramer` and `VectoredChecksumFramer` behind a feature flag if desired.
+  - No deprecations yet. Consider making vectored the default only after benchmarks across platforms and backends (File, TcpStream, BufWriter) show clear wins.
+
+- Zero-copy and style fit
+  - Plan as trimmed above fits your zero-copy philosophy and composable adapters.
+  - Minimal new types; no extra traits; solid partial-write handling; per-call stack buffers for checksum bytes.
+
+In short: the core idea (vectored write) is good and aligned. Trim Phase 1 to “single-frame writev with a correct loop,” defer vectored read and batch writer, and fix the atomicity/mutability details. This yields immediate, low-risk wins without complexity creep.
