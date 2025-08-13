@@ -5,6 +5,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
     self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
+    UnsafeDeframer,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
@@ -90,6 +91,30 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
 
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut count = 0;
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
+            black_box(count);
+        });
+    });
+
+    // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    group.bench_function("flatstream_default_unsafe_read", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            // Write phase
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
+            for event in &events {
+                writer.write(event).unwrap();
+            }
+            black_box(&buffer);
+
+            // Read phase (unsafe deframer)
+            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -278,7 +303,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
 }
 
 fn benchmark_alternatives_large(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Large Dataset (~10MB)");
+    let mut group = c.benchmark_group("Large Dataset (~2.4 MiB)");
 
     // Create test data - approximately 10MB of telemetry events
     // Each event is roughly 100 bytes, so we need about 100,000 events
@@ -303,6 +328,30 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
 
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut count = 0;
+            reader
+                .process_all(|_payload| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
+            black_box(count);
+        });
+    });
+
+    // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    group.bench_function("flatstream_default_unsafe_read", |b| {
+        b.iter(|| {
+            let mut buffer = Vec::new();
+            // Write phase
+            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
+            for event in &events {
+                writer.write(event).unwrap();
+            }
+            black_box(&buffer);
+
+            // Read phase (unsafe deframer)
+            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
             let mut count = 0;
             reader
                 .process_all(|_payload| {
