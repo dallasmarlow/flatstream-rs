@@ -1,6 +1,6 @@
 [package]
 name = "flatstream"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["Dallas Marlow <dallas@example.com>"]
 description = "High-performance FlatBuffers streaming with data integrity"
@@ -74,3 +74,12 @@ harness = false
 [[bench]]
 name = "sustained_performance_benchmark"
 harness = false
+
+[[bench]]
+name = "adapters_micro"
+harness = false
+
+[[bench]]
+name = "simple_benchmarks"
+harness = false
+required-features = ["comparative_bench"]
