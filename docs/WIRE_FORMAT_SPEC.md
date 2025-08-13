@@ -1,7 +1,6 @@
 # Wire Format Specification: flatstream-rs
 
-**Version:** 1.0  
-**Status:** Implemented  
+**Status:** Implemented / Verified (v0.2.7)  
 **Author:** Dallas Marlow  
 **Date:** 2025-08-12
 
