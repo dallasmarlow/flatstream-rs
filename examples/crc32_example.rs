@@ -1,6 +1,10 @@
-use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
+
+#[cfg(feature = "crc32")]
+use flatbuffers::FlatBufferBuilder;
+#[cfg(feature = "crc32")]
 use std::fs::File;
+#[cfg(feature = "crc32")]
 use std::io::{BufReader, BufWriter};
 
 // Import the framing types directly since we need them for CRC32
