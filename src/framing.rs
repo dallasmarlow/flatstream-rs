@@ -304,9 +304,10 @@ impl Deframer for UnsafeDeframer {
         buffer: &mut Vec<u8>,
         payload_len: usize,
     ) -> Result<Option<()>> {
-        buffer.clear();
+        // Only grow the buffer if current capacity is insufficient.
         if buffer.capacity() < payload_len {
-            buffer.reserve(payload_len - buffer.capacity());
+            // Reserve just enough additional capacity to reach payload_len.
+            buffer.reserve(payload_len - buffer.len());
         }
         unsafe {
             buffer.set_len(payload_len);

@@ -113,6 +113,7 @@ where
     /// writer.write(&"Hello, world!")?;
     /// writer.write(&my_telemetry_event)?;
     /// ```
+    #[inline]
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
         // Reset the internal builder for reuse
         self.builder.reset();
