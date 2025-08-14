@@ -99,20 +99,37 @@ The following ~20-line Go function reads a single frame from a `bufio.Reader`. S
 
 ```go
 package wirefmt
-import ( "bufio"; "encoding/binary"; "hash/crc32"; "io" )
+
+import (
+    "bufio"
+    "encoding/binary"
+    "errors"
+    "hash/crc32"
+    "io"
+)
+
+var crc32c = crc32.MakeTable(crc32.Castagnoli)
+
 func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
     var lenLE [4]byte
     if _, err := io.ReadFull(r, lenLE[:]); err != nil { return nil, err }
     n := binary.LittleEndian.Uint32(lenLE[:])
+
     var exp uint32
     if withCRC32 {
         var c [4]byte
         if _, err := io.ReadFull(r, c[:]); err != nil { return nil, err }
         exp = binary.LittleEndian.Uint32(c[:])
     }
+
     buf := make([]byte, n)
     if _, err := io.ReadFull(r, buf); err != nil { return nil, err }
-    if withCRC32 && crc32.ChecksumIEEE(buf) != exp { return nil, io.ErrUnexpectedEOF }
+
+    if withCRC32 {
+        if crc32.Checksum(buf, crc32c) != exp {
+            return nil, errors.New("checksum mismatch")
+        }
+    }
     return buf, nil
 }
 ```

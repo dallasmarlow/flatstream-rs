@@ -50,7 +50,6 @@ critcmp v2_final v2_5_implementation
 - **Write Performance**: Default framer, XXHash64, CRC32, CRC16 checksums
 - **Read Performance**: Default deframer, XXHash64, CRC32, CRC16 checksums  
 - **Zero-Allocation Reading**: High-performance pattern comparison
-- **Write Batching**: Batch vs iterative performance comparison
 - **End-to-End Cycles**: Complete write-read cycle performance
 - **Parameterized Checksum Comparison**: Direct performance comparison across checksum algorithms
 
@@ -65,8 +64,8 @@ critcmp v2_final v2_5_implementation
 - **Instruction Cache Pressure**: Tests binary size and cache efficiency
 
 ### 4. Comparative Benchmarks
-- **vs Bincode**: Length-prefixed serialization comparison
-- **vs Protobuf**: Length-delimited encoding comparison
+- **vs Bincode / Serde JSON**: Length-prefixed serialization comparison (implemented)
+- **vs Protobuf**: Length-delimited encoding comparison (future work)
 
 ### 5. **v2.5-Specific Benchmarks**
 - **External Builder Performance**: Validate zero-allocation write patterns
@@ -291,16 +290,16 @@ The comparative benchmarks are structured in `benches/benchmarks.rs` and provide
 
 ### Basic Benchmark Commands
 ```bash
-# Run all benchmarks
-cargo bench
+# 1) Core suite (flatstream-only benches)
+cargo bench | tee bench_results.txt
 
-# Run with all checksum algorithms
-cargo bench --features all_checksums
+# 2) Comparative suite (flatstream vs bincode/serde_json)
+cargo bench --features comparative_bench --bench comparative_benchmarks | tee bench_results.comparative.txt
 
-# Run specific benchmark groups
-cargo bench --bench benchmarks -- regression_small_messages
+# 3) Simple streams suite (primitive types, plus read-only deframer isolation)
+cargo bench --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt
 
-# Save baseline for comparison
+# Save a baseline for comparison
 cargo bench -- --save-baseline my_baseline
 
 # Compare baselines

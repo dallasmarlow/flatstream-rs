@@ -64,7 +64,6 @@ optional = true
 
 [features]
 default = []
-async = ["tokio"]           # Planned feature - not yet implemented
 xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
 crc16 = ["dep:crc16"]

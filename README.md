@@ -53,10 +53,10 @@ fn main() -> Result<()> {
         let s = b.create_string("hello flatstream");
         b.finish(s, None);
         stream.write_finished(&mut b)?;
-        stream.flush()?;
+        stream.flush()?; // Ensure all data is written
     }
 
-    // Read it back (payload provided as &[_])
+    // Read it back (payload provided as &[u8])
     let reader = BufReader::new(Cursor::new(bytes));
     let mut stream = StreamReader::new(reader, DefaultDeframer);
     stream.process_all(|payload| {
@@ -166,7 +166,18 @@ The library's current architecture is the direct result of the performance-drive
 
 ## Architecture and Design Principles
 
-FlatStream is designed around composability and zero-cost abstractions to solve common streaming challenges with a focus on zero-copy behaivor and performance.
+FlatStream is designed around composability and zero-cost abstractions to solve common streaming challenges with a focus on zero-copy behavior and performance.
+
+### Performance: Zero-Copy Throughout
+
+Performance is achieved by maintaining the FlatBuffers zero-copy philosophy at every level.
+
+- ***Zero-Copy Writing:*** Both simple and expert modes are zero-copy. After serialization, builder.finished_data() returns a direct slice that is written to I/O without any intermediate copies.
+- ***Zero-Copy Reading:*** The StreamReader provides true zero-copy access through its process_all() and messages() APIs, which deliver borrowed slices (&[u8]) directly from the internal read buffer.
+- **FlatBuffers Philosophy**: The serialized format IS the wire format, and in some cases a suitable final storage format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths and a convenience writer method with optimized, but not ultimate performance.
+- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests validate design choices with feature-gated Criterion benchmarks across configurations. Real-world performance often exceeds documented benchmarks, with workloads operating at tens of millions of messages per-second for full processing.
+
+FlatStream solves common streaming challenges by adhering to a few core principles:
 
 ### Composability and Static Dispatch
 
@@ -176,46 +187,13 @@ The library utilizes a trait-based Strategy Pattern to separate concerns:
 - ***Framer / Deframer:*** Defines the wire/file format (e.g., DefaultFramer or ChecksumFramer).
 - ***Checksum:*** Defines the algorithm used for data integrity (e.g., XxHash64, Crc32).
 
-The core types (StreamWriter/StreamReader) are generic over these traits. This allows the Rust compiler to use monomorphization, resulting in static dispatch in many cases and avoiding the overhead of dynamic dispatch (vtable lookups) on the critical path.
-
-
-### Performance: Zero-Copy Throughout
-
-Performance is achieved by maintaining the FlatBuffers zero-copy philosophy at every level.
-
-- ***Zero-Copy Writing:*** Both simple and expert modes are zero-copy. After serialization, builder.finished_data() returns a direct slice that is written to I/O without any intermediate copies.
-- ***Zero-Copy Reading:*** The StreamReader provides true zero-copy access through its process_all() and messages() APIs, which deliver borrowed slices (&[u8]) directly from the internal read buffer.
-
-FlatStream solves common streaming challenges by adhering to a few core principles:
-
-- ***Composability and Static Dispatch:*** The library is built on a trait-based Strategy Pattern (Framer, Deframer, Checksum). This allows the Rust compiler to use monomorphization to create specialized, optimized code for your specific configuration, eliminating runtime overhead.
+The core types (`StreamWriter`/`StreamReader`) are generic over these traits. This allows the Rust compiler to use monomorphization, resulting in static dispatch in many cases and avoiding the overhead of dynamic dispatch (vtable lookups) on the critical path.
 
 - ***Zero-Copy by Default:*** The library is designed to maintain FlatBuffers' zero-copy philosophy. The StreamReader provides true zero-copy access to data via borrowed slices (&[u8]), eliminating memory allocations and copies on the read path.
 
 - ***Pragmatic Performance:*** The StreamWriter offers two modes: a simple, convenient API for common use cases, and an expert-level API that provides fine-grained control over the FlatBufferBuilder lifecycle. This allows developers to avoid common performance pitfalls like memory bloat when dealing with mixed message sizes.
 
-## Architecture and Design Principles
-
-The library is designed around composability and zero-cost abstractions to maximize performance in demanding and/or resource constrained environments.
-
-### Performance: Zero-Copy Throughout
-
-Performance is achieved through maintaining FlatBuffers' zero-copy philosophy at every level.
-
-- **Zero-Copy Writing (Both Modes)**: Both simple and expert modes maintain perfect zero-copy behavior. After serialization, `builder.finished_data()` returns a direct slice that's written to I/O without any intermediate copies. The performance differences between modes come mostly from trait dispatch overhead (~0.9ns per operation in simple mode) and memory management flexibility, not from data copying.
-- **Zero-Copy Reading**: `StreamReader` provides true zero-copy access through `process_all()` and `messages()` APIs. These deliver borrowed slices (`&[u8]`) directly from the read buffer - no allocations, no copies.
-- **FlatBuffers Philosophy**: The serialized format IS the wire format, and in some cases a suitable final storage format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths and a convenience writer method with optimized, but not ultimate performance.
-- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests are used to validate design choices and influence the development of the library with feature-gated criterion benchmarks for all library configurations. Real-world performance often exceeds documented benchmarks, real workloads operating at 10s of millions of messages per-second for full processing.
-
-### Composability and Static Dispatch
-
-The library utilizes a trait-based Strategy Pattern to separate concerns:
-
-- **`StreamSerialize`**: Defines how user data is serialized into the FlatBufferBuilder.
-- **`Framer` / `Deframer`**: Defines the wire/file format (e.g., `DefaultFramer` or `ChecksumFramer`).
-- **`Checksum`**: Defines the algorithm used for data integrity (e.g., `XxHash64`, `Crc32`).
-
-The core types (`StreamWriter`/`StreamReader`) are generic over these traits. This allows the Rust compiler to use monomorphization, resulting in static dispatch and eliminating the overhead of dynamic dispatch (vtable lookups) on the critical path.
+ 
 
 ## Writing Modes: Simple vs Expert
 
@@ -229,8 +207,8 @@ let mut writer = StreamWriter::new(file, DefaultFramer);
 writer.write(&"Hello, world!")?;  // Internal builder management
 ```
 
-- **Pros**: Zero configuration, automatic optimized builder reuse to avoid unnecessary heap allcoations and memory copy operations, easy to use
-- **Cons**: Single internal builder can cause memory bloat with mixed sizes due to the FlatBuffers default grow-downward allocator behaivor
+- **Pros**: Zero configuration, automatic optimized builder reuse to avoid unnecessary heap allocations and memory copy operations, easy to use
+- **Cons**: Single internal builder can cause memory bloat with mixed sizes due to the FlatBuffers default grow-downward allocator behavior
 - **Performance**: Excellent for uniform messages (within 0-25% of expert mode)
 
 ### Expert Mode - Self Managed FlatBuffers Builder(s)
@@ -261,7 +239,7 @@ The key differences between simple and expert mode are **NOT** about zero-copy (
 3. **Memory Efficiency**: Avoid builder bloat when mixing large and small messages
 4. **Builder Lifecycle Control**: Drop and recreate builders as needed for rare large messages
 
-The performance overhead in simple mode (0-25%, or ~0.9ns per operation) comes from trait dispatch through the `StreamSerialize` trait, not from copying data. Expert mode avoids this trait dispatch by calling `write_finished()` directly with pre-serialized data.
+The performance overhead in simple mode (0–25%) comes primarily from trait dispatch through the `StreamSerialize` trait, not from copying data. Expert mode avoids this trait dispatch by calling `write_finished()` directly with pre-serialized data. See the benchmark sections below for context and exact test descriptions.
 
 ## Installation
 
@@ -270,7 +248,7 @@ Add `flatstream` and the `flatbuffers` dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
 flatbuffers = "24.3.25" # Use the appropriate version
-flatstream = "0.2.6"
+flatstream = "0.2.7"
 ```
 
 ### Feature Flags
@@ -285,7 +263,7 @@ Data integrity checks (checksums) are optional and managed via feature flags.
 ```toml
 [dependencies]
 # Example: Installing with XxHash support
-flatstream = { version = "0.2.6", features = ["xxhash"] }
+flatstream = { version = "0.2.7", features = ["xxhash"] }
 ```
 
 For comprehensive testing with all checksums enabled:
@@ -315,19 +293,16 @@ impl StreamSerialize for TelemetryData {
         &self,
         builder: &mut FlatBufferBuilder<A>
     ) -> Result<()> {
-        // This is where you use your FlatBuffers generated code.
-        // Example:
-        // let label = builder.create_string(&self.label);
-        // let mut msg_builder = MyMessageBuilder::new(builder);
-        // msg_builder.add_timestamp(self.timestamp);
-        // msg_builder.add_label(label);
-        // let offset = msg_builder.finish();
+        // In a real application, you would use your FlatBuffers generated code here.
+        let label = builder.create_string(&self.label);
+        // For this example, we just serialize the label.
+        // builder.start_table();
+        // builder.add_slot_scalar(field_offset, self.timestamp, 0);
+        // builder.add_slot_offset(field_offset, label);
+        // let offset = builder.end_table();
 
-        // Simplified for demonstration: we just serialize the label.
-        let offset = builder.create_string(&self.label);
-
-        // Crucial: You must call finish() within serialize.
-        builder.finish(offset, None);
+        // Crucial: You must call finish() within your serialize implementation.
+        builder.finish(label, None);
         Ok(())
     }
 }
@@ -343,6 +318,10 @@ use flatstream::{StreamWriter, DefaultFramer, Result};
 use std::io::BufWriter;
 use std::fs::File;
 
+// Assuming TelemetryData from the previous example
+# struct TelemetryData { timestamp: u64, label: String };
+# impl StreamSerialize for TelemetryData { fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> { Ok(()) } }
+
 fn write_simple() -> Result<()> {
     let file = File::create("telemetry.bin")?;
     let writer = BufWriter::new(file);  // Always use buffered I/O!
@@ -353,7 +332,7 @@ fn write_simple() -> Result<()> {
         label: "temp_sensor_1".to_string(),
     };
 
-    // Simple: The writer manages the builder internally
+    // Simple: The writer manages the builder internally.
     stream_writer.write(&data)?;
     stream_writer.flush()?;
     Ok(())
@@ -363,27 +342,63 @@ fn write_simple() -> Result<()> {
 #### Expert Mode (Recommended for Production)
 ```rust
 use flatbuffers::FlatBufferBuilder;
+use flatstream::{StreamWriter, DefaultFramer, Result, StreamSerialize};
+use std::io::BufWriter;
+use std::fs::File;
+
+// Assuming TelemetryData from the previous example
+# struct TelemetryData { timestamp: u64, label: String };
+# impl StreamSerialize for TelemetryData { fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> { let s = builder.create_string(&self.label); builder.finish(s, None); Ok(()) } }
 
 fn write_expert() -> Result<()> {
-    let file = File::create("telemetry.bin")?;
+    let file = File::create("telemetry_expert.bin")?;
     let writer = BufWriter::new(file);
     let mut stream_writer = StreamWriter::new(writer, DefaultFramer);
-    
-    // Manage builder externally for maximum performance
+
+    // Manage builder externally for maximum performance.
     let mut builder = FlatBufferBuilder::new();
 
-    for i in 0..1000 {
-        let data = TelemetryData {
-            timestamp: 1659373987 + i,
-            label: format!("sensor_{}", i),
-        };
+    let data = TelemetryData {
+        timestamp: 1659373987,
+        label: "temp_sensor_1".to_string(),
+    };
 
-        // Expert: Full control over builder lifecycle
-        builder.reset();  // Reuse allocated memory
-        data.serialize(&mut builder)?;
-        stream_writer.write_finished(&mut builder)?;
-    }
+    // Expert: Full control over builder lifecycle.
+    builder.reset();  // Reuse allocated memory.
+    data.serialize(&mut builder)?;
+    stream_writer.write_finished(&mut builder)?;
 
+    stream_writer.flush()?;
+    Ok(())
+}
+```
+
+// Schema-typed expert-mode example (representative FlatBuffers usage)
+```rust
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{StreamWriter, DefaultFramer, Result};
+use std::io::BufWriter;
+use std::fs::File;
+
+// Replace `my_schema` and `Event` with your generated module and root table
+fn write_typed() -> Result<()> {
+    let file = File::create("telemetry_typed.bin")?;
+    let writer = BufWriter::new(file);
+    let mut stream_writer = StreamWriter::new(writer, DefaultFramer);
+
+    let mut b = FlatBufferBuilder::new();
+    b.reset();
+    let label = b.create_string("temp_sensor_1");
+    let event = my_schema::Event::create(
+        &mut b,
+        &my_schema::EventArgs {
+            timestamp: 1659373987,
+            label: Some(label),
+            value: 42.0,
+        },
+    );
+    b.finish(event, None);
+    stream_writer.write_finished(&mut b)?;
     stream_writer.flush()?;
     Ok(())
 }
@@ -401,12 +416,10 @@ fn read_data(data: Vec<u8>) -> Result<()> {
     let reader_backend = Cursor::new(data);
     let mut reader = StreamReader::new(reader_backend, DefaultDeframer);
 
-    // High-performance, zero-copy processing
+    // High-performance, zero-copy processing using the process_all API.
     reader.process_all(|payload: &[u8]| {
-        // 'payload' is a slice pointing directly to the FlatBuffer message in the internal buffer.
-        // You can now access the data using FlatBuffers verification/accessors.
-        // Example: let msg = flatbuffers::root::<MyMessage>(payload).unwrap();
-
+        // 'payload' is a slice pointing directly to the FlatBuffer message
+        // in the reader's internal buffer. No data has been copied.
         println!("Read message of {} bytes.", payload.len());
         Ok(())
     })?;
@@ -474,10 +487,9 @@ To protect against data corruption, use the `ChecksumFramer` and `ChecksumDefram
 ```rust
 #[cfg(feature = "xxhash")]
 {
-    use flatstream::{
-        StreamWriter, ChecksumFramer, XxHash64, Result
-    };
-    use std::io::Cursor;
+    use flatstream::{StreamWriter, ChecksumFramer, XxHash64, Result};
+    use flatbuffers::FlatBufferBuilder;
+    use std::io::{BufWriter, Cursor};
 
     fn write_protected() -> Result<()> {
         // 1. Define the checksum strategy (requires 'xxhash' feature)
@@ -486,11 +498,19 @@ To protect against data corruption, use the `ChecksumFramer` and `ChecksumDefram
         // 2. Create the framer
         let framer = ChecksumFramer::new(checksum_alg);
 
-        // 3. Initialize the Writer
+        // 3. Initialize the Writer with a buffer
         let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+        let writer = BufWriter::new(Cursor::new(&mut buffer));
+        let mut stream_writer = StreamWriter::new(writer, framer);
 
-        writer.write(&"A protected message")?;
+        // 4. Use the expert mode pattern to write a message
+        let mut builder = FlatBufferBuilder::new();
+        builder.reset();
+        let offset = builder.create_string("A protected message");
+        builder.finish(offset, None);
+        stream_writer.write_finished(&mut builder)?;
+        stream_writer.flush()?;
+        
         Ok(())
     }
 }
@@ -608,6 +628,24 @@ match message {
         // Could even drop file_builder here to free memory
     }
 }
+```
+
+### Migration Path
+
+Start with simple mode and migrate to expert mode when you need more control:
+
+```rust
+// Step 1: Start simple
+writer.write(&event)?;
+
+// Step 2: Profile and identify bottlenecks
+// If write performance is limiting...
+
+// Step 3: Migrate to expert mode
+let mut builder = FlatBufferBuilder::new();
+builder.reset();
+event.serialize(&mut builder)?;
+writer.write_finished(&mut builder)?;
 ```
 
 ### Performance Checklist

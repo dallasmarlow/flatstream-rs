@@ -1,8 +1,8 @@
-# Benchmark Comparison: V1 vs V2 Performance Analysis
+# Benchmark Comparison: Current Benchmarks and How to Reproduce
 
 ## Overview
 
-This document outlines the exact methodology and results of comparing the performance between the v1 (monolithic, enum-based) and v2 (trait-based, composable) architectures of `flatstream-rs`. The analysis was conducted to identify any performance regressions introduced during the architectural refactoring.
+This document outlines how to reproduce the current benchmark results in this repository and how to interpret them. It supersedes older v1 vs v2 narratives with concrete, runnable benchmark groups present in `benches/`.
 
 ## Initial Hypothesis
 
@@ -23,22 +23,17 @@ git log --oneline --graph --all
 # Identified commit: b2f60e4 "Initial impl"
 ```
 
-### Step 2: Establish V1 Performance Baseline
+### Step 2: Run Current Benchmarks (present in this repo)
 
 ```bash
-# Checkout v1 codebase
-git checkout b2f60e4
+# 1) Core suite (flatstream-only benches)
+cargo bench | tee bench_results.txt
 
-# Run v1 benchmarks
-cargo bench | grep -E "(write_with|read_with)" | head -4
-```
+# 2) Comparative suite (flatstream vs bincode/serde_json)
+cargo bench --features comparative_bench --bench comparative_benchmarks | tee bench_results.comparative.txt
 
-**V1 Results:**
-```
-write_with_checksum     time:   [19.238 µs 19.750 µs 20.639 µs]
-write_without_checksum  time:   [18.570 µs 18.740 µs 18.941 µs]
-read_with_checksum      time:   [2.3652 µs 2.3708 µs 2.3765 µs]
-read_without_checksum   time:   [2.2219 µs 2.2297 µs 2.2378 µs]
+# 3) Simple streams suite (primitive types, plus read-only deframer isolation)
+cargo bench --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt
 ```
 
 ### Step 3: Establish V2 Performance Baseline
@@ -51,24 +46,19 @@ git checkout main
 cargo bench | grep -E "(write_default_framer|read_default_deframer)" | head -4
 ```
 
-**V2 Results:**
-```
-write_default_framer_100_messages: 3.0M iterations
-read_default_deframer_100_messages: 2.4M iterations
-```
+The benches emit Criterion medians and iteration counts for named groups such as:
+- `write_default_framer_100_messages`
+- `read_default_deframer_100_messages`
+- `zero_allocation_reading_100_messages`
+- Comparative: `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
 
 ## Critical Discovery: Benchmark Differences
 
-### ❌ Initial Analysis Error
+### Notes on Interpreting Results
 
-The initial analysis was **fundamentally flawed** because the benchmarks were **completely different**:
-
-| Aspect | V1 | V2 |
-|--------|----|----|
-| **Messages per iteration** | 100 messages | 100 messages |
-| **API** | `writer.write_message(&mut builder)` | `writer.write(&message)` |
-| **Data preparation** | Creates FlatBuffer in each iteration | Pre-creates messages once |
-| **Test data** | `create_test_message(&mut builder, i)` | `create_test_messages(SMALL_MESSAGE_COUNT)` |
+- Use the median (middle) value reported by Criterion.
+- Convert medians to messages/sec for the write/read cycle groups using: msgs_per_sec ≈ 100 / median_seconds.
+- Comparative benches run entirely in memory and exclude disk/network effects.
 
 ### 🔍 Root Cause Analysis
 
@@ -161,16 +151,15 @@ large_messages_50_messages
                         time:   [1.2701 µs 1.2896 µs 1.3087 µs]
 ```
 
-### **📈 Definitive Performance Comparison**
+### Regressions and Baselines
 
-| Operation | V1 Performance | V2 Performance | Improvement |
-|-----------|----------------|----------------|-------------|
-| **Write (100 messages)** | 16.508 µs | 1.7603 µs | **~89% faster** |
-| **Read (100 messages)** | 2.2792 µs | 2.1625 µs | **~5% faster** |
-| **Write-Read Cycle (50 messages)** | 10.306 µs | 4.4290 µs | **~57% faster** |
-| **High-Frequency Write (1000 messages)** | 179.14 µs | 17.358 µs | **~90% faster** |
-| **High-Frequency Read (1000 messages)** | 21.826 µs | 4.4336 µs | **~80% faster** |
-| **Large Messages (50 messages)** | 12.033 µs | 1.2896 µs | **~89% faster** |
+Save and compare baselines to detect changes over time:
+
+```bash
+cargo bench -- --save-baseline baseline_prev
+cargo bench -- --save-baseline baseline_new
+critcmp baseline_prev baseline_new
+```
 
 ## Key Findings
 

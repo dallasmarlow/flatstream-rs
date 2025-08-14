@@ -26,7 +26,10 @@ pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
 
 **Expert Mode:**
 ```rust
-pub fn write_finished(&mut self, builder: &mut FlatBufferBuilder) -> Result<()> {
+pub fn write_finished<A: flatbuffers::Allocator>(
+    &mut self,
+    builder: &mut FlatBufferBuilder<A>,
+) -> Result<()> {
     let payload = builder.finished_data();         // Get &[u8] slice - NO COPY
     self.framer.frame_and_write(&mut self.writer, payload)  // Write slice directly
 }
@@ -42,16 +45,20 @@ NOT from copying data!
 ### Reading: Perfect Zero-Copy
 
 ```rust
+use flatbuffers::VerifierOptions;
+
 // process_all API - zero-copy by design
 reader.process_all(|payload: &[u8]| {
     // payload is a direct slice into reader's buffer - NO COPY
-    let event = flatbuffers::get_root::<MyEvent>(payload);
+    let opts = VerifierOptions::default();
+    let _event = flatbuffers::root_with_opts::<MyEvent>(&opts, payload)?;
     Ok(())
 })?;
 
 // messages() API - also zero-copy
-for payload in reader.messages() {
-    let payload = payload?;  // Still &[u8], no allocation
+let mut msgs = reader.messages();
+while let Some(payload) = msgs.next()? {
+    // Still &[u8], no allocation
 }
 ```
 
