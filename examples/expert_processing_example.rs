@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry_file = "expert_telemetry_stream.bin";
 
     println!("=== Expert Processing Example (v2.5) ===");
-    println!("Writing telemetry events to: {}", telemetry_file);
+    println!("Writing telemetry events to: {telemetry_file}");
 
     // Create the telemetry stream file
     let file = File::create(telemetry_file)?;
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Ensure all data is written to disk
     stream_writer.flush()?;
-    println!("Generated {} telemetry events", event_count);
+    println!("Generated {event_count} telemetry events");
 
     // Now demonstrate the expert reading patterns
     println!("\n=== Reading Telemetry Data ===");
@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         })?;
 
-        println!("  Processed {} events", count);
+        println!("  Processed {count} events");
         if count > 0 {
             println!("  Average speed: {:.1} km/h", total_speed / count as f32);
             println!("  Average RPM: {:.0}", total_rpm / count as f32);
@@ -173,18 +173,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Check for alert conditions
                 if data_str.contains("temp_c=5") || data_str.contains("battery=1") {
                     alerts += 1;
-                    println!("  Alert #{}: {}", alerts, data_str);
+                    println!("  Alert #{alerts}: {data_str}");
                 }
 
                 // Stop after processing first 10 events for demonstration
                 if count >= 10 {
-                    println!("  Stopped after {} events (demonstration)", count);
+                    println!("  Stopped after {count} events (demonstration)");
                     break;
                 }
             }
         }
 
-        println!("  Processed {} events, found {} alerts", count, alerts);
+        println!("  Processed {count} events, found {alerts} alerts");
     }
 
     // Pattern 3: Real-time processing simulation
@@ -218,17 +218,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Process every 10th event for demonstration
                 if count % 10 == 0 {
                     println!(
-                        "  Processed {} events (high_speed: {}, low_battery: {})",
-                        count, high_speed_events, low_battery_events
+                        "  Processed {count} events (high_speed: {high_speed_events}, low_battery: {low_battery_events})"
                     );
                 }
             }
             Ok(())
         })?;
 
-        println!("  Final stats: {} total events", count);
-        println!("  High speed events: {}", high_speed_events);
-        println!("  Low battery events: {}", low_battery_events);
+        println!("  Final stats: {count} total events");
+        println!("  High speed events: {high_speed_events}");
+        println!("  Low battery events: {low_battery_events}");
     }
 
     println!("\n=== Expert Processing Example Complete ===");

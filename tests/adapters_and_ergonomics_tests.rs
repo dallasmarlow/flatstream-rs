@@ -252,8 +252,8 @@ fn fluent_bounded_equivalence_framer() {
 #[test]
 fn fluent_bounded_equivalence_deframer() {
     // Create a frame with payload length 6
-    let data_bad = make_frame(&vec![1u8; 6]);
-    let data_ok = make_frame(&vec![2u8; 5]);
+    let data_bad = make_frame(&[1u8; 6]);
+    let data_ok = make_frame(&[2u8; 5]);
 
     let manual = BoundedDeframer::new(DefaultDeframer, 5);
     let fluent = DefaultDeframer.bounded(5);

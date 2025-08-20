@@ -664,3 +664,27 @@ flatstream-rs/
 **Performance**: Optimized for production  
 **Documentation**: Comprehensive  
 **Ready for**: Production telemetry agent integration
+
+## Developer maintenance CLI commands
+
+Run these from the repository root to maintain formatting and lint cleanliness during development:
+
+### Formatting
+```bash
+cargo fmt --all
+```
+
+### Apply machine-applicable Clippy fixes
+```bash
+cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
+```
+
+### Apply compiler-suggested fixes
+```bash
+cargo fix --all-targets --allow-dirty
+```
+
+### Strict lint pass (treat warnings as errors)
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```

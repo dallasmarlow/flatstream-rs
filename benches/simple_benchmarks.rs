@@ -11,7 +11,7 @@ use flatstream::{
 use std::io::{Cursor, Read, Write};
 
 #[cfg(feature = "comparative_bench")]
-use {bincode, serde::Deserialize, serde::Serialize, serde_json};
+use serde::{Deserialize, Serialize};
 
 // Data shapes
 

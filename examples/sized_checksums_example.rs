@@ -168,7 +168,7 @@ fn demonstrate_checksum_sizes(
         writer.flush()?;
 
         let file_size = std::fs::metadata("small_messages_crc16.bin")?.len();
-        println!("     File size: {} bytes", file_size);
+        println!("     File size: {file_size} bytes");
         println!(
             "     Overhead: ~{} bytes per message",
             file_size / small_messages.len() as u64
@@ -194,7 +194,7 @@ fn demonstrate_checksum_sizes(
         writer.flush()?;
 
         let file_size = std::fs::metadata("medium_messages_crc32.bin")?.len();
-        println!("     File size: {} bytes", file_size);
+        println!("     File size: {file_size} bytes");
         println!(
             "     Overhead: ~{} bytes per message",
             file_size / medium_messages.len() as u64
@@ -220,7 +220,7 @@ fn demonstrate_checksum_sizes(
         writer.flush()?;
 
         let file_size = std::fs::metadata("large_messages_xxhash64.bin")?.len();
-        println!("     File size: {} bytes", file_size);
+        println!("     File size: {file_size} bytes");
         println!(
             "     Overhead: ~{} bytes per message",
             file_size / large_messages.len() as u64
@@ -242,13 +242,12 @@ fn demonstrate_checksum_sizes(
         reader.process_all(|payload| {
             count += 1;
             if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Small message {}: {}", count, message);
+                println!("     Small message {count}: {message}");
             }
             Ok(())
         })?;
         println!(
-            "     ✓ Read {} small messages with CRC16 verification",
-            count
+            "     ✓ Read {count} small messages with CRC16 verification"
         );
     }
 
@@ -264,13 +263,12 @@ fn demonstrate_checksum_sizes(
         reader.process_all(|payload| {
             count += 1;
             if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Medium message {}: {}", count, message);
+                println!("     Medium message {count}: {message}");
             }
             Ok(())
         })?;
         println!(
-            "     ✓ Read {} medium messages with CRC32 verification",
-            count
+            "     ✓ Read {count} medium messages with CRC32 verification"
         );
     }
 
@@ -286,13 +284,12 @@ fn demonstrate_checksum_sizes(
         reader.process_all(|payload| {
             count += 1;
             if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Large message {}: {}", count, message);
+                println!("     Large message {count}: {message}");
             }
             Ok(())
         })?;
         println!(
-            "     ✓ Read {} large messages with XXHash64 verification",
-            count
+            "     ✓ Read {count} large messages with XXHash64 verification"
         );
     }
 
@@ -329,7 +326,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
         let duration = start.elapsed();
 
         let file_size = std::fs::metadata("performance_no_checksum.bin")?.len();
-        println!("   No checksum: {:?}, {} bytes", duration, file_size);
+        println!("   No checksum: {duration:?}, {file_size} bytes");
     }
 
     // CRC16 performance
@@ -352,7 +349,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
         let duration = start.elapsed();
 
         let file_size = std::fs::metadata("performance_crc16.bin")?.len();
-        println!("   CRC16:      {:?}, {} bytes", duration, file_size);
+        println!("   CRC16:      {duration:?}, {file_size} bytes");
     }
 
     // CRC32 performance
@@ -375,7 +372,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
         let duration = start.elapsed();
 
         let file_size = std::fs::metadata("performance_crc32.bin")?.len();
-        println!("   CRC32:      {:?}, {} bytes", duration, file_size);
+        println!("   CRC32:      {duration:?}, {file_size} bytes");
     }
 
     // XXHash64 performance
@@ -398,7 +395,7 @@ fn demonstrate_performance_comparison() -> Result<()> {
         let duration = start.elapsed();
 
         let file_size = std::fs::metadata("performance_xxhash64.bin")?.len();
-        println!("   XXHash64:   {:?}, {} bytes", duration, file_size);
+        println!("   XXHash64:   {duration:?}, {file_size} bytes");
     }
 
     println!("   ✓ Performance comparison completed\n");

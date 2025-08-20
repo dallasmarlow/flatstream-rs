@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         message_count += 1;
         Ok(())
     })?;
-    println!("[reader] Completed reading {} message(s)", message_count);
+    println!("[reader] Completed reading {message_count} message(s)");
 
     // Take back the inner reader
     let _inner_reader = stream_reader.into_inner();

@@ -114,16 +114,16 @@ fn demonstrate_mode_comparison() -> Result<()> {
     // Results
     println!("\n   === Results ===");
     println!("   Simple mode:");
-    println!("     Time:       {:?}", simple_time);
-    println!("     Throughput: {:.0} messages/sec", simple_throughput);
+    println!("     Time:       {simple_time:?}");
+    println!("     Throughput: {simple_throughput:.0} messages/sec");
     println!(
         "     Latency:    {:.3} µs/msg",
         simple_time.as_micros() as f64 / num_events as f64
     );
 
     println!("\n   Expert mode:");
-    println!("     Time:       {:?}", expert_time);
-    println!("     Throughput: {:.0} messages/sec", expert_throughput);
+    println!("     Time:       {expert_time:?}");
+    println!("     Throughput: {expert_throughput:.0} messages/sec");
     println!(
         "     Latency:    {:.3} µs/msg",
         expert_time.as_micros() as f64 / num_events as f64
@@ -152,7 +152,7 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
     let start = Instant::now();
     let num_events = 100_000;
 
-    println!("   Capturing {} high-frequency events...", num_events);
+    println!("   Capturing {num_events} high-frequency events...");
 
     // Generate high-frequency events
     for i in 0..num_events {
@@ -177,8 +177,8 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
     let throughput = num_events as f64 / write_time.as_secs_f64();
 
     println!("   Write performance:");
-    println!("     Time:       {:?}", write_time);
-    println!("     Throughput: {:.0} events/second", throughput);
+    println!("     Time:       {write_time:?}");
+    println!("     Throughput: {throughput:.0} events/second");
     println!(
         "     Latency:    {:.3} µs per event",
         write_time.as_micros() as f64 / num_events as f64
@@ -203,8 +203,8 @@ fn demonstrate_high_frequency_scenario() -> Result<()> {
         let read_throughput = count as f64 / read_time.as_secs_f64();
 
         println!("   Read performance:");
-        println!("     Time:       {:?}", read_time);
-        println!("     Throughput: {:.0} events/second", read_throughput);
+        println!("     Time:       {read_time:?}");
+        println!("     Throughput: {read_throughput:.0} events/second");
         println!(
             "     Latency:    {:.3} µs per event",
             read_time.as_micros() as f64 / count as f64
@@ -287,8 +287,8 @@ fn demonstrate_best_practices() -> Result<()> {
             Ok(())
         })() {
             Ok(()) => println!("      ✓ Message written successfully"),
-            Err(Error::Io(e)) => eprintln!("      ✗ I/O error: {}", e),
-            Err(e) => eprintln!("      ✗ Stream error: {}", e),
+            Err(Error::Io(e)) => eprintln!("      ✗ I/O error: {e}"),
+            Err(e) => eprintln!("      ✗ Stream error: {e}"),
         }
     }
 

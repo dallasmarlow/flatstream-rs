@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry_file = "telemetry_stream.bin";
 
     println!("=== Telemetry Agent Example (v2.5) ===");
-    println!("Writing telemetry events to: {}", telemetry_file);
+    println!("Writing telemetry events to: {telemetry_file}");
 
     // Create the telemetry stream file
     let file = File::create(telemetry_file)?;
@@ -97,13 +97,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         if event_count % 10 == 0 {
-            println!("  Captured {} events...", event_count);
+            println!("  Captured {event_count} events...");
         }
     }
 
     // Ensure all data is written to disk
     stream_writer.flush()?;
-    println!("Captured {} telemetry events", event_count);
+    println!("Captured {event_count} telemetry events");
 
     // Now demonstrate real-time processing of the telemetry stream
     println!("\n=== Real-time Telemetry Processing ===");
@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Alert for high speed
                         if speed > 80.0 {
                             alerts += 1;
-                            println!("  ⚠️  High speed alert: {:.1} km/h", speed);
+                            println!("  ⚠️  High speed alert: {speed:.1} km/h");
                         }
                     }
                 } else if part.starts_with("rpm=") {
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Alert for high RPM
                         if rpm > 5000.0 {
                             alerts += 1;
-                            println!("  ⚠️  High RPM alert: {:.0} RPM", rpm);
+                            println!("  ⚠️  High RPM alert: {rpm:.0} RPM");
                         }
                     }
                 } else if part.starts_with("temp_c=") {
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Alert for high temperature
                         if temp > 50.0 {
                             alerts += 1;
-                            println!("  ⚠️  High temperature alert: {:.1}°C", temp);
+                            println!("  ⚠️  High temperature alert: {temp:.1}°C");
                         }
                     }
                 } else if part.starts_with("battery=") {
@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Alert for low battery
                         if battery < 20.0 {
                             alerts += 1;
-                            println!("  ⚠️  Low battery alert: {:.1}%", battery);
+                            println!("  ⚠️  Low battery alert: {battery:.1}%");
                         }
                     }
                 }
@@ -174,8 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Process every 10th event for demonstration
             if processed_count % 10 == 0 {
                 println!(
-                    "  Processed {} events, {} alerts so far",
-                    processed_count, alerts
+                    "  Processed {processed_count} events, {alerts} alerts so far"
                 );
             }
         }
@@ -184,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print final statistics
     println!("\n=== Telemetry Analysis Complete ===");
-    println!("Total events processed: {}", processed_count);
+    println!("Total events processed: {processed_count}");
     if processed_count > 0 {
         println!(
             "Average speed: {:.1} km/h",
@@ -200,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             total_battery / processed_count as f32
         );
     }
-    println!("Total alerts generated: {}", alerts);
+    println!("Total alerts generated: {alerts}");
 
     println!("\n=== Telemetry Agent Example Complete ===");
     println!("Key v2.5 features demonstrated:");
