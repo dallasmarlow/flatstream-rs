@@ -283,7 +283,7 @@ mod tests {
 
         for i in 0..3 {
             let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             assert!(writer.write_finished(&mut builder).is_ok());
         }
@@ -302,7 +302,7 @@ mod tests {
 
         for i in 0..3 {
             let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             assert!(writer.write_finished(&mut builder).is_ok());
         }

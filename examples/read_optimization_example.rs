@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     let mut buffer = Vec::new();
     let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
     for i in 0..10_000 {
-        let msg = format!("message number {}", i);
+        let msg = format!("message number {i}");
         writer.write(&msg)?;
     }
     println!("Created test data with 10,000 messages.\n");
@@ -26,8 +26,7 @@ fn main() -> Result<()> {
     reader_default.process_all(|_| Ok(()))?;
     let duration_default = start.elapsed();
     println!(
-        "DefaultDeframer (Safe, General Purpose):  {:?}",
-        duration_default
+        "DefaultDeframer (Safe, General Purpose):  {duration_default:?}"
     );
 
     // --- SafeTakeDeframer ---
@@ -36,8 +35,7 @@ fn main() -> Result<()> {
     reader_safe_take.process_all(|_| Ok(()))?;
     let duration_safe_take = start.elapsed();
     println!(
-        "SafeTakeDeframer (Safe, Alternative):     {:?}",
-        duration_safe_take
+        "SafeTakeDeframer (Safe, Alternative):     {duration_safe_take:?}"
     );
 
     // --- UnsafeDeframer ---
@@ -46,8 +44,7 @@ fn main() -> Result<()> {
     reader_unsafe.process_all(|_| Ok(()))?;
     let duration_unsafe = start.elapsed();
     println!(
-        "UnsafeDeframer (Fastest, Trusted Input):  {:?}",
-        duration_unsafe
+        "UnsafeDeframer (Fastest, Trusted Input):  {duration_unsafe:?}"
     );
 
     println!("\n=== Guidance ===");

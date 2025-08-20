@@ -7,7 +7,7 @@ use flatstream::Framer;
 use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader};
 use std::cell::Cell;
 use std::io::Cursor;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 

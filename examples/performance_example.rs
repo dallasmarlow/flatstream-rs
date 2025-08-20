@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     {
         // Prepare a batch of messages
         let messages: Vec<String> = (0..num_messages)
-            .map(|i| format!("high-frequency-message-{}", i))
+            .map(|i| format!("high-frequency-message-{i}"))
             .collect();
 
         // Test iterative writing with external builder management (v2.5 pattern)
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
         }
         let v2_5_time = start.elapsed();
 
-        println!("  v2.5 external builder: {:?}", v2_5_time);
+        println!("  v2.5 external builder: {v2_5_time:?}");
         println!("  ✓ External builder management optimization demonstrated\n");
     }
 
@@ -68,8 +68,7 @@ fn main() -> Result<()> {
             })?;
 
             println!(
-                "  Processor API reading: {} messages, {} total bytes",
-                count, total_size
+                "  Processor API reading: {count} messages, {total_size} total bytes"
             );
         }
         let processor_time = start.elapsed();
@@ -93,14 +92,13 @@ fn main() -> Result<()> {
             }
 
             println!(
-                "  Expert API reading: {} messages, {} total bytes",
-                count, total_size
+                "  Expert API reading: {count} messages, {total_size} total bytes"
             );
         }
         let expert_time = start.elapsed();
 
-        println!("  Processor API: {:?}", processor_time);
-        println!("  Expert API:    {:?}", expert_time);
+        println!("  Processor API: {processor_time:?}");
+        println!("  Expert API:    {expert_time:?}");
         println!("  ✓ Zero-allocation reading optimization demonstrated\n");
     }
 
@@ -184,13 +182,13 @@ fn main() -> Result<()> {
                 Ok(())
             })?;
 
-            println!("  Processed {} sensor readings", count);
+            println!("  Processed {count} sensor readings");
             println!("  Average value: {:.2}", total_value / count as f64);
         }
         let read_time = start.elapsed();
 
-        println!("  Write time: {:?}", write_time);
-        println!("  Read time:  {:?}", read_time);
+        println!("  Write time: {write_time:?}");
+        println!("  Read time:  {read_time:?}");
         println!("  Total time: {:?}", write_time + read_time);
         println!("  ✓ Real-world data processing demonstrated\n");
     }

@@ -70,7 +70,7 @@ fn main() -> Result<()> {
         // Write some sensor readings
         for i in 0..5 {
             let reading = SensorReading {
-                sensor_id: format!("sensor-{}", i),
+                sensor_id: format!("sensor-{i}"),
                 temperature: 20.0 + (i as f32 * 2.5),
                 humidity: 45.0 + (i as f32 * 5.0),
                 timestamp: std::time::SystemTime::now()
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
             builder.reset();
             reading.serialize(&mut builder)?;
             stream_writer.write_finished(&mut builder)?;
-            println!("  Wrote sensor reading: {:?}", reading);
+            println!("  Wrote sensor reading: {reading:?}");
         }
 
         stream_writer.flush()?;
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         })?;
-        println!("  ✓ Read {} sensor readings\n", count);
+        println!("  ✓ Read {count} sensor readings\n");
     }
 
     // Example 2: Using checksum framing for data integrity
@@ -125,7 +125,7 @@ fn main() -> Result<()> {
         // Write some sensor readings with checksum protection
         for i in 0..3 {
             let reading = SensorReading {
-                sensor_id: format!("secure-sensor-{}", i),
+                sensor_id: format!("secure-sensor-{i}"),
                 temperature: 25.0 + (i as f32 * 1.5),
                 humidity: 50.0 + (i as f32 * 3.0),
                 timestamp: std::time::SystemTime::now()
@@ -137,7 +137,7 @@ fn main() -> Result<()> {
             builder.reset();
             reading.serialize(&mut builder)?;
             stream_writer.write_finished(&mut builder)?;
-            println!("  Wrote secure sensor reading: {:?}", reading);
+            println!("  Wrote secure sensor reading: {reading:?}");
         }
 
         stream_writer.flush()?;
@@ -159,7 +159,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         })?;
-        println!("  ✓ Read {} secure sensor readings\n", count);
+        println!("  ✓ Read {count} secure sensor readings\n");
     }
 
     // Example 3: Complex system events
@@ -215,7 +215,7 @@ fn main() -> Result<()> {
             builder.reset();
             event.serialize(&mut builder)?;
             stream_writer.write_finished(&mut builder)?;
-            println!("  Wrote system event: {:?}", event);
+            println!("  Wrote system event: {event:?}");
         }
 
         stream_writer.flush()?;
@@ -239,7 +239,7 @@ fn main() -> Result<()> {
                 count += 1;
             }
         }
-        println!("  ✓ Read {} system events\n", count);
+        println!("  ✓ Read {count} system events\n");
     }
 
     println!("=== Composable Example Complete ===");

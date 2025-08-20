@@ -122,19 +122,19 @@ fn main() -> Result<()> {
     for (i, message) in messages.iter().enumerate() {
         match message {
             Message::Control(msg) => {
-                println!("Writing control message #{}", i);
+                println!("Writing control message #{i}");
                 control_builder.reset();
                 msg.serialize(&mut control_builder)?;
                 stream_writer.write_finished(&mut control_builder)?;
             }
             Message::Telemetry(msg) => {
-                println!("Writing telemetry batch #{}", i);
+                println!("Writing telemetry batch #{i}");
                 telemetry_builder.reset();
                 msg.serialize(&mut telemetry_builder)?;
                 stream_writer.write_finished(&mut telemetry_builder)?;
             }
             Message::FileTransfer(msg) => {
-                println!("Writing file chunk #{} (1MB)", i);
+                println!("Writing file chunk #{i} (1MB)");
                 file_builder.reset();
                 msg.serialize(&mut file_builder)?;
                 stream_writer.write_finished(&mut file_builder)?;

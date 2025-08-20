@@ -35,12 +35,10 @@ fn main() -> Result<()> {
         let mut builder = FlatBufferBuilder::new();
 
         // Write some test data
-        let test_messages = vec![
-            "Hello, CRC32!",
+        let test_messages = ["Hello, CRC32!",
             "This is a test message",
             "CRC32 provides error detection",
-            "Perfect for network transmission",
-        ];
+            "Perfect for network transmission"];
 
         for (i, message) in test_messages.iter().enumerate() {
             // Build and write with external builder
@@ -70,7 +68,7 @@ fn main() -> Result<()> {
         stream_reader.process_all(|payload| {
             count += 1;
             if let Ok(message) = std::str::from_utf8(payload) {
-                println!("  Read message {}: '{}' (CRC32 verified)", count, message);
+                println!("  Read message {count}: '{message}' (CRC32 verified)");
             } else {
                 println!(
                     "  Read message {}: {} bytes (CRC32 verified)",
@@ -82,8 +80,7 @@ fn main() -> Result<()> {
         })?;
 
         println!(
-            "  ✓ Successfully read {} messages with CRC32 verification\n",
-            count
+            "  ✓ Successfully read {count} messages with CRC32 verification\n"
         );
 
         // Demonstrate corruption detection
@@ -108,7 +105,7 @@ fn main() -> Result<()> {
                     println!("  ⚠️  Unexpected: corruption not detected!");
                 }
                 Err(e) => {
-                    println!("  ✅ Corruption detected: {}", e);
+                    println!("  ✅ Corruption detected: {e}");
                 }
             }
         }

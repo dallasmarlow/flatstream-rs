@@ -52,8 +52,7 @@ fn round_trip_with_fluent_bounded(bytes: &[u8]) -> Result<()> {
     })?;
 
     println!(
-        "[round_trip_with_fluent_bounded] Successfully read and processed {} total payload bytes within bounds",
-        seen
+        "[round_trip_with_fluent_bounded] Successfully read and processed {seen} total payload bytes within bounds"
     );
     Ok(())
 }
@@ -81,8 +80,7 @@ fn main() -> Result<()> {
         Ok(())
     })?;
     println!(
-        "[main] Successfully read {} message(s) with the manual bounded deframer",
-        message_count
+        "[main] Successfully read {message_count} message(s) with the manual bounded deframer"
     );
 
     Ok(())

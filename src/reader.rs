@@ -122,17 +122,9 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     where
         F: FnMut(&[u8]) -> Result<()>,
     {
-        loop {
-            match self.read_message()? {
-                Some(payload) => {
-                    // Process the payload using the user's closure
-                    processor(payload)?;
-                }
-                None => {
-                    // Clean end of stream
-                    break;
-                }
-            }
+        while let Some(payload) = self.read_message()? {
+            // Process the payload using the user's closure
+            processor(payload)?;
         }
         Ok(())
     }
@@ -140,7 +132,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// Returns an iterator-like object for manual message processing.
     ///
     /// This provides the "expert path" for users who need more control over
-    /// the iteration process. Each call to `next()` returns a borrowed slice
+    /// the iteration process. Each call to `next_message()` returns a borrowed slice
     /// to the message payload, providing zero-copy access.
     pub fn messages(&mut self) -> Messages<'_, R, D> {
         Messages { reader: self }
@@ -193,8 +185,13 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
     /// * `Ok(Some(payload))` - A message was successfully read
     /// * `Ok(None)` - End of stream reached
     /// * `Err(e)` - An error occurred during reading
-    pub fn next(&mut self) -> Result<Option<&[u8]>> {
+    pub fn next_message(&mut self) -> Result<Option<&[u8]>> {
         self.reader.read_message()
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Result<Option<&[u8]>> {
+        self.next_message()
     }
 }
 
@@ -291,7 +288,7 @@ mod tests {
 
         for i in 0..3 {
             let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             writer.write_finished(&mut builder).unwrap();
         }
@@ -322,7 +319,7 @@ mod tests {
 
         for i in 0..3 {
             let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             writer.write_finished(&mut builder).unwrap();
         }
@@ -352,7 +349,7 @@ mod tests {
 
         for i in 0..3 {
             let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             writer.write_finished(&mut builder).unwrap();
         }
@@ -412,7 +409,7 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         for i in 0..5 {
             builder.reset();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             writer.write_finished(&mut builder).unwrap();
         }
@@ -428,8 +425,7 @@ mod tests {
 
             // Simulate an error on the third message
             if count == 3 {
-                return Err(crate::error::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(crate::error::Error::Io(std::io::Error::other(
                     "Simulated processing error",
                 )));
             }
@@ -483,7 +479,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             crate::error::Error::ChecksumMismatch { .. } => {} // Expected
-            e => panic!("Expected ChecksumMismatch error, got: {:?}", e),
+            e => panic!("Expected ChecksumMismatch error, got: {e:?}"),
         }
     }
 }

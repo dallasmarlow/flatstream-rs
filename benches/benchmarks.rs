@@ -2,9 +2,10 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use flatbuffers::FlatBufferBuilder;
 use flatstream::checksum::Checksum;
 use flatstream::{
-    DefaultDeframer, DefaultFramer, SafeTakeDeframer, StreamReader, StreamSerialize, StreamWriter,
-    UnsafeDeframer,
+    DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
 };
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
+use flatstream::{SafeTakeDeframer, UnsafeDeframer};
 use std::io::Cursor;
 
 // Import checksum types when features are enabled
@@ -664,6 +665,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
 
 // In: benches/benchmarks.rs
 
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 fn benchmark_read_path_alternatives(c: &mut Criterion) {
     // 1. Prepare a consistent set of test data
     let mut buffer = Vec::new();
@@ -671,7 +673,7 @@ fn benchmark_read_path_alternatives(c: &mut Criterion) {
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
         for i in 0..100 {
-            let msg = format!("message {}", i);
+            let msg = format!("message {i}");
             writer.write(&msg).unwrap();
         }
     }
@@ -726,14 +728,17 @@ fn benchmark_read_path_alternatives(c: &mut Criterion) {
 
 // === IMPROVED DEFRAMER MICRO-BENCHMARK ===
 
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 use flatstream::framing::Deframer;
 
 // A mock reader to isolate deframer performance from I/O overhead.
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 struct MockReader<'a> {
     data: &'a [u8],
     pos: usize,
 }
 
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 impl<'a> std::io::Read for MockReader<'a> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes_to_read = std::cmp::min(buf.len(), self.data.len() - self.pos);
@@ -747,6 +752,7 @@ impl<'a> std::io::Read for MockReader<'a> {
     }
 }
 
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 fn benchmark_deframer_micro(c: &mut Criterion) {
     // Prepare a buffer containing a single, reasonably sized message frame.
     let mut buffer = Vec::new();
@@ -809,6 +815,7 @@ fn benchmark_deframer_micro(c: &mut Criterion) {
 
 // === NEW: LARGER SCALE DEFRAMER THROUGHPUT BENCHMARK ===
 
+#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
     // Prepare a large buffer with 1,000 messages. Total size will be ~4MB.
     let mut buffer = Vec::new();
@@ -953,12 +960,12 @@ criterion_main!(benches, xxhash_specific_benches);
 // A simpler catch-all for when any checksum is enabled but we only have xxhash specific benches
 #[cfg(all(
     any(feature = "xxhash", feature = "crc32", feature = "crc16"),
-    not(all(not(feature = "xxhash")))
+    feature = "xxhash"
 ))]
 criterion_main!(benches, xxhash_specific_benches);
 
 #[cfg(all(
     any(feature = "xxhash", feature = "crc32", feature = "crc16"),
-    all(not(feature = "xxhash"))
+    not(feature = "xxhash")
 ))]
 criterion_main!(benches);

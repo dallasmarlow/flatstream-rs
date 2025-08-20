@@ -23,7 +23,7 @@ fn test_write_read_cycle_default() {
 
         for i in 0..3 {
             builder.reset();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             stream_writer.write_finished(&mut builder).unwrap();
         }
@@ -136,7 +136,7 @@ fn test_corruption_detection_with_checksum() {
             Error::ChecksumMismatch { .. } => {
                 // This is the expected outcome
             }
-            e => panic!("Expected ChecksumMismatch error, got: {:?}", e),
+            e => panic!("Expected ChecksumMismatch error, got: {e:?}"),
         }
     }
 }
@@ -319,7 +319,7 @@ fn test_large_stream_stress() {
         let mut builder = FlatBufferBuilder::new();
         for i in 0..1000 {
             builder.reset();
-            let data = builder.create_string(&format!("message {}", i));
+            let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
             stream_writer.write_finished(&mut builder).unwrap();
         }
@@ -435,7 +435,7 @@ fn test_partial_file_read() {
 
         match result.unwrap_err() {
             Error::UnexpectedEof => {} // Expected
-            e => panic!("Expected UnexpectedEof error, got: {:?}", e),
+            e => panic!("Expected UnexpectedEof error, got: {e:?}"),
         }
     }
 
@@ -452,7 +452,7 @@ fn test_partial_file_read() {
 
         match result.unwrap_err() {
             Error::UnexpectedEof => {} // Expected
-            e => panic!("Expected UnexpectedEof error, got: {:?}", e),
+            e => panic!("Expected UnexpectedEof error, got: {e:?}"),
         }
     }
 }
