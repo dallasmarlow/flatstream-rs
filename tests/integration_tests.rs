@@ -6,22 +6,23 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use tempfile::NamedTempFile;
 
-#[test]
-fn test_write_read_cycle_default() {
+fn write_read_cycle<F, D>(framer: F, deframer: D, messages: &[String])
+where
+    F: Framer,
+    D: Deframer,
+{
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Write messages with default framing
+    // Write messages
     {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
         let mut stream_writer = StreamWriter::new(writer, framer);
 
-        // External builder management
+        // External builder management for zero-allocation writes
         let mut builder = FlatBufferBuilder::new();
-
-        for i in 0..3 {
+        for msg in messages {
             builder.reset();
             let data = builder.create_string(&format!("message {i}"));
             builder.finish(data, None);
@@ -30,66 +31,39 @@ fn test_write_read_cycle_default() {
         stream_writer.flush().unwrap();
     }
 
-    // Read messages back with default deframer using processor API
+    // Read and validate
     {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
         let mut stream_reader = StreamReader::new(reader, deframer);
 
         let mut count = 0;
         stream_reader
             .process_all(|payload| {
-                // The payload contains FlatBuffer data, not the raw string
-                // For this test, we just verify we got some data
                 assert!(!payload.is_empty());
                 count += 1;
                 Ok(())
             })
             .unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, messages.len());
     }
+}
+
+#[test]
+fn test_write_read_cycle_default() {
+    let msgs = (0..3).map(|i| format!("message {i}")).collect::<Vec<_>>();
+    write_read_cycle(DefaultFramer, DefaultDeframer, &msgs);
 }
 
 #[test]
 #[cfg(feature = "xxhash")]
 fn test_write_read_cycle_with_checksum() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-
-    // Write with checksum
-    {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(XxHash64::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("important data");
-        builder.finish(data, None);
-        stream_writer.write_finished(&mut builder).unwrap();
-        stream_writer.flush().unwrap();
-    }
-
-    // Read back and verify using processor API
-    {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(XxHash64::new());
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
-        let mut count = 0;
-        stream_reader
-            .process_all(|payload| {
-                // The payload contains FlatBuffer data, not the raw string
-                // For this test, we just verify we got some data
-                assert!(!payload.is_empty());
-                count += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(count, 1);
-    }
+    let msgs = vec!["important data".to_string()];
+    write_read_cycle(
+        ChecksumFramer::new(XxHash64::new()),
+        ChecksumDeframer::new(XxHash64::new()),
+        &msgs,
+    );
 }
 
 #[test]
@@ -176,83 +150,23 @@ fn test_mismatched_framing_strategies() {
 #[test]
 #[cfg(feature = "crc32")]
 fn test_write_read_cycle_with_crc32() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-
-    // Write with CRC32
-    {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc32::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("crc32 test data");
-        builder.finish(data, None);
-        stream_writer.write_finished(&mut builder).unwrap();
-        stream_writer.flush().unwrap();
-    }
-
-    // Read back and verify
-    {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(Crc32::new());
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
-        let mut count = 0;
-        stream_reader
-            .process_all(|payload| {
-                // The payload contains FlatBuffer data, not the raw string
-                // For this test, we just verify we got some data
-                assert!(!payload.is_empty());
-                count += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(count, 1);
-    }
+    let msgs = vec!["crc32 test data".to_string()];
+    write_read_cycle(
+        ChecksumFramer::new(Crc32::new()),
+        ChecksumDeframer::new(Crc32::new()),
+        &msgs,
+    );
 }
 
 #[test]
 #[cfg(feature = "crc16")]
 fn test_write_read_cycle_with_crc16() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-
-    // Write with CRC16
-    {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(Crc16::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("crc16 test data");
-        builder.finish(data, None);
-        stream_writer.write_finished(&mut builder).unwrap();
-        stream_writer.flush().unwrap();
-    }
-
-    // Read back and verify
-    {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(Crc16::new());
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
-        let mut count = 0;
-        stream_reader
-            .process_all(|payload| {
-                // The payload contains FlatBuffer data, not the raw string
-                // For this test, we just verify we got some data
-                assert!(!payload.is_empty());
-                count += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(count, 1);
-    }
+    let msgs = vec!["crc16 test data".to_string()];
+    write_read_cycle(
+        ChecksumFramer::new(Crc16::new()),
+        ChecksumDeframer::new(Crc16::new()),
+        &msgs,
+    );
 }
 
 #[test]
