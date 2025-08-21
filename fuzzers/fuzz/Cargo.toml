@@ -1,0 +1,26 @@
+[package]
+name = "flatstream-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4" }
+flatstream = { path = "../.." }
+
+[profile.release]
+debug = 1
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "deframe_fuzzer"
+path = "fuzz_targets/deframe_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
