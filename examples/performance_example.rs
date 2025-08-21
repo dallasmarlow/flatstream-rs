@@ -67,9 +67,7 @@ fn main() -> Result<()> {
                 Ok(())
             })?;
 
-            println!(
-                "  Processor API reading: {count} messages, {total_size} total bytes"
-            );
+            println!("  Processor API reading: {count} messages, {total_size} total bytes");
         }
         let processor_time = start.elapsed();
 
@@ -91,9 +89,7 @@ fn main() -> Result<()> {
                 count += 1;
             }
 
-            println!(
-                "  Expert API reading: {count} messages, {total_size} total bytes"
-            );
+            println!("  Expert API reading: {count} messages, {total_size} total bytes");
         }
         let expert_time = start.elapsed();
 

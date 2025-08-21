@@ -173,9 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Process every 10th event for demonstration
             if processed_count % 10 == 0 {
-                println!(
-                    "  Processed {processed_count} events, {alerts} alerts so far"
-                );
+                println!("  Processed {processed_count} events, {alerts} alerts so far");
             }
         }
         Ok(())

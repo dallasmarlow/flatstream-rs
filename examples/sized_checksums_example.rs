@@ -246,9 +246,7 @@ fn demonstrate_checksum_sizes(
             }
             Ok(())
         })?;
-        println!(
-            "     ✓ Read {count} small messages with CRC16 verification"
-        );
+        println!("     ✓ Read {count} small messages with CRC16 verification");
     }
 
     #[cfg(feature = "crc32")]
@@ -267,9 +265,7 @@ fn demonstrate_checksum_sizes(
             }
             Ok(())
         })?;
-        println!(
-            "     ✓ Read {count} medium messages with CRC32 verification"
-        );
+        println!("     ✓ Read {count} medium messages with CRC32 verification");
     }
 
     #[cfg(feature = "xxhash")]
@@ -288,9 +284,7 @@ fn demonstrate_checksum_sizes(
             }
             Ok(())
         })?;
-        println!(
-            "     ✓ Read {count} large messages with XXHash64 verification"
-        );
+        println!("     ✓ Read {count} large messages with XXHash64 verification");
     }
 
     println!("   ✓ Checksum size comparison completed\n");
