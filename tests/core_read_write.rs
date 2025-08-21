@@ -27,7 +27,7 @@ fn table_driven_basic_cycles() {
             }
             w.flush().unwrap();
         }
-        // read
+        // read via process_all
         {
             let mut r = h.reader(DefaultDeframer);
             let mut count = 0;
@@ -37,6 +37,18 @@ fn table_driven_basic_cycles() {
                 Ok(())
             })
             .unwrap();
+            assert_eq!(count, msgs.len());
+        }
+
+        // read via messages() expert API
+        {
+            let mut r = h.reader(DefaultDeframer);
+            let mut count = 0usize;
+            let mut it = r.messages();
+            while let Some(p) = it.next().unwrap() {
+                assert!(!p.is_empty() || msgs.is_empty());
+                count += 1;
+            }
             assert_eq!(count, msgs.len());
         }
     }

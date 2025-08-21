@@ -78,3 +78,45 @@ impl TestHarness {
         sizes.iter().map(|&n| self.gen_string(n)).collect()
     }
 }
+
+// A reusable macro for defining standard framer/deframer write-read cycle tests.
+// Placed here to centralize common test patterns.
+#[allow(unused_macros)]
+macro_rules! test_framer_deframer_pair {
+    ($test_name:ident, $framer:expr, $deframer:expr, $messages:expr) => {
+        #[test]
+        fn $test_name() {
+            use flatbuffers::FlatBufferBuilder;
+            use flatstream::*;
+
+            let harness = TestHarness::new();
+
+            // Write phase
+            {
+                let mut stream_writer = harness.writer($framer);
+                let mut builder = FlatBufferBuilder::new();
+                for msg in $messages {
+                    builder.reset();
+                    let data = builder.create_string(msg);
+                    builder.finish(data, None);
+                    stream_writer.write_finished(&mut builder).unwrap();
+                }
+                stream_writer.flush().unwrap();
+            }
+
+            // Read phase
+            {
+                let mut stream_reader = harness.reader($deframer);
+                let mut count = 0usize;
+                stream_reader
+                    .process_all(|payload| {
+                        assert!(!payload.is_empty() || $messages.is_empty());
+                        count += 1;
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(count, $messages.len());
+            }
+        }
+    };
+}
