@@ -22,7 +22,10 @@ struct FailingWriter {
 impl Write for FailingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.written >= self.fail_after {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Simulated I/O error"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Simulated I/O error",
+            ));
         }
         let remaining = self.fail_after - self.written;
         let n = remaining.min(buf.len());
@@ -37,7 +40,10 @@ impl Write for FailingWriter {
 
 #[test]
 fn io_error_propagates() {
-    let failing_writer = FailingWriter { written: 0, fail_after: 10 };
+    let failing_writer = FailingWriter {
+        written: 0,
+        fail_after: 10,
+    };
     let mut writer = StreamWriter::new(failing_writer, DefaultFramer);
     let msg = TestMessage("This message will fail to write completely");
     match writer.write(&msg) {
@@ -97,7 +103,12 @@ fn clean_eof_ok() {
 
     let mut reader2 = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
     let mut count2 = 0;
-    reader2.process_all(|_| { count2 += 1; Ok(()) }).unwrap();
+    reader2
+        .process_all(|_| {
+            count2 += 1;
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(count2, 2);
 }
 
@@ -111,7 +122,9 @@ fn checksum_mismatch_detected() {
         writer.write(&TestMessage("valid")).unwrap();
     }
     // corrupt one byte in the checksum field (positions 4..12)
-    if buffer.len() >= 6 { buffer[5] ^= 0xFF; }
+    if buffer.len() >= 6 {
+        buffer[5] ^= 0xFF;
+    }
     let deframer = ChecksumDeframer::new(XxHash64::new());
     let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
     match reader.read_message() {
@@ -120,5 +133,3 @@ fn checksum_mismatch_detected() {
         Err(e) => panic!("wrong error type: {e:?}"),
     }
 }
-
-

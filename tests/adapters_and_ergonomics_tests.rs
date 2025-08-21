@@ -1,10 +1,10 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
 use std::cell::{Cell, RefCell};
-use std::io::Cursor;
 
 // Import adapters and extension traits explicitly
 use flatstream::framing::{DeframerExt, FramerExt, ObserverDeframer, ObserverFramer};
+use std::io::Cursor;
 
 fn make_frame(payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(4 + payload.len());
@@ -69,15 +69,12 @@ fn bounded_framer_happy_path() {
 }
 
 #[test]
-fn bounded_framer_over_limit() {
-    let payload = vec![7u8; 32];
+#[should_panic(expected = "InvalidFrame")]
+fn write_over_limit_should_panic() {
     let mut out = Vec::new();
-    let framer = BoundedFramer::new(DefaultFramer, 8);
-    let err = framer.frame_and_write(&mut out, &payload).unwrap_err();
-    match err {
-        Error::InvalidFrame { message } => assert!(message.contains("exceeds")),
-        other => panic!("expected InvalidFrame, got {other:?}"),
-    }
+    let framer = DefaultFramer.bounded(4);
+    // 5 bytes exceeds the bound; this should panic inside unwrap()
+    framer.frame_and_write(&mut out, b"hello").unwrap();
 }
 
 #[test]

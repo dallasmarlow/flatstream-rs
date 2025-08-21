@@ -25,27 +25,21 @@ fn main() -> Result<()> {
     let mut reader_default = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
     reader_default.process_all(|_| Ok(()))?;
     let duration_default = start.elapsed();
-    println!(
-        "DefaultDeframer (Safe, General Purpose):  {duration_default:?}"
-    );
+    println!("DefaultDeframer (Safe, General Purpose):  {duration_default:?}");
 
     // --- SafeTakeDeframer ---
     let start = Instant::now();
     let mut reader_safe_take = StreamReader::new(Cursor::new(&buffer), SafeTakeDeframer);
     reader_safe_take.process_all(|_| Ok(()))?;
     let duration_safe_take = start.elapsed();
-    println!(
-        "SafeTakeDeframer (Safe, Alternative):     {duration_safe_take:?}"
-    );
+    println!("SafeTakeDeframer (Safe, Alternative):     {duration_safe_take:?}");
 
     // --- UnsafeDeframer ---
     let start = Instant::now();
     let mut reader_unsafe = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
     reader_unsafe.process_all(|_| Ok(()))?;
     let duration_unsafe = start.elapsed();
-    println!(
-        "UnsafeDeframer (Fastest, Trusted Input):  {duration_unsafe:?}"
-    );
+    println!("UnsafeDeframer (Fastest, Trusted Input):  {duration_unsafe:?}");
 
     println!("\n=== Guidance ===");
     println!("- Use DefaultDeframer for most cases. It's safe and performs well.");

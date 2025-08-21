@@ -35,10 +35,12 @@ fn main() -> Result<()> {
         let mut builder = FlatBufferBuilder::new();
 
         // Write some test data
-        let test_messages = ["Hello, CRC32!",
+        let test_messages = [
+            "Hello, CRC32!",
             "This is a test message",
             "CRC32 provides error detection",
-            "Perfect for network transmission"];
+            "Perfect for network transmission",
+        ];
 
         for (i, message) in test_messages.iter().enumerate() {
             // Build and write with external builder
@@ -79,9 +81,7 @@ fn main() -> Result<()> {
             Ok(())
         })?;
 
-        println!(
-            "  ✓ Successfully read {count} messages with CRC32 verification\n"
-        );
+        println!("  ✓ Successfully read {count} messages with CRC32 verification\n");
 
         // Demonstrate corruption detection
         println!("3. Testing corruption detection:");

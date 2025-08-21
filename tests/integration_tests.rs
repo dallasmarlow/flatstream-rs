@@ -2,29 +2,28 @@
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
+mod test_harness;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter};
 use tempfile::NamedTempFile;
+use test_harness::TestHarness;
 
 fn write_read_cycle<F, D>(framer: F, deframer: D, messages: &[String])
 where
     F: Framer,
     D: Deframer,
 {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
+    let harness = TestHarness::new();
 
     // Write messages
     {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let mut stream_writer = StreamWriter::new(writer, framer);
+        let mut stream_writer = harness.writer(framer);
 
         // External builder management for zero-allocation writes
         let mut builder = FlatBufferBuilder::new();
         for msg in messages {
             builder.reset();
-            let data = builder.create_string(&format!("message {i}"));
+            let data = builder.create_string(msg);
             builder.finish(data, None);
             stream_writer.write_finished(&mut builder).unwrap();
         }
@@ -33,9 +32,7 @@ where
 
     // Read and validate
     {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let mut stream_reader = StreamReader::new(reader, deframer);
+        let mut stream_reader = harness.reader(deframer);
 
         let mut count = 0;
         stream_reader
@@ -55,6 +52,16 @@ fn test_write_read_cycle_default() {
     write_read_cycle(DefaultFramer, DefaultDeframer, &msgs);
 }
 
+#[allow(unused_macros)]
+macro_rules! test_framer_deframer_pair {
+    ($test_name:ident, $framer:expr, $deframer:expr, $messages:expr) => {
+        #[test]
+        fn $test_name() {
+            write_read_cycle($framer, $deframer, $messages);
+        }
+    };
+}
+
 #[test]
 #[cfg(feature = "xxhash")]
 fn test_write_read_cycle_with_checksum() {
@@ -69,47 +76,25 @@ fn test_write_read_cycle_with_checksum() {
 #[test]
 #[cfg(feature = "xxhash")]
 fn test_corruption_detection_with_checksum() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-
-    // Write a message with checksum
+    let harness = TestHarness::new();
+    // Write with checksum
     {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let framer = ChecksumFramer::new(XxHash64::new());
-        let mut stream_writer = StreamWriter::new(writer, framer);
-
+        let mut stream_writer = harness.writer(ChecksumFramer::new(XxHash64::new()));
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("important data");
         builder.finish(data, None);
         stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
-
-    // Corrupt the file by flipping a bit in the payload
+    // Corrupt the last byte
+    harness.corrupt_last_byte();
+    // Read back expecting a checksum mismatch
     {
-        let mut data = std::fs::read(path).unwrap();
-        if !data.is_empty() {
-            let last_byte_index = data.len() - 1;
-            data[last_byte_index] ^= 1; // Flip the last bit of the payload
-        }
-        std::fs::write(path, data).unwrap();
-    }
-
-    // Try to read the corrupted file
-    {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = ChecksumDeframer::new(XxHash64::new());
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
+        let mut stream_reader = harness.reader(ChecksumDeframer::new(XxHash64::new()));
         let result = stream_reader.read_message();
         assert!(result.is_err());
-
         match result.unwrap_err() {
-            Error::ChecksumMismatch { .. } => {
-                // This is the expected outcome
-            }
+            Error::ChecksumMismatch { .. } => {}
             e => panic!("Expected ChecksumMismatch error, got: {e:?}"),
         }
     }
@@ -312,60 +297,36 @@ fn test_realistic_telemetry_data() {
 
 #[test]
 fn test_partial_file_read() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-
-    // Write a message but truncate the file
+    let harness = TestHarness::new();
+    // Write one message
     {
-        let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
-        let mut stream_writer = StreamWriter::new(writer, framer);
-
+        let mut stream_writer = harness.writer(DefaultFramer);
         let mut builder = FlatBufferBuilder::new();
         let data = builder.create_string("a long partial message");
         builder.finish(data, None);
         stream_writer.write_finished(&mut builder).unwrap();
         stream_writer.flush().unwrap();
     }
-
-    // Truncate the file to simulate corruption
+    // Truncate last 5 bytes
+    harness.truncate_last_bytes(5);
+    // Read via process_all
     {
-        let data = std::fs::read(path).unwrap();
-        let truncated_size = data.len() - 5; // Remove last 5 bytes
-        let mut file = File::create(path).unwrap();
-        file.write_all(&data[..truncated_size]).unwrap();
-    }
-
-    // Try to read the truncated file using process_all
-    {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
+        let mut stream_reader = harness.reader(DefaultDeframer);
         let result = stream_reader.process_all(|_payload| Ok(()));
         assert!(result.is_err());
-
         match result.unwrap_err() {
-            Error::UnexpectedEof => {} // Expected
+            Error::UnexpectedEof => {}
             e => panic!("Expected UnexpectedEof error, got: {e:?}"),
         }
     }
-
-    // Try to read the truncated file using messages().next()
+    // Read via messages().next()
     {
-        let file = File::open(path).unwrap();
-        let reader = BufReader::new(file);
-        let deframer = DefaultDeframer;
-        let mut stream_reader = StreamReader::new(reader, deframer);
-
+        let mut stream_reader = harness.reader(DefaultDeframer);
         let mut messages = stream_reader.messages();
         let result = messages.next();
         assert!(result.is_err());
-
         match result.unwrap_err() {
-            Error::UnexpectedEof => {} // Expected
+            Error::UnexpectedEof => {}
             e => panic!("Expected UnexpectedEof error, got: {e:?}"),
         }
     }
