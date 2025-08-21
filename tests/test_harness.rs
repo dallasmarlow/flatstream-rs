@@ -1,4 +1,5 @@
 use flatstream::{Deframer, Framer, StreamReader, StreamWriter};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -7,15 +8,18 @@ use tempfile::NamedTempFile;
 pub struct TestHarness {
     _temp_file: NamedTempFile,
     path: PathBuf,
+    rng: StdRng,
 }
 
 impl TestHarness {
     pub fn new() -> Self {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path().to_path_buf();
+        let rng = StdRng::seed_from_u64(0x005E_ED42);
         Self {
             _temp_file: temp_file,
             path,
+            rng,
         }
     }
 
@@ -55,5 +59,22 @@ impl TestHarness {
 impl Default for TestHarness {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl TestHarness {
+    #[allow(dead_code)]
+    pub fn gen_string(&mut self, len: usize) -> String {
+        let mut s = String::with_capacity(len);
+        for _ in 0..len {
+            let c = (b'a' + (self.rng.gen::<u8>() % 26)) as char;
+            s.push(c);
+        }
+        s
+    }
+
+    #[allow(dead_code)]
+    pub fn gen_mixed_messages(&mut self, sizes: &[usize]) -> Vec<String> {
+        sizes.iter().map(|&n| self.gen_string(n)).collect()
     }
 }

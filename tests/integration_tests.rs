@@ -8,6 +8,16 @@ use std::io::{BufReader, BufWriter};
 use tempfile::NamedTempFile;
 use test_harness::TestHarness;
 
+#[allow(unused_macros)]
+macro_rules! test_framer_deframer_pair {
+    ($test_name:ident, $framer:expr, $deframer:expr, $messages:expr) => {
+        #[test]
+        fn $test_name() {
+            write_read_cycle($framer, $deframer, $messages);
+        }
+    };
+}
+
 fn write_read_cycle<F, D>(framer: F, deframer: D, messages: &[String])
 where
     F: Framer,
@@ -46,32 +56,20 @@ where
     }
 }
 
-#[test]
-fn test_write_read_cycle_default() {
-    let msgs = (0..3).map(|i| format!("message {i}")).collect::<Vec<_>>();
-    write_read_cycle(DefaultFramer, DefaultDeframer, &msgs);
-}
+test_framer_deframer_pair!(
+    test_write_read_cycle_default,
+    DefaultFramer,
+    DefaultDeframer,
+    &((0..3).map(|i| format!("message {i}")).collect::<Vec<_>>())
+);
 
-#[allow(unused_macros)]
-macro_rules! test_framer_deframer_pair {
-    ($test_name:ident, $framer:expr, $deframer:expr, $messages:expr) => {
-        #[test]
-        fn $test_name() {
-            write_read_cycle($framer, $deframer, $messages);
-        }
-    };
-}
-
-#[test]
 #[cfg(feature = "xxhash")]
-fn test_write_read_cycle_with_checksum() {
-    let msgs = vec!["important data".to_string()];
-    write_read_cycle(
-        ChecksumFramer::new(XxHash64::new()),
-        ChecksumDeframer::new(XxHash64::new()),
-        &msgs,
-    );
-}
+test_framer_deframer_pair!(
+    test_write_read_cycle_with_checksum,
+    ChecksumFramer::new(XxHash64::new()),
+    ChecksumDeframer::new(XxHash64::new()),
+    &["important data".to_string()]
+);
 
 #[test]
 #[cfg(feature = "xxhash")]
@@ -132,27 +130,21 @@ fn test_mismatched_framing_strategies() {
     }
 }
 
-#[test]
 #[cfg(feature = "crc32")]
-fn test_write_read_cycle_with_crc32() {
-    let msgs = vec!["crc32 test data".to_string()];
-    write_read_cycle(
-        ChecksumFramer::new(Crc32::new()),
-        ChecksumDeframer::new(Crc32::new()),
-        &msgs,
-    );
-}
+test_framer_deframer_pair!(
+    test_write_read_cycle_with_crc32,
+    ChecksumFramer::new(Crc32::new()),
+    ChecksumDeframer::new(Crc32::new()),
+    &["crc32 test data".to_string()]
+);
 
-#[test]
 #[cfg(feature = "crc16")]
-fn test_write_read_cycle_with_crc16() {
-    let msgs = vec!["crc16 test data".to_string()];
-    write_read_cycle(
-        ChecksumFramer::new(Crc16::new()),
-        ChecksumDeframer::new(Crc16::new()),
-        &msgs,
-    );
-}
+test_framer_deframer_pair!(
+    test_write_read_cycle_with_crc16,
+    ChecksumFramer::new(Crc16::new()),
+    ChecksumDeframer::new(Crc16::new()),
+    &["crc16 test data".to_string()]
+);
 
 #[test]
 fn test_comprehensive_data_types() {
