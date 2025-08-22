@@ -43,7 +43,7 @@ fn interrupted_reads_are_retried() {
         }) {
             Ok(()) => break,
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            other => panic!("unexpected result: {:?}", other),
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 }

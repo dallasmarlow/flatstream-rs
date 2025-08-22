@@ -91,7 +91,8 @@ pub use framing::{
     BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
     SafeTakeDeframer, UnsafeDeframer,
 };
-pub use reader::{Messages, StreamReader};
+pub use reader::{Messages, StreamReader, TypedMessages};
+pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use writer::StreamWriter;
 

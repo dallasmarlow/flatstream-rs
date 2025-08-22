@@ -24,6 +24,9 @@ default = []
 xxhash = ["xxhash-rust"]
 crc32 = ["crc32fast"]
 crc16 = ["dep:crc16"]
+# Build the real flatc-generated example (requires you to run flatc to generate code under examples/generated)
+flatc_example = []
+unsafe_typed = []
 # Meta-feature to enable all checksum algorithms for testing and development
 all_checksums = ["xxhash", "crc32", "crc16"]
 # Feature for comparative benchmarks against alternative serialization approaches
@@ -85,3 +88,11 @@ harness = false
 name = "simple_benchmarks"
 harness = false
 required-features = ["comparative_bench"]
+
+[[bench]]
+name = "typed_vs_manual_benchmark"
+harness = false
+
+[[example]]
+name = "typed_reading_flatc_example"
+required-features = ["flatc_example"]
