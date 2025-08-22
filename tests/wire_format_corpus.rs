@@ -9,7 +9,7 @@ fn read_file(path: &str) -> Option<Vec<u8>> {
 #[test]
 fn corpus_default_layout_and_roundtrip() {
     for label in ["empty", "small", "medium"] {
-        let path = format!("tests/corpus/default_{}.bin", label);
+        let path = format!("tests/corpus/default_{label}.bin");
         let Some(bytes) = read_file(&path) else {
             return;
         };
@@ -24,6 +24,9 @@ fn corpus_default_layout_and_roundtrip() {
             Ok(())
         })
         .unwrap();
+        // NOTE: The branch is intentionally identical to make the condition explicit and
+        // guard against future format/layout changes. We expect exactly one message
+        // regardless of length here because each file contains a single framed payload.
         assert_eq!(count, if len == 0 && bytes.len() == 4 { 1 } else { 1 });
     }
 }
@@ -32,7 +35,7 @@ fn corpus_default_layout_and_roundtrip() {
 #[test]
 fn corpus_xxhash_layout_and_roundtrip() {
     for label in ["empty", "small", "medium"] {
-        let path = format!("tests/corpus/xxhash64_{}.bin", label);
+        let path = format!("tests/corpus/xxhash64_{label}.bin");
         let Some(bytes) = read_file(&path) else {
             return;
         };
@@ -64,7 +67,7 @@ fn corpus_xxhash_layout_and_roundtrip() {
 #[test]
 fn corpus_crc32_layout_and_roundtrip() {
     for label in ["empty", "small", "medium"] {
-        let path = format!("tests/corpus/crc32_{}.bin", label);
+        let path = format!("tests/corpus/crc32_{label}.bin");
         let Some(bytes) = read_file(&path) else {
             return;
         };
@@ -94,7 +97,7 @@ fn corpus_crc32_layout_and_roundtrip() {
 #[test]
 fn corpus_crc16_layout_and_roundtrip() {
     for label in ["empty", "small", "medium"] {
-        let path = format!("tests/corpus/crc16_{}.bin", label);
+        let path = format!("tests/corpus/crc16_{label}.bin");
         let Some(bytes) = read_file(&path) else {
             return;
         };

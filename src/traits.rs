@@ -48,3 +48,33 @@ impl StreamSerialize for String {
         self.as_str().serialize(builder)
     }
 }
+
+/// A trait for types that can be deserialized from a FlatBuffer message payload.
+///
+/// This trait provides a type-safe and ergonomic way to access the root
+/// of a FlatBuffer message from a raw byte slice (`&[u8]`). The primary
+/// goal is to improve the reading path without introducing any performance
+/// overhead, fully preserving the library's zero-copy principles.
+///
+/// Implementations of this trait are responsible for calling `flatbuffers::get_root`
+/// and handling any FlatBuffer-specific verification.
+pub trait StreamDeserialize<'a>: Sized {
+    /// The associated type `Root` will be the generated FlatBuffer accessor struct
+    /// (e.g., `MyEvent<'a>`). This type must implement `flatbuffers::Follow<'a>`
+    /// to allow safe access to the FlatBuffer data.
+    type Root: flatbuffers::Follow<'a>;
+
+    /// Safely accesses the FlatBuffer root from a given payload slice.
+    ///
+    /// This method is responsible for performing the FlatBuffer verification
+    /// and returning the strongly-typed root accessor object. It should leverage
+    /// `flatbuffers::get_root` internally.
+    ///
+    /// # Arguments
+    /// * `payload` - A borrowed slice of bytes containing the FlatBuffer message.
+    ///
+    /// # Returns
+    /// * `Ok(Self::Root)` - The successfully accessed FlatBuffer root object.
+    /// * `Err(flatstream::Error::FlatbuffersError)` - If the FlatBuffer is invalid.
+    fn from_payload(payload: &'a [u8]) -> Result<Self::Root>;
+}

@@ -2,6 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Deframer;
+use crate::traits::StreamDeserialize;
 use std::io::Read;
 use std::marker::PhantomData;
 
@@ -138,6 +139,110 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
         Messages { reader: self }
     }
 
+    /// Returns a typed iterator-like object for manual message processing.
+    ///
+    /// This yields verified FlatBuffer roots using the `StreamDeserialize` trait
+    /// while preserving zero-copy lifetimes tied to the reader.
+    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, T>
+    where
+        for<'p> T: StreamDeserialize<'p>,
+    {
+        TypedMessages {
+            reader: self,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Processes all messages in the stream, automatically deserializing them
+    /// into a strongly-typed FlatBuffer root object.
+    ///
+    /// This method combines the high-performance, zero-copy `process_all`
+    /// with the type-safe deserialization provided by the `StreamDeserialize` trait.
+    /// It removes boilerplate and adds compile-time type safety to the reading path.
+    ///
+    /// # Type Parameters
+    /// * `T`: A type that implements `StreamDeserialize<'_>`, representing the
+    ///        expected FlatBuffer root type (e.g., `MyEvent`).
+    /// * `F`: A closure that processes the strongly-typed FlatBuffer root object.
+    ///
+    /// # Arguments
+    /// * `processor` - A closure that receives the deserialized FlatBuffer root object.
+    ///                 It should return `Ok(())` to continue processing or an error to stop.
+    ///
+    /// ```rust
+    /// # use flatstream::*;
+    /// # use std::io::Cursor;
+    /// struct StrRoot;
+    /// impl<'a> StreamDeserialize<'a> for StrRoot {
+    ///     type Root = &'a str;
+    ///     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
+    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+    ///     }
+    /// }
+    ///
+    /// # fn main() -> Result<()> {
+    /// // Write one string root
+    /// let mut buf = Vec::new();
+    /// {
+    ///     let mut writer = StreamWriter::new(Cursor::new(&mut buf), DefaultFramer);
+    ///     let mut builder = flatbuffers::FlatBufferBuilder::new();
+    ///     let s = builder.create_string("hello");
+    ///     builder.finish(s, None);
+    ///     writer.write_finished(&mut builder)?;
+    /// }
+    ///
+    /// // Read with typed API
+    /// let mut reader = StreamReader::new(Cursor::new(&buf), DefaultDeframer);
+    /// reader.process_typed::<StrRoot, _>(|root| {
+    ///     assert_eq!(root, "hello");
+    ///     Ok(())
+    /// })?;
+    /// Ok(())
+    /// # }
+    /// ```
+    pub fn process_typed<T, F>(&mut self, mut processor: F) -> Result<()>
+    where
+        for<'p> T: StreamDeserialize<'p>,
+        for<'p> F: FnMut(<T as StreamDeserialize<'p>>::Root) -> Result<()>,
+    {
+        self.process_all(|payload| {
+            let root = <T as StreamDeserialize<'_>>::from_payload(payload)?;
+            processor(root)
+        })
+    }
+
+    /// Processes all messages using unchecked FlatBuffer root access.
+    ///
+    /// Safety: Only use when the payloads are guaranteed to be valid for the
+    /// expected `T::Root`. This skips FlatBuffers verification.
+    #[cfg(feature = "unsafe_typed")]
+    pub fn process_typed_unchecked<T, F>(&mut self, mut processor: F) -> Result<()>
+    where
+        for<'p> T: StreamDeserialize<'p>,
+        for<'p> F: FnMut(
+            <<T as StreamDeserialize<'p>>::Root as flatbuffers::Follow<'p>>::Inner,
+        ) -> Result<()>,
+    {
+        self.process_all(|payload| {
+            let inner = unsafe {
+                flatbuffers::root_unchecked::<<T as StreamDeserialize<'_>>::Root>(payload)
+            };
+            processor(inner)
+        })
+    }
+
+    /// Processes all messages and passes both the typed root and raw payload.
+    pub fn process_typed_with_payload<T, F>(&mut self, mut processor: F) -> Result<()>
+    where
+        for<'p> T: StreamDeserialize<'p>,
+        for<'p> F: FnMut(<T as StreamDeserialize<'p>>::Root, &'p [u8]) -> Result<()>,
+    {
+        self.process_all(|payload| {
+            let root = <T as StreamDeserialize<'_>>::from_payload(payload)?;
+            processor(root, payload)
+        })
+    }
+
     /// Returns a reference to the underlying reader.
     pub fn get_ref(&self) -> &R {
         &self.reader
@@ -192,6 +297,62 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Option<&[u8]>> {
         self.next_message()
+    }
+}
+
+/// Typed iterator-like object yielding verified FlatBuffer roots.
+pub struct TypedMessages<'a, R: Read, D: Deframer, T>
+where
+    for<'p> T: StreamDeserialize<'p>,
+{
+    reader: &'a mut StreamReader<R, D>,
+    _phantom: PhantomData<T>,
+}
+
+impl<'a, R: Read, D: Deframer, T> TypedMessages<'a, R, D, T>
+where
+    for<'p> T: StreamDeserialize<'p>,
+{
+    /// Returns the next typed root in the stream.
+    ///
+    /// ```rust
+    /// # use flatstream::*;
+    /// # use std::io::Cursor;
+    /// struct StrRoot;
+    /// impl<'a> StreamDeserialize<'a> for StrRoot {
+    ///     type Root = &'a str;
+    ///     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
+    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+    ///     }
+    /// }
+    /// # fn main() -> Result<()> {
+    /// let mut buf = Vec::new();
+    /// {
+    ///     let mut w = StreamWriter::new(Cursor::new(&mut buf), DefaultFramer);
+    ///     let mut b = flatbuffers::FlatBufferBuilder::new();
+    ///     let s = b.create_string("hello");
+    ///     b.finish(s, None);
+    ///     w.write_finished(&mut b)?;
+    /// }
+    /// let mut r = StreamReader::new(Cursor::new(&buf), DefaultDeframer);
+    /// let mut it = r.typed_messages::<StrRoot>();
+    /// let first = it.next().unwrap().unwrap();
+    /// assert_eq!(first, "hello");
+    /// # Ok(()) }
+    /// ```
+    pub fn next_typed<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
+        match self.reader.read_message()? {
+            Some(payload) => {
+                let root = <T as StreamDeserialize<'p>>::from_payload(payload)?;
+                Ok(Some(root))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn next<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
+        self.next_typed()
     }
 }
 

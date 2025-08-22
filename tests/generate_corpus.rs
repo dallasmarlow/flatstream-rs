@@ -26,7 +26,7 @@ fn generate_corpus_files() {
     for (label, payload) in [("empty", empty), ("small", small), ("medium", medium)] {
         let mut out = Vec::new();
         DefaultFramer.frame_and_write(&mut out, payload).unwrap();
-        let path = dir.join(format!("default_{}.bin", label));
+        let path = dir.join(format!("default_{label}.bin"));
         fs::write(path, out).unwrap();
     }
 
@@ -36,7 +36,7 @@ fn generate_corpus_files() {
             let mut out = Vec::new();
             let framer = framing::ChecksumFramer::new(XxHash64::new());
             framer.frame_and_write(&mut out, payload).unwrap();
-            let path = dir.join(format!("xxhash64_{}.bin", label));
+            let path = dir.join(format!("xxhash64_{label}.bin"));
             fs::write(path, out).unwrap();
         }
     }
@@ -47,7 +47,7 @@ fn generate_corpus_files() {
             let mut out = Vec::new();
             let framer = framing::ChecksumFramer::new(Crc32::new());
             framer.frame_and_write(&mut out, payload).unwrap();
-            let path = dir.join(format!("crc32_{}.bin", label));
+            let path = dir.join(format!("crc32_{label}.bin"));
             fs::write(path, out).unwrap();
         }
     }
@@ -58,7 +58,7 @@ fn generate_corpus_files() {
             let mut out = Vec::new();
             let framer = framing::ChecksumFramer::new(Crc16::new());
             framer.frame_and_write(&mut out, payload).unwrap();
-            let path = dir.join(format!("crc16_{}.bin", label));
+            let path = dir.join(format!("crc16_{label}.bin"));
             fs::write(path, out).unwrap();
         }
     }

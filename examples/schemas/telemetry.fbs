@@ -1,0 +1,11 @@
+// Minimal schema for a real flatc-generated example
+namespace telemetry;
+
+table TelemetryEvent {
+  message: string;
+  timestamp: ulong;
+}
+
+root_type TelemetryEvent;
+
+
