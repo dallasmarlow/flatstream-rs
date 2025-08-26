@@ -40,6 +40,8 @@ impl Write for FailingWriter {
 
 #[test]
 fn io_error_propagates() {
+    // Purpose: A write error from the underlying writer must surface as Error::Io
+    // from StreamWriter::write.
     let failing_writer = FailingWriter {
         written: 0,
         fail_after: 10,
@@ -57,6 +59,8 @@ fn io_error_propagates() {
 
 #[test]
 fn invalid_frame_detected_or_eof() {
+    // Purpose: A wildly large length prefix should produce InvalidFrame or UnexpectedEof
+    // when attempting to read the declared payload.
     let mut buffer = Vec::new();
     let huge_length: u32 = 100_000_000;
     buffer.extend_from_slice(&huge_length.to_le_bytes());
@@ -71,6 +75,7 @@ fn invalid_frame_detected_or_eof() {
 
 #[test]
 fn unexpected_eof_detected() {
+    // Purpose: Declared length with missing payload bytes should yield UnexpectedEof.
     let mut buffer = Vec::new();
     let length: u32 = 100;
     buffer.extend_from_slice(&length.to_le_bytes());
@@ -84,6 +89,8 @@ fn unexpected_eof_detected() {
 
 #[test]
 fn clean_eof_ok() {
+    // Purpose: After reading exactly the written messages, subsequent reads should
+    // return Ok(None) (clean EOF), and process_all should iterate the same count.
     let mut buffer = Vec::new();
     {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
@@ -115,6 +122,7 @@ fn clean_eof_ok() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn checksum_mismatch_detected() {
+    // Purpose: Corrupting the checksum bytes should cause ChecksumMismatch on read.
     let mut buffer = Vec::new();
     {
         let framer = ChecksumFramer::new(XxHash64::new());

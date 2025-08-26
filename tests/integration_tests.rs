@@ -11,6 +11,8 @@ test_framer_deframer_pair!(
     DefaultDeframer,
     &((0..3).map(|i| format!("message {i}")).collect::<Vec<_>>())
 );
+// Purpose: Macro-driven test writes with the specified framer and reads with the
+// specified deframer, asserting end-to-end roundtrip for the provided messages.
 
 #[cfg(feature = "xxhash")]
 test_framer_deframer_pair!(
@@ -19,10 +21,12 @@ test_framer_deframer_pair!(
     ChecksumDeframer::new(XxHash64::new()),
     &["important data".to_string()]
 );
+// Purpose: Validate end-to-end roundtrip with checksum-enabled framing/deframing.
 
 #[test]
 #[cfg(feature = "xxhash")]
 fn test_corruption_detection_with_checksum() {
+    // Purpose: After corrupting the on-disk data, checksum deframer should report mismatch.
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(ChecksumFramer::new(XxHash64::new()));
@@ -42,6 +46,7 @@ fn test_corruption_detection_with_checksum() {
 
 #[test]
 fn test_mismatched_framing_strategies() {
+    // Purpose: Reading a default-framed stream with a checksum deframer should fail.
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(DefaultFramer);
@@ -77,6 +82,7 @@ test_framer_deframer_pair!(
 
 #[test]
 fn test_comprehensive_data_types() {
+    // Purpose: Roundtrip a variety of string sizes to check end-to-end behavior.
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(DefaultFramer);
@@ -109,6 +115,7 @@ fn test_comprehensive_data_types() {
 
 #[test]
 fn test_large_stream_stress() {
+    // Purpose: Stress-test writing and reading 1000 messages end-to-end.
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(DefaultFramer);
@@ -136,6 +143,7 @@ fn test_large_stream_stress() {
 
 #[test]
 fn test_realistic_telemetry_data() {
+    // Purpose: Roundtrip telemetry-like string payloads end-to-end.
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(DefaultFramer);
@@ -168,6 +176,7 @@ fn test_realistic_telemetry_data() {
 
 #[test]
 fn test_partial_file_read() {
+    // Purpose: Truncating the file should surface UnexpectedEof in both process_all and messages().
     let harness = TestHarness::new();
     {
         let mut w = harness.writer(DefaultFramer);

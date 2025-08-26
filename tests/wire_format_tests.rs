@@ -3,6 +3,7 @@ use flatstream::*;
 
 #[test]
 fn defaultframer_layout() {
+    // Purpose: Verify DefaultFramer writes [4-byte LE length | payload].
     let payload = b"abc";
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, payload).unwrap();
@@ -15,6 +16,7 @@ fn defaultframer_layout() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn checksumframer_layout_xxhash64() {
+    // Purpose: Verify ChecksumFramer::<XxHash64> writes [4-byte LE length | 8-byte checksum | payload].
     use flatstream::framing::ChecksumFramer;
     let payload = b"abc";
     let mut out = Vec::new();
@@ -30,6 +32,7 @@ fn checksumframer_layout_xxhash64() {
 #[cfg(feature = "crc32")]
 #[test]
 fn checksumframer_layout_crc32() {
+    // Purpose: Verify ChecksumFramer::<Crc32> writes [4-byte LE length | 4-byte checksum | payload].
     use flatstream::framing::ChecksumFramer;
     let payload = b"abc";
     let mut out = Vec::new();
@@ -45,6 +48,7 @@ fn checksumframer_layout_crc32() {
 #[cfg(feature = "crc16")]
 #[test]
 fn checksumframer_layout_crc16() {
+    // Purpose: Verify ChecksumFramer::<Crc16> writes [4-byte LE length | 2-byte checksum | payload].
     use flatstream::framing::ChecksumFramer;
     let payload = b"abc";
     let mut out = Vec::new();

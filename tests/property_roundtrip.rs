@@ -16,6 +16,7 @@ impl<'a> StreamDeserialize<'a> for StrRoot {
 proptest! {
     #[test]
     fn roundtrip_default_deframer(ref data in proptest::collection::vec(any::<u8>(), 0..1024)) {
+        // Purpose: For arbitrary payloads up to 1 KiB, default framing + deframing roundtrips exactly.
         // frame
         let mut out = Vec::new();
         DefaultFramer.frame_and_write(&mut out, data).unwrap();
@@ -32,6 +33,7 @@ const MAX_PROPTEST_PAYLOAD_SIZE: usize = 2048;
 proptest! {
     #[test]
     fn bounded_roundtrip(ref data in proptest::collection::vec(any::<u8>(), 0..MAX_PROPTEST_PAYLOAD_SIZE)) {
+        // Purpose: Under a shared bound, fluent bounded framer/deframer roundtrip arbitrary data.
         let limit = MAX_PROPTEST_PAYLOAD_SIZE + 1;
         let framer = DefaultFramer.bounded(limit);
         let deframer = DefaultDeframer.bounded(limit);
@@ -50,6 +52,7 @@ proptest! {
     #[cfg(feature="crc32")]
     #[test]
     fn checksum_crc32_roundtrip(ref data in proptest::collection::vec(any::<u8>(), 0..MAX_PROPTEST_PAYLOAD_SIZE)) {
+        // Purpose: CRC32-framed streams roundtrip arbitrary data through checksum deframing.
         let framer = ChecksumFramer::new(Crc32::new());
         let deframer = ChecksumDeframer::new(Crc32::new());
 
@@ -67,6 +70,7 @@ proptest! {
 proptest! {
     #[test]
     fn typed_roundtrip_strings(ref s in "[a-zA-Z0-9 _-]{0,128}") {
+        // Purpose: Typed reading returns the same string root as encoded, across arbitrary strings.
         // frame
         let mut out = Vec::new();
         let mut builder = flatbuffers::FlatBufferBuilder::new();

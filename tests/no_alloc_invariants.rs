@@ -33,6 +33,8 @@ fn get_allocs() -> usize {
 
 #[test]
 fn zero_alloc_in_process_all_and_messages() {
+    // Purpose: Verify no heap allocations occur during read paths (`process_all` and
+    // `messages()`), ensuring zero-allocation invariants hold for hot paths.
     // Build a stream with multiple messages
     let mut out = Vec::new();
     for _ in 0..5 {
@@ -62,6 +64,8 @@ fn zero_alloc_in_process_all_and_messages() {
 
 #[test]
 fn zero_alloc_in_typed_paths() {
+    // Purpose: Verify typed read paths (`process_typed`, `typed_messages`) are also
+    // zero-allocation, preserving the same invariants as raw payload paths.
     // Build a stream with multiple messages (each payload is a finished FB string)
     let mut out = Vec::new();
     {

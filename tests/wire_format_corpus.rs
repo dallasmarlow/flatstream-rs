@@ -8,6 +8,8 @@ fn read_file(path: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn corpus_default_layout_and_roundtrip() {
+    // Purpose: Validate golden corpus files for DefaultFramer: each file contains
+    // exactly one frame; assert header layout and round-trip via DefaultDeframer.
     for label in ["empty", "small", "medium"] {
         let path = format!("tests/corpus/default_{label}.bin");
         let Some(bytes) = read_file(&path) else {
@@ -33,6 +35,8 @@ fn corpus_default_layout_and_roundtrip() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn corpus_xxhash_layout_and_roundtrip() {
+    // Purpose: Validate xxhash64 corpus layout and roundtrip; also confirm that a
+    // default deframer cannot read a checksum-framed stream (mismatched strategies).
     for label in ["empty", "small", "medium"] {
         let path = format!("tests/corpus/xxhash64_{label}.bin");
         let Some(bytes) = read_file(&path) else {
@@ -65,6 +69,7 @@ fn corpus_xxhash_layout_and_roundtrip() {
 #[cfg(feature = "crc32")]
 #[test]
 fn corpus_crc32_layout_and_roundtrip() {
+    // Purpose: Validate crc32 corpus layout and roundtrip; default deframer must fail.
     for label in ["empty", "small", "medium"] {
         let path = format!("tests/corpus/crc32_{label}.bin");
         let Some(bytes) = read_file(&path) else {
@@ -95,6 +100,7 @@ fn corpus_crc32_layout_and_roundtrip() {
 #[cfg(feature = "crc16")]
 #[test]
 fn corpus_crc16_layout_and_roundtrip() {
+    // Purpose: Validate crc16 corpus layout and roundtrip; default deframer must fail.
     for label in ["empty", "small", "medium"] {
         let path = format!("tests/corpus/crc16_{label}.bin");
         let Some(bytes) = read_file(&path) else {

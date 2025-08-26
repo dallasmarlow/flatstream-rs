@@ -24,6 +24,8 @@ macro_rules! test_deframer {
 
             #[test]
             fn test_correctness() {
+                // Purpose: For a given deframer, confirm we can read back all framed messages
+                // and that each payload corresponds to what was written (content check simplified).
                 let mut buffer = Vec::new();
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
                 let messages = vec!["message 1", "another message", "final message"];
@@ -55,6 +57,7 @@ macro_rules! test_deframer {
 
             #[test]
             fn test_partial_stream_handling() {
+                // Purpose: Truncating the stream should cause an UnexpectedEof when reading.
                 let mut buffer = Vec::new();
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
                 write_test_data(&mut writer, &["a complete message"]);
@@ -72,6 +75,7 @@ macro_rules! test_deframer {
 
             #[test]
             fn test_empty_stream() {
+                // Purpose: Empty stream should be handled cleanly by process_all and read_message.
                 let buffer = Vec::new();
                 let deframer = $deframer_expr;
                 let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
@@ -86,6 +90,8 @@ macro_rules! test_deframer {
 
             #[test]
             fn test_corrupted_length_prefix() {
+                // Purpose: Corrupting the length field to an absurdly large value should
+                // lead to an UnexpectedEof when the deframer attempts to read past the buffer.
                 let mut buffer = Vec::new();
                 let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
                 write_test_data(&mut writer, &["a message"]);

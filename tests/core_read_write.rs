@@ -5,6 +5,9 @@ use test_harness::TestHarness;
 
 #[test]
 fn table_driven_basic_cycles() {
+    // Purpose: Validate write+read cycles over a variety of message counts/sizes using
+    // both the high-performance processor API (process_all) and the expert iterator (messages()).
+    // Ensures correctness (counts match, non-empty payloads for non-empty cases).
     let mut h = TestHarness::new();
     let cases: &[(&str, Vec<usize>)] = &[
         ("empty", vec![]),

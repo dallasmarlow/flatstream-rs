@@ -28,6 +28,7 @@ fn build_string_messages(count: usize) -> Vec<u8> {
 
 #[test]
 fn typed_read_default_deframer() {
+    // Purpose: Typed processing with DefaultDeframer yields expected roots and counts.
     let data = build_string_messages(3);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
     let mut count = 0;
@@ -43,6 +44,7 @@ fn typed_read_default_deframer() {
 
 #[test]
 fn typed_messages_iterator_default() {
+    // Purpose: The typed iterator yields the same number of roots with expected content.
     let data = build_string_messages(3);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
     let mut it = reader.typed_messages::<StrRoot>();
@@ -56,6 +58,7 @@ fn typed_messages_iterator_default() {
 
 #[test]
 fn process_typed_with_payload_passes_both() {
+    // Purpose: process_typed_with_payload passes both the typed root and the raw payload slice.
     let data = build_string_messages(1);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
     let mut saw = false;
@@ -72,6 +75,7 @@ fn process_typed_with_payload_passes_both() {
 #[cfg(feature = "unsafe_typed")]
 #[test]
 fn process_typed_unchecked_skips_verification() {
+    // Purpose: Unchecked typed processing skips verification but still iterates the same count.
     let data = build_string_messages(2);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
     let mut count = 0;
@@ -86,6 +90,7 @@ fn process_typed_unchecked_skips_verification() {
 
 #[test]
 fn typed_read_safe_take_deframer() {
+    // Purpose: Typed reading works equivalently with SafeTakeDeframer.
     let data = build_string_messages(3);
     let mut reader = StreamReader::new(Cursor::new(&data), SafeTakeDeframer);
     let mut count = 0;
@@ -100,6 +105,7 @@ fn typed_read_safe_take_deframer() {
 
 #[test]
 fn typed_read_unsafe_deframer() {
+    // Purpose: Typed reading works equivalently with UnsafeDeframer (trusted data).
     let data = build_string_messages(3);
     let mut reader = StreamReader::new(Cursor::new(&data), UnsafeDeframer);
     let mut count = 0;
@@ -115,6 +121,7 @@ fn typed_read_unsafe_deframer() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn typed_read_checksum_xxhash64() {
+    // Purpose: Typed reading works with checksum framing/deframing (XXHash64).
     let mut buf = Vec::new();
     let mut writer = StreamWriter::new(Cursor::new(&mut buf), ChecksumFramer::new(XxHash64::new()));
     let mut builder = FlatBufferBuilder::new();
@@ -138,6 +145,7 @@ fn typed_read_checksum_xxhash64() {
 #[cfg(feature = "crc32")]
 #[test]
 fn typed_read_checksum_crc32() {
+    // Purpose: Typed reading works with checksum framing/deframing (CRC32).
     let mut buf = Vec::new();
     let mut writer = StreamWriter::new(Cursor::new(&mut buf), ChecksumFramer::new(Crc32::new()));
     let mut builder = FlatBufferBuilder::new();
@@ -161,6 +169,7 @@ fn typed_read_checksum_crc32() {
 #[cfg(feature = "crc16")]
 #[test]
 fn typed_read_checksum_crc16() {
+    // Purpose: Typed reading works with checksum framing/deframing (CRC16).
     let mut buf = Vec::new();
     let mut writer = StreamWriter::new(Cursor::new(&mut buf), ChecksumFramer::new(Crc16::new()));
     let mut builder = FlatBufferBuilder::new();
@@ -184,6 +193,7 @@ fn typed_read_checksum_crc16() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn checksum_mismatch_propagates_error_typed() {
+    // Purpose: When payload is corrupted, typed processing returns a checksum mismatch error.
     // Write valid frame with checksum
     let mut buf = Vec::new();
     let mut writer = StreamWriter::new(Cursor::new(&mut buf), ChecksumFramer::new(XxHash64::new()));
@@ -207,6 +217,7 @@ fn checksum_mismatch_propagates_error_typed() {
 
 #[test]
 fn processor_error_propagates_and_stops_typed() {
+    // Purpose: An error in the typed processor closure propagates and stops iteration.
     let data = build_string_messages(5);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
     let mut count = 0usize;
@@ -228,6 +239,7 @@ fn processor_error_propagates_and_stops_typed() {
 
 #[test]
 fn from_payload_invalid_and_empty() {
+    // Purpose: from_payload surfaces FlatbuffersError for empty or invalid payloads.
     // Empty
     let empty: &[u8] = &[];
     let err = StrRoot::from_payload(empty).unwrap_err();

@@ -2,6 +2,8 @@ use flatstream::*;
 
 #[test]
 fn oversized_length_returns_invalid_frame_or_eof() {
+    // Purpose: Increasing the length prefix beyond the actual payload should cause
+    // a read failure (commonly UnexpectedEof when attempting to read past the end).
     // Build a frame with claimed length larger than actual payload, using default framing
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, b"hello").unwrap();
@@ -20,6 +22,8 @@ fn oversized_length_returns_invalid_frame_or_eof() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn corrupted_checksum_region_returns_mismatch() {
+    // Purpose: Corrupting bytes inside the checksum region must be detected and surfaced
+    // as a ChecksumMismatch when using the checksum deframer.
     // Build a valid checksummed frame
     let mut out = Vec::new();
     let framer = ChecksumFramer::new(XxHash64::new());
