@@ -16,6 +16,7 @@ fn make_frame(payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn bounded_deframer_happy_path() {
+    // Purpose: BoundedDeframer should accept a frame under the limit and return the payload.
     let payload = vec![1u8, 2, 3, 4, 5];
     let data = make_frame(&payload);
 
@@ -30,6 +31,7 @@ fn bounded_deframer_happy_path() {
 
 #[test]
 fn bounded_deframer_over_limit() {
+    // Purpose: BoundedDeframer should reject frames whose declared length exceeds the bound.
     let payload = vec![0u8; 16];
     let data = make_frame(&payload);
 
@@ -50,6 +52,7 @@ fn bounded_deframer_over_limit() {
 
 #[test]
 fn bounded_framer_happy_path() {
+    // Purpose: BoundedFramer should allow payloads under the limit and support round-trip.
     let payload = b"abcde"; // 5 bytes
     let mut out = Vec::new();
     let framer = BoundedFramer::new(DefaultFramer, 10);
@@ -71,6 +74,7 @@ fn bounded_framer_happy_path() {
 #[test]
 #[should_panic(expected = "InvalidFrame")]
 fn write_over_limit_should_panic() {
+    // Purpose: Writing over the bound should return InvalidFrame; unwrap triggers panic here.
     let mut out = Vec::new();
     let framer = DefaultFramer.bounded(4);
     // 5 bytes exceeds the bound; this should panic inside unwrap()
@@ -79,6 +83,7 @@ fn write_over_limit_should_panic() {
 
 #[test]
 fn observer_framer_callback_invoked() {
+    // Purpose: ObserverFramer invokes the callback with the payload on write.
     let observed_len = Cell::new(0usize);
     let payload = b"observe me";
     let framer = ObserverFramer::new(DefaultFramer, |p: &[u8]| {
@@ -92,6 +97,7 @@ fn observer_framer_callback_invoked() {
 
 #[test]
 fn observer_deframer_callback_invoked() {
+    // Purpose: ObserverDeframer invokes the callback with the payload on read.
     let payload = b"hello world".to_vec();
     let data = make_frame(&payload);
 
@@ -121,6 +127,7 @@ fn observer_deframer_callback_invoked() {
 #[cfg(feature = "xxhash")]
 #[test]
 fn observer_with_checksum_xxhash_callbacks_invoked() {
+    // Purpose: Observer callbacks fire correctly with ChecksumFramer/ChecksumDeframer (xxhash).
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
     use flatstream::XxHash64;
 
@@ -157,6 +164,7 @@ fn observer_with_checksum_xxhash_callbacks_invoked() {
 #[cfg(feature = "crc32")]
 #[test]
 fn observer_with_checksum_crc32_callbacks_invoked() {
+    // Purpose: Observer callbacks fire correctly with CRC32-framed streams.
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
     use flatstream::Crc32;
 
@@ -191,6 +199,7 @@ fn observer_with_checksum_crc32_callbacks_invoked() {
 #[cfg(feature = "crc16")]
 #[test]
 fn observer_with_checksum_crc16_callbacks_invoked() {
+    // Purpose: Observer callbacks fire correctly with CRC16-framed streams.
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
     use flatstream::Crc16;
 
@@ -224,6 +233,7 @@ fn observer_with_checksum_crc16_callbacks_invoked() {
 
 #[test]
 fn fluent_bounded_equivalence_framer() {
+    // Purpose: Fluent API .bounded() produces identical behavior to manual BoundedFramer.
     let payload_ok = vec![0u8; 5];
     let payload_bad = vec![0u8; 6];
 
@@ -248,6 +258,7 @@ fn fluent_bounded_equivalence_framer() {
 
 #[test]
 fn fluent_bounded_equivalence_deframer() {
+    // Purpose: Fluent API .bounded() produces identical behavior to manual BoundedDeframer.
     // Create a frame with payload length 6
     let data_bad = make_frame(&[1u8; 6]);
     let data_ok = make_frame(&[2u8; 5]);
@@ -292,6 +303,7 @@ fn fluent_bounded_equivalence_deframer() {
 
 #[test]
 fn fluent_observed_equivalence_framer() {
+    // Purpose: Fluent API .observed() produces identical output bytes to manual ObserverFramer.
     let payload = b"xyz";
     let mut a = Vec::new();
     let mut b = Vec::new();
@@ -307,6 +319,7 @@ fn fluent_observed_equivalence_framer() {
 
 #[test]
 fn fluent_observed_equivalence_deframer() {
+    // Purpose: Fluent API .observed() produces payloads identical to manual ObserverDeframer.
     let payload = b"observe".to_vec();
     let mut framed = Vec::new();
     DefaultFramer
@@ -335,6 +348,7 @@ fn fluent_observed_equivalence_deframer() {
 
 #[test]
 fn fluent_observed_callbacks_invoked() {
+    // Purpose: Fluent observed adapters invoke callbacks once per write/read with expected data.
     // Framer: callback should see payload length
     let observed_len = Cell::new(0usize);
     let framer = DefaultFramer.observed(|p: &[u8]| observed_len.set(p.len()));

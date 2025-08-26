@@ -6,8 +6,8 @@ use test_harness::TestHarness;
 
 #[test]
 fn sized_checksums_independent_streams() {
-    // Each checksum strategy validated on an independent stream.
-    // This reflects intended usage (no implicit format switching mid-stream).
+    // Purpose: Validate each checksum strategy independently, mirroring intended
+    // usage where a stream does not switch formats mid-stream.
 
     #[cfg(feature = "crc16")]
     {

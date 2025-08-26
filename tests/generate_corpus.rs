@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 #[test]
 fn generate_corpus_files() {
-    // This test is ignored by default to avoid writing files in CI runs.
+    // Purpose: Generate golden corpus files for wire format tests. Skips by default
+    // unless GENERATE_CORPUS=1 is set, to avoid filesystem writes in CI.
     if std::env::var("GENERATE_CORPUS").ok().as_deref() != Some("1") {
         eprintln!("skipping corpus generation; set GENERATE_CORPUS=1 to enable");
         return;

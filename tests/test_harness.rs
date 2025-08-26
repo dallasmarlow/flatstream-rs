@@ -24,11 +24,13 @@ impl TestHarness {
     }
 
     pub fn writer<F: Framer>(&self, framer: F) -> StreamWriter<BufWriter<File>, F> {
+        // Purpose: Provide a buffered writer bound to a temp file for end-to-end tests.
         let file = File::create(&self.path).unwrap();
         StreamWriter::new(BufWriter::new(file), framer)
     }
 
     pub fn reader<D: Deframer>(&self, deframer: D) -> StreamReader<BufReader<File>, D> {
+        // Purpose: Provide a buffered reader bound to the same temp file.
         let file = File::open(&self.path).unwrap();
         StreamReader::new(BufReader::new(file), deframer)
     }
@@ -65,6 +67,7 @@ impl Default for TestHarness {
 impl TestHarness {
     #[allow(dead_code)]
     pub fn gen_string(&mut self, len: usize) -> String {
+        // Purpose: Generate a pseudo-random ASCII string of the requested length.
         let mut s = String::with_capacity(len);
         for _ in 0..len {
             let c = (b'a' + (self.rng.gen::<u8>() % 26)) as char;
@@ -75,6 +78,7 @@ impl TestHarness {
 
     #[allow(dead_code)]
     pub fn gen_mixed_messages(&mut self, sizes: &[usize]) -> Vec<String> {
+        // Purpose: Generate a vector of random strings matching requested sizes.
         sizes.iter().map(|&n| self.gen_string(n)).collect()
     }
 }
@@ -91,7 +95,7 @@ macro_rules! test_framer_deframer_pair {
 
             let harness = TestHarness::new();
 
-            // Write phase
+            // Write phase: frame and persist messages using the provided framer
             {
                 let mut stream_writer = harness.writer($framer);
                 let mut builder = FlatBufferBuilder::new();
@@ -104,7 +108,7 @@ macro_rules! test_framer_deframer_pair {
                 stream_writer.flush().unwrap();
             }
 
-            // Read phase
+            // Read phase: deframe and count messages using the provided deframer
             {
                 let mut stream_reader = harness.reader($deframer);
                 let mut count = 0usize;

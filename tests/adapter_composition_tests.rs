@@ -4,6 +4,8 @@ use std::cell::Cell;
 
 #[test]
 fn bounded_observed_framer_works() {
+    // Purpose: The fluent-composed framer (bounded + observed) should invoke the
+    // observer on valid payloads and reject oversized payloads with InvalidFrame.
     let seen = Cell::new(false);
     let framer = DefaultFramer.bounded(128).observed(|p| {
         seen.set(true);
@@ -23,6 +25,8 @@ fn bounded_observed_framer_works() {
 
 #[test]
 fn bounded_observed_deframer_works() {
+    // Purpose: The fluent-composed deframer (bounded + observed) should enforce the
+    // max length and invoke the observer with a payload that fits the bound.
     let seen = Cell::new(false);
     let deframer = DefaultDeframer.bounded(128).observed(|p| {
         seen.set(true);

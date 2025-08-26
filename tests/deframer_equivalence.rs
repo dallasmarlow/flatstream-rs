@@ -2,6 +2,8 @@ use flatstream::*;
 
 #[test]
 fn deframers_produce_identical_payloads() {
+    // Purpose: DefaultDeframer, SafeTakeDeframer, and UnsafeDeframer all produce
+    // the same payload bytes for a valid frame.
     // Frame a payload
     let mut out = Vec::new();
     let payload = b"equivalence-check";

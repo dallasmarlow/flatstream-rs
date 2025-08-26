@@ -7,6 +7,7 @@ use harness::faulty_reader::{FaultMode, FaultyReader};
 
 #[test]
 fn short_reads_are_handled() {
+    // Purpose: Reader should handle an underlying reader that returns very small chunks.
     // Build a valid default-framed message
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, b"hello").unwrap();
@@ -28,6 +29,7 @@ fn short_reads_are_handled() {
 
 #[test]
 fn interrupted_reads_are_retried() {
+    // Purpose: Simulate EINTR; loop until success, verifying that surface errors are retriable.
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, b"world").unwrap();
     let inner = std::io::Cursor::new(out);
@@ -50,6 +52,7 @@ fn interrupted_reads_are_retried() {
 
 #[test]
 fn premature_eof_yields_unexpected_eof() {
+    // Purpose: A reader that stops mid-frame should produce UnexpectedEof on read_message.
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, b"abcdef").unwrap();
     let inner = std::io::Cursor::new(out);
