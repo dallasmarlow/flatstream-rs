@@ -1,3 +1,5 @@
+// Example purpose: Shows high-throughput patterns: always buffer I/O (BufWriter/BufReader),
+// reuse FlatBufferBuilder with reset(), and prefer write_finished() in hot loops.
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
 use std::fs::File;

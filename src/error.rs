@@ -49,6 +49,8 @@ impl Error {
     }
 
     /// Create a new `InvalidFrame` error with contextual details.
+    ///
+    /// Context fields are optional; pass `Some(..)` where known to improve diagnostics.
     pub fn invalid_frame_with(
         message: impl Into<String>,
         declared_len: Option<usize>,

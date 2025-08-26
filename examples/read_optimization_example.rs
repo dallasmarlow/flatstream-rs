@@ -1,3 +1,5 @@
+// Example purpose: Demonstrates zero-allocation read patterns using process_all() and
+// messages() along with BufReader. Highlights payload lifetime rules (valid until next read).
 use flatstream::{
     DefaultDeframer, DefaultFramer, Result, SafeTakeDeframer, StreamReader, StreamWriter,
     UnsafeDeframer,

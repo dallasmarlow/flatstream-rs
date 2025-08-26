@@ -1,3 +1,6 @@
+// Example purpose: Demonstrates moving serialization out of the tight write loop
+// and reusing multiple builders for different message sizes to control memory bloat
+// and maximize throughput (expert mode with write_finished()).
 //! Example demonstrating expert mode with external builder management for high performance.
 //!
 //! This example shows the performance difference between:

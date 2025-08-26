@@ -7,11 +7,16 @@ use std::io::{Read, Write};
 //--- Framer Trait and Implementations ---
 
 /// A trait that defines how a raw payload is framed and written to a stream.
+///
+/// Purpose: Separate wire-format concerns (headers/checksums) from I/O and serialization.
+/// Implementations are small strategy objects composed into `StreamWriter`.
 pub trait Framer {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()>;
 }
 
 /// The default framing strategy: `[4-byte length | payload]`
+///
+/// When to use: Highest throughput baseline when you don't need integrity checks.
 pub struct DefaultFramer;
 
 impl Framer for DefaultFramer {
@@ -24,6 +29,8 @@ impl Framer for DefaultFramer {
 }
 
 /// A framing strategy that includes a checksum: `[4-byte length | 8-byte checksum | payload]`
+///
+/// When to use: Integrity validation at read-time and/or independent message corruption detection.
 pub struct ChecksumFramer<C: Checksum> {
     checksum_alg: C,
 }
@@ -73,6 +80,8 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
 //--- Deframer Trait and Implementations ---
 
 /// A trait that defines how a message is deframed and read from a stream.
+///
+/// Purpose: Parse a framed stream into payload slices, validating headers and (optionally) checksums.
 pub trait Deframer {
     /// Returns Ok(Some(())) on success, Ok(None) on clean EOF.
     fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>)
@@ -89,6 +98,8 @@ pub trait Deframer {
 }
 
 /// The default deframing strategy.
+///
+/// When to use: Safe, straightforward parser. Resizes and zeroes the buffer.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultDeframer;
 
@@ -133,6 +144,8 @@ impl Deframer for DefaultDeframer {
 }
 
 /// A deframing strategy that verifies a checksum.
+///
+/// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
 #[derive(Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
@@ -262,6 +275,9 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
 }
 
 /// A high-performance deframer that uses an `unsafe` block to avoid unnecessary buffer zeroing.
+///
+/// Safety: Only use with trusted data sources (e.g., files you just wrote). Avoids buffer
+/// initialization to remove zeroing cost; ensures capacity via `reserve` and sets length with `unsafe`.
 #[derive(Clone, Copy, Default)]
 pub struct UnsafeDeframer;
 
@@ -320,6 +336,8 @@ impl Deframer for UnsafeDeframer {
 }
 
 /// Deframer using the safe `Read::take` method.
+///
+/// When to use: Alternative safe implementation; performance may vary with reader type.
 #[derive(Clone, Copy, Default)]
 pub struct SafeTakeDeframer;
 
@@ -370,6 +388,8 @@ impl Deframer for SafeTakeDeframer {
 }
 
 /// A composable adapter that enforces a maximum frame length for any deframer
+///
+/// Failure semantics: Returns `Error::InvalidFrame` with context (declared_len/limit) when exceeded.
 /// that begins by reading a 4-byte little-endian payload length.
 pub struct BoundedDeframer<D: Deframer> {
     inner: D,
@@ -434,6 +454,8 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
 pub type MaxFrameLen<D> = BoundedDeframer<D>;
 
 /// A composable adapter that enforces a maximum payload length for any framer.
+///
+/// Failure semantics: Returns `Error::InvalidFrame` with context (payload len/limit) when exceeded.
 pub struct BoundedFramer<F: Framer> {
     inner: F,
     max_len: usize,
@@ -462,6 +484,8 @@ impl<F: Framer> Framer for BoundedFramer<F> {
 //--- Observer Adapters ---
 
 /// An adapter that allows observing payloads on the write path without copying or mutating.
+///
+/// Callback timing: Invoked exactly once per frame, before delegating inner framing.
 pub struct ObserverFramer<F: Framer, C: Fn(&[u8])> {
     inner: F,
     callback: C,
@@ -481,6 +505,8 @@ impl<F: Framer, C: Fn(&[u8])> Framer for ObserverFramer<F, C> {
 }
 
 /// An adapter that allows observing payloads on the read path without copying or mutating.
+///
+/// Callback timing: Invoked exactly once per frame, after inner deframing succeeds.
 pub struct ObserverDeframer<D: Deframer, C: Fn(&[u8])> {
     inner: D,
     callback: C,
