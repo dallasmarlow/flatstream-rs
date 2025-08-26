@@ -24,10 +24,9 @@ fn corpus_default_layout_and_roundtrip() {
             Ok(())
         })
         .unwrap();
-        // NOTE: The branch is intentionally identical to make the condition explicit and
-        // guard against future format/layout changes. We expect exactly one message
-        // regardless of length here because each file contains a single framed payload.
-        assert_eq!(count, if len == 0 && bytes.len() == 4 { 1 } else { 1 });
+        // We expect exactly one message regardless of length here because each file
+        // contains a single framed payload.
+        assert_eq!(count, 1);
     }
 }
 

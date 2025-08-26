@@ -162,12 +162,12 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     ///
     /// # Type Parameters
     /// * `T`: A type that implements `StreamDeserialize<'_>`, representing the
-    ///        expected FlatBuffer root type (e.g., `MyEvent`).
+    ///   expected FlatBuffer root type (e.g., `MyEvent`).
     /// * `F`: A closure that processes the strongly-typed FlatBuffer root object.
     ///
     /// # Arguments
     /// * `processor` - A closure that receives the deserialized FlatBuffer root object.
-    ///                 It should return `Ok(())` to continue processing or an error to stop.
+    ///   It should return `Ok(())` to continue processing or an error to stop.
     ///
     /// ```rust
     /// # use flatstream::*;
