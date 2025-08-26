@@ -26,11 +26,27 @@ fn prepare_buffer(count: usize) -> Vec<u8> {
 }
 
 fn bench_typed_vs_manual(c: &mut Criterion) {
+    // ---
+    // # Benchmark Purpose: Typed vs. Manual Root Access
+    //
+    // Central question: Does the typed reading API add overhead relative to manual
+    // `flatbuffers::root` access? What about the unchecked, unsafe variant?
+    //
+    // Design: Prebuild buffers with 1k/10k/100k string messages, then compare:
+    // - manual_*: manual `flatbuffers::root::<&str>` within `process_all`
+    // - typed_*: `process_typed::<StrRoot, _>` using `StreamDeserialize`
+    // - typed_unchecked_*: `process_typed_unchecked` (feature-gated), skipping verification
+    //
+    // Takeaway:
+    // - typed_* should match manual_* throughput for valid data, with better ergonomics/safety
+    // - typed_unchecked_* can be faster but is only safe for trusted data
+    // ---
     let mut group = c.benchmark_group("typed_vs_manual/read_only");
     let small = prepare_buffer(1_000);
     let medium = prepare_buffer(10_000);
     let large = prepare_buffer(100_000);
 
+    // Manual verification path: baseline correctness and performance
     group.bench_function("manual_small", |b| {
         b.iter(|| {
             let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
@@ -70,6 +86,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
         });
     });
 
+    // Typed, safe path: should be equivalent to manual for valid inputs
     group.bench_function("typed_small", |b| {
         b.iter(|| {
             let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
@@ -108,6 +125,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     #[cfg(feature = "unsafe_typed")]
     {
+        // Unchecked typed path: skips verification; use only for trusted data
         group.bench_function("typed_unchecked_small", |b| {
             b.iter(|| {
                 let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);

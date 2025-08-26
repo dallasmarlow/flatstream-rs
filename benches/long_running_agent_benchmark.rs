@@ -81,6 +81,21 @@ impl<'a> MixedMessage<'a> {
 // --- Benchmark Function ---
 
 fn benchmark_long_running_agent(c: &mut Criterion) {
+    // ---
+    // # Benchmark Purpose: Long-Running Agent with Mixed Workload
+    //
+    // Central question: For an agent that streams a mix of small and occasional
+    // large messages to disk, which write pattern balances throughput and memory?
+    //
+    // Design: Simulate a run of 1000 small messages, occasional medium bursts,
+    // and a single large (5 MiB) payload. Compare strategies:
+    // - Simple Mode (single builder): fastest initially but suffers memory bloat
+    // - Expert Mode (re-allocates): minimal memory usage but more allocations
+    // - Expert Mode (tiered buffers): balanced strategy with purpose-sized builders
+    //
+    // Notes: Uses BufWriter + temp file to include I/O; sample_size is reduced
+    // for runtime. Results can vary with OS cache behavior.
+    // ---
     let mut group = c.benchmark_group("Long-Running Agent: Mixed Workload with Large Messages");
 
     // Pre-allocate data to avoid measuring test data allocation itself

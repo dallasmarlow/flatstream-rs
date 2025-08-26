@@ -11,6 +11,15 @@ use std::io::{BufReader, BufWriter, Write};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+// ---
+// # Adapter Micro-benchmarks Overview
+//
+// This file measures the overhead and behavior of adapter layers:
+// - BoundedFramer/BoundedDeframer: enforce payload/frame size limits (under/over limit)
+// - ObserverFramer/ObserverDeframer: attach non-mutating hooks for metrics/logging
+// - Reader capacity and size sweeps: effects of buffer capacity on reallocations/zeroing
+// - File I/O adapter usage: measuring with buffered file handles and realistic durations
+// ---
 fn build_payload(len: usize) -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
     let s = b.create_string(&"x".repeat(len));
@@ -51,7 +60,7 @@ fn bench_bounded_write(c: &mut Criterion) {
         b.iter(|| write_with_framer(black_box(&payload), &framer).unwrap())
     });
 
-    // Over-limit fast-fail path
+    // Over-limit fast-fail path: framing fails immediately when payload exceeds limit
     group.bench_function("bounded_over_limit_error", |b| {
         b.iter(|| {
             let framer = BoundedFramer::new(DefaultFramer, 4);
@@ -107,7 +116,7 @@ fn bench_bounded_read(c: &mut Criterion) {
         })
     });
 
-    // Over-limit fast-stop path: frame with length 64 but limit 16
+    // Over-limit fast-stop path: frame length is 64 but limit is 16; read stops early with error
     let over_bytes = bytes.clone();
     group.bench_function("bounded_over_limit_error", |b| {
         b.iter(|| {

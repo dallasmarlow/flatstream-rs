@@ -7,6 +7,20 @@ use flatstream::{
 use flatstream::{SafeTakeDeframer, UnsafeDeframer};
 use std::io::Cursor;
 
+// ---
+// # Suite Overview
+//
+// This file hosts the main benchmark suite for flatstream-rs. It validates claims across:
+// - Write/Read throughput (default framer)
+// - Zero-allocation reading (`messages()` API)
+// - Write batching and end-to-end cycles
+// - High-frequency and large-message scenarios
+// - Memory efficiency and regression-sensitive operations
+// - Alternative read-path implementations (Default/SafeTake/Unsafe)
+// - Deframer micro and sustained throughput
+//
+// Each group includes brief commentary about the design and what to look for in results.
+// ---
 // Import checksum types when features are enabled
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
@@ -333,6 +347,9 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
             let mut total_size = 0;
 
             // High-performance zero-allocation pattern using messages()
+            // The returned `&[u8]` payload slices borrow from the reader's internal buffer
+            // and are only valid until the next successful read. This avoids any allocations
+            // and preserves the zero-copy philosophy.
             let mut messages = reader.messages();
             while let Some(payload_slice) = messages.next().unwrap() {
                 total_size += payload_slice.len();
@@ -366,7 +383,8 @@ fn benchmark_zero_allocation_reading_with_checksum(c: &mut Criterion) {
             let mut count = 0;
             let mut total_size = 0;
 
-            // High-performance zero-allocation pattern using messages()
+            // High-performance zero-allocation pattern using messages(); same lifetime
+            // constraints as the default deframer path.
             let mut messages = reader.messages();
             while let Some(payload_slice) = messages.next().unwrap() {
                 total_size += payload_slice.len();
@@ -609,7 +627,8 @@ fn benchmark_memory_efficiency(c: &mut Criterion) {
 fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     let events = create_telemetry_events(SMALL_MESSAGE_COUNT);
 
-    // Test 1: Small message writing (most sensitive to dispatch overhead)
+    // Test 1: Small message writing (most sensitive to call overhead)
+    // Purpose: acts as a canary for changes that affect tight loops and small payloads.
     c.bench_function("regression_small_messages", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -626,6 +645,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 
     // Test 2: Monomorphization stress test
+    // Purpose: mixes operations to stress compiler optimization boundaries.
     c.bench_function("regression_monomorphization", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -642,6 +662,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 
     // Test 3: Instruction cache pressure test
+    // Purpose: creates multiple writers and small loops to increase I-cache churn.
     c.bench_function("regression_instruction_cache", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -679,8 +700,8 @@ fn benchmark_read_path_alternatives(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("Read Path Implementations");
 
-    // ADD THIS BLOCK TO YOUR FUNCTION
-    // --- Benchmark the original DefaultDeframer as a baseline ---
+    // Baseline: DefaultDeframer
+    // Safe, straightforward read path that resizes and zeroes the buffer
     group.bench_function("DefaultDeframer (Original)", |b| {
         b.iter(|| {
             let deframer = DefaultDeframer;
@@ -694,7 +715,7 @@ fn benchmark_read_path_alternatives(c: &mut Criterion) {
         });
     });
 
-    // 2. Benchmark the safe `Read::take` implementation
+    // SafeTakeDeframer: Safe alternative using Read::take; may vary by reader
     group.bench_function("SafeTakeDeframer", |b| {
         b.iter(|| {
             let deframer = SafeTakeDeframer;
@@ -708,7 +729,7 @@ fn benchmark_read_path_alternatives(c: &mut Criterion) {
         });
     });
 
-    // 3. Benchmark the `unsafe` implementation
+    // UnsafeDeframer: Avoids zeroing; fastest but requires trusted data source
     group.bench_function("UnsafeDeframer", |b| {
         b.iter(|| {
             let deframer = UnsafeDeframer;

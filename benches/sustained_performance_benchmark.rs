@@ -33,6 +33,16 @@ impl<'a> StreamSerialize for LargeMessage<'a> {
 
 // --- Benchmark Function ---
 fn benchmark_sustained_performance(c: &mut Criterion) {
+    // ---
+    // # Benchmark Purpose: Sustained Throughput After Warm-up
+    //
+    // Central question: After a warm-up with a large message (bloated builder), how does
+    // sustained small-message throughput differ versus a right-sized builder?
+    //
+    // Design: Create a pre-bloated builder by serializing a large message before the
+    // timed loop, then compare against a right-sized builder used throughout. This
+    // models long-running agents that occasionally see large payloads.
+    // ---
     let mut group = c.benchmark_group("Sustained Performance: Writing 1000 small messages");
 
     let small_messages: Vec<_> = (0..1000).map(SmallMessage).collect();
