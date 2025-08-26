@@ -1,5 +1,29 @@
 // benches/comparative_benchmarks.rs
 // Comparative benchmarks between flatstream-rs and alternative serialization approaches
+// ---
+// # Benchmark Purpose: Comparative Analysis
+//
+// Central question: How does flatstream-rs compare to other common Rust
+// serialization libraries (e.g., bincode and serde_json) in a streaming workload?
+//
+// Methodology:
+// Each library performs the same task to ensure an apples-to-apples comparison:
+// 1) Serialize a TelemetryEvent struct
+// 2) Prepend a 4-byte little-endian length prefix (manual for others; built-in for flatstream)
+// 3) Write the framed message to an in-memory buffer
+// 4) Read the stream back by deframing each message
+// 5) Deserialize back into the struct
+//
+// Interpretation:
+// - flatstream_default: Baseline using zero-copy APIs with DefaultFramer
+// - flatstream_*checksum*: Adds a checksum; measures integrity cost
+// - bincode: Fast binary format with manual framing
+// - serde_json: Text format; slowest but human-readable
+//
+// Notes:
+// - In-memory buffers are used to isolate CPU/algorithmic cost from I/O latency.
+// - For flatstream, framing/deframing are handled by strategies; for others it's manual.
+// ---
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
@@ -34,20 +58,16 @@ struct TelemetryEvent {
 }
 
 // --- flatstream-rs Implementation ---
-// PROPER FlatBuffer implementation using binary tables instead of strings
+// A compact binary representation in a FlatBuffer builder. In production you
+// would use a schema-generated table; here we create a tiny binary record for
+// parity across approaches.
 
 impl StreamSerialize for TelemetryEvent {
     fn serialize<A: flatbuffers::Allocator>(
         &self,
         builder: &mut FlatBufferBuilder<A>,
     ) -> flatstream::Result<()> {
-        // Create a proper FlatBuffer table structure
-        // This is much more efficient than string formatting
-
-        // For this benchmark, we'll create a simple binary structure
-        // In a real implementation, you'd use FlatBuffer schema files
-
-        // Create a binary representation: [device_id: u64][timestamp: u64][value: f64]
+        // Binary layout: [device_id: u64][timestamp: u64][value: f64]
         let mut data = Vec::with_capacity(24); // 8 + 8 + 8 bytes
 
         // Add device_id (little-endian)
@@ -57,7 +77,7 @@ impl StreamSerialize for TelemetryEvent {
         // Add value (little-endian)
         data.extend_from_slice(&self.value.to_le_bytes());
 
-        // Create a FlatBuffer string from our binary data
+        // Store as a FlatBuffer vector payload
         let data_vec = builder.create_vector(&data);
         builder.finish(data_vec, None);
         Ok(())
@@ -69,7 +89,7 @@ impl StreamSerialize for TelemetryEvent {
 fn benchmark_alternatives_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("Small Dataset (100 events)");
 
-    // Create test data - 100 telemetry events
+    // Create test data - 100 telemetry events (small dataset)
     let events: Vec<TelemetryEvent> = (0..100)
         .map(|i| TelemetryEvent {
             device_id: i,
@@ -79,6 +99,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
         .collect();
 
     // Benchmark 1: flatstream-rs with default framer (no checksum)
+    // Baseline performance for the recommended zero-copy configuration.
     group.bench_function("flatstream_default", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -103,6 +124,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    // Measures upper bound for read throughput when skipping verification/zeroing.
     group.bench_function("flatstream_default_unsafe_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -127,6 +149,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 2: flatstream-rs with XXHash64 checksum
+    // Measures the cost of computing and verifying a high-speed checksum per message.
     #[cfg(feature = "xxhash")]
     group.bench_function("flatstream_xxhash64", |b| {
         b.iter(|| {
@@ -156,6 +179,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 3: flatstream-rs with CRC32 checksum
+    // Measures CRC32 integrity overhead in the same workload.
     #[cfg(feature = "crc32")]
     group.bench_function("flatstream_crc32", |b| {
         b.iter(|| {
@@ -185,6 +209,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 4: flatstream-rs with CRC16 checksum
+    // Measures CRC16 integrity overhead (smallest checksum size) in the same workload.
     #[cfg(feature = "crc16")]
     group.bench_function("flatstream_crc16", |b| {
         b.iter(|| {
@@ -213,10 +238,9 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 5: flatstream-rs with builder reuse (simulates arena allocation benefits)
-    // Note: While flatstream-rs supports custom allocators, the current design of the
-    // flatbuffers crate's Allocator trait makes it difficult to achieve significant
-    // performance gains over the default allocator's buffer reuse strategy.
+    // Benchmark 5: flatstream-rs with builder reuse (simulated arena-like behavior)
+    // Note: FlatBuffers' allocator trait makes true arena allocators challenging.
+    // The default builder reuse already eliminates most allocations in practice.
     #[cfg(feature = "bumpalo")]
     group.bench_function("flatstream_builder_reuse", |b| {
         b.iter(|| {
@@ -244,6 +268,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 6: bincode + manual framing
+    // Provides a high-performance binary baseline using serde-based encoding.
     group.bench_function("bincode", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -272,6 +297,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 7: JSON + manual framing
+    // Human-readable format; included to illustrate overhead of text encoding/decoding.
     group.bench_function("serde_json", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -305,8 +331,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
 fn benchmark_alternatives_large(c: &mut Criterion) {
     let mut group = c.benchmark_group("Large Dataset (~2.4 MiB)");
 
-    // Create test data - approximately 10MB of telemetry events
-    // Each event is roughly 100 bytes, so we need about 100,000 events
+    // Create test data - approximately a few MiB of telemetry events
+    // Larger dataset to detect scaling effects and amortization differences.
     let events: Vec<TelemetryEvent> = (0..100_000)
         .map(|i| TelemetryEvent {
             device_id: i % 1000, // Reuse device IDs to reduce memory
@@ -316,6 +342,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
         .collect();
 
     // Benchmark 1: flatstream-rs with default framer (no checksum)
+    // Same methodology as the small dataset, but with significantly more events.
     group.bench_function("flatstream_default", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -340,6 +367,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
     });
 
     // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    // Upper-bound read throughput by skipping verification/zeroing.
     group.bench_function("flatstream_default_unsafe_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -364,6 +392,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
     });
 
     // Benchmark 2: flatstream-rs with XXHash64 checksum
+    // Integrity overhead at larger scale.
     #[cfg(feature = "xxhash")]
     group.bench_function("flatstream_xxhash64", |b| {
         b.iter(|| {
@@ -450,10 +479,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 5: flatstream-rs with builder reuse (simulates arena allocation benefits)
-    // Note: While flatstream-rs supports custom allocators, the current design of the
-    // flatbuffers crate's Allocator trait makes it difficult to achieve significant
-    // performance gains over the default allocator's buffer reuse strategy.
+    // Benchmark 5: flatstream-rs with builder reuse (simulated arena-like behavior)
     #[cfg(feature = "bumpalo")]
     group.bench_function("flatstream_builder_reuse", |b| {
         b.iter(|| {

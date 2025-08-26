@@ -1,6 +1,10 @@
 // benches/simple_benchmarks.rs
 // Simple, high-throughput micro-benchmarks on primitive-type payloads.
-// Compares flatstream (default and unsafe read) with bincode and serde_json.
+// Compares flatstream (default/bounded/unsafe read) with bincode and serde_json.
+// ---
+// Purpose: Provide an easy-to-interpret baseline on tiny numeric and small string
+// shapes, including write+read cycles and read-only deframer isolation. For fairness,
+// bincode/json use manual framing to match flatstream's wire format.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;

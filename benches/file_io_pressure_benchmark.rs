@@ -35,6 +35,19 @@ impl<'a> StreamSerialize for LargeMessage<'a> {
 // --- Benchmark Function ---
 
 fn benchmark_file_io_pressure(c: &mut Criterion) {
+    // ---
+    // # Benchmark Purpose: File I/O Pressure Under Mixed Sizes
+    //
+    // Central question: How does the write path behave, including filesystem effects,
+    // when a run contains one very large message followed by many small messages?
+    //
+    // Design: Tempfile per iteration, BufWriter to reflect best practices. Compare
+    // Simple vs Expert (multiple builders) patterns. The large message is prebuilt
+    // once outside the loop to avoid generation costs in timing.
+    //
+    // Notes: Results are influenced by OS page cache and disk characteristics. The
+    // goal is qualitative comparison between patterns rather than absolute IOPS.
+    // ---
     let mut group = c.benchmark_group("File I/O Pressure: 1 Large (10MB) + 1000 Small Messages");
 
     let small_messages: Vec<_> = (0..1000).map(SmallMessage).collect();

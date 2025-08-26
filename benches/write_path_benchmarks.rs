@@ -41,6 +41,19 @@ enum MixedMessage {
 // --- Benchmark Function ---
 
 fn benchmark_real_world_scenario(c: &mut Criterion) {
+    // ---
+    // # Benchmark Purpose: Write Path Patterns on Mixed Sizes
+    //
+    // Central question: How do Simple vs. Expert write patterns perform when a stream
+    // mixes many small messages with occasional large ones? Which expert pattern matters?
+    //
+    // Design: 1000 small + ~10 large (1 MiB) messages. Compare:
+    // - Simple Mode: single internal builder, will bloat after large message
+    // - Expert (Single Builder): resets one builder; avoids bloat but may over-allocate
+    // - Expert (Multiple Builders): purpose-specific builders for small/large
+    //
+    // Takeaway: Multiple builders avoid bloat and tend to perform best for mixed sizes.
+    // ---
     let mut group = c.benchmark_group("Real-World Performance: Mixed Message Sizes");
 
     // Create a realistic workload: 1000 small messages and 10 large messages (1MB each)
