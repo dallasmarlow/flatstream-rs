@@ -80,7 +80,7 @@ criterion = { version = "0.5", features = ["html_reports"] }  # Performance benc
 
 ### Zero-Copy Throughout
 
-Both writing modes maintain perfect zero-copy behavior - after serialization, data is written directly from the builder's buffer to I/O without intermediate copies. The performance difference between simple and expert modes (0-25%, or ~0.9ns per operation) comes from trait dispatch overhead through the `StreamSerialize` trait in simple mode, not from data copying. This preserves the FlatBuffers philosophy: serialize once, access everywhere, copy never. See `docs/ZERO_COPY_ANALYSIS.md` for detailed analysis.
+Both writing modes maintain perfect zero-copy behavior - after serialization, data is written directly from the builder's buffer to I/O without intermediate copies. The measured performance difference between simple and expert modes (typically 0–25% on tiny messages) is not due to copying. In practice it comes from the work performed inside `StreamSerialize::serialize()` plus the small cost of a monomorphized method call in the simple-mode hot loop. See the "Practical Write-Path: Simple vs. Expert Mode" and "Pure Call Overhead: StreamSerialize Dispatch" benchmarks for an empirical breakdown, and `docs/ZERO_COPY_ANALYSIS.md` for detailed analysis.
 
 ### Hybrid API Design (v2.6)
 
@@ -88,10 +88,10 @@ The library provides both simple and expert modes for writing:
 - **Simple Mode**: `write()` with internal builder management
   - Best for uniform message sizes
   - Single builder can grow large and stay large
-  - Small trait dispatch overhead (~0.9ns per operation)
+  - Small monomorphized call overhead (measured ~0.3–0.9ns per operation; see micro-bench)
 - **Expert Mode**: `write_finished()` with external builder management
   - Enables multiple builders for different message types
-  - Up to 2x faster for large messages (avoids trait dispatch)
+  - Up to 2x faster for large messages (lets you move serialization out of the tight write loop and reuse builders strategically)
   - Better memory control for mixed workloads
 
 This hybrid approach balances ease of use with flexibility, allowing users to start simple and switch to expert mode when they need more control over memory usage or performance with large messages.
@@ -493,7 +493,7 @@ The telemetry agent example demonstrates:
 - Zero-allocation reading: Excellent performance with both APIs
 - Sized checksums: **Up to 75% reduction** in checksum overhead for small messages
 
-**Note**: The performance difference between simple and expert modes is NOT due to data copying (both are equally zero-copy), but rather from the trait dispatch overhead when calling `StreamSerialize::serialize()` in simple mode.
+**Note**: The performance difference between simple and expert modes is NOT due to data copying (both are equally zero-copy). For tiny messages the difference primarily reflects the serialize work done per-iteration in simple mode, plus a small call overhead (see "Pure Call Overhead" bench).
 
 ---
 

@@ -399,8 +399,11 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
         if payload_len > self.max {
-            return Err(Error::invalid_frame(
+            return Err(Error::invalid_frame_with(
                 "frame length exceeds configured limit",
+                Some(payload_len),
+                None,
+                Some(self.max),
             ));
         }
 
@@ -414,8 +417,11 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
         payload_len: usize,
     ) -> Result<Option<()>> {
         if payload_len > self.max {
-            return Err(Error::invalid_frame(
+            return Err(Error::invalid_frame_with(
                 "frame length exceeds configured limit",
+                Some(payload_len),
+                None,
+                Some(self.max),
             ));
         }
         self.inner.read_after_length(reader, buffer, payload_len)
@@ -442,8 +448,11 @@ impl<F: Framer> BoundedFramer<F> {
 impl<F: Framer> Framer for BoundedFramer<F> {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
         if payload.len() > self.max_len {
-            return Err(Error::invalid_frame(
+            return Err(Error::invalid_frame_with(
                 "payload length exceeds configured limit",
+                Some(payload.len()),
+                None,
+                Some(self.max_len),
             ));
         }
         self.inner.frame_and_write(writer, payload)

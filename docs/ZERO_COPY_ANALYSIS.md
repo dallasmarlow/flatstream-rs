@@ -37,7 +37,7 @@ pub fn write_finished<A: flatbuffers::Allocator>(
 
 **Key Insight**: Both modes are EQUALLY zero-copy. The performance differences come from:
 - Memory management (builder sizing)
-- Trait dispatch overhead
+- Small call overhead in simple-mode hot loops (monomorphized call)
 - Flexibility (multiple builders)
 
 NOT from copying data!
@@ -125,4 +125,4 @@ The zero-copy principle is fundamental to FlatBuffers and fully preserved in the
 3. **v2.5 Design**: Would have compromised zero-copy with batching and type erasure
 4. **Current Design**: Maintains perfect zero-copy while adding flexibility
 
-The performance differences between modes are about memory management and dispatch overhead, NOT about copying data. The current implementation honors the FlatBuffers philosophy: serialize once, access everywhere, copy never. 
+The performance differences between modes are about memory management (serialize work per-iteration) and a small monomorphized call overhead, NOT about copying data. The current implementation honors the FlatBuffers philosophy: serialize once, access everywhere, copy never.
