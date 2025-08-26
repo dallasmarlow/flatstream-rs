@@ -19,7 +19,7 @@ mod generated {
     }
 }
 
-use generated::telemetry_generated::telemetry::{self, TelemetryEvent, TelemetryEventArgs};
+use generated::telemetry_generated::telemetry::{TelemetryEvent, TelemetryEventArgs};
 
 struct TelemetryEventRoot;
 

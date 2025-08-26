@@ -3,19 +3,25 @@
 
 // @generated
 
+#[allow(unused_imports)]
 use core::mem;
+#[allow(unused_imports)]
 use core::cmp::Ordering;
 
 extern crate flatbuffers;
+#[allow(unused_imports)]
 use self::flatbuffers::{EndianScalar, Follow};
 
 #[allow(unused_imports, dead_code)]
 pub mod telemetry {
 
+  #[allow(unused_imports)]
   use core::mem;
+  #[allow(unused_imports)]
   use core::cmp::Ordering;
 
   extern crate flatbuffers;
+  #[allow(unused_imports)]
   use self::flatbuffers::{EndianScalar, Follow};
 
 pub enum TelemetryEventOffset {}

@@ -93,6 +93,10 @@ required-features = ["comparative_bench"]
 name = "typed_vs_manual_benchmark"
 harness = false
 
+[[bench]]
+name = "trait_dispatch_overhead"
+harness = false
+
 [[example]]
 name = "typed_reading_flatc_example"
 required-features = ["flatc_example"]
