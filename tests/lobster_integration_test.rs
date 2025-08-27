@@ -1,3 +1,4 @@
+#![cfg(feature = "lobster")]
 // Integration tests for the LOBSTER dataset ingestion outputs.
 //
 // Purpose

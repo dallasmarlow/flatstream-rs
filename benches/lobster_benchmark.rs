@@ -1,3 +1,4 @@
+#![cfg(feature = "lobster")]
 // Criterion benchmarks for LOBSTER streams (message + orderbook).
 //
 // What this measures
