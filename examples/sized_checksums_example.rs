@@ -1,3 +1,5 @@
+// Example purpose: How to choose CRC16/CRC32/XXHash64 based on message size and
+// integrity requirements; shows framing/deframing with each and expected header sizes.
 //! Example demonstrating sized checksums for different message types.
 //!
 //! This example shows how to use different checksum sizes based on message characteristics:

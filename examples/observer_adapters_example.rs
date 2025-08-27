@@ -1,3 +1,5 @@
+// Example purpose: Demonstrates observer adapters for write/read paths; shows
+// callback timing and that payloads are not copied or mutated.
 //! Demonstrates zero-copy observers on both write and read paths.
 //! Includes optional checksum variants behind feature flags.
 

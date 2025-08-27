@@ -1,3 +1,5 @@
+// Example purpose: Use CRC32 framing/deframing for integrity. Shows header size,
+// how to write/read with CRC32, and where errors surface on mismatch.
 use flatstream::*;
 
 #[cfg(feature = "crc32")]

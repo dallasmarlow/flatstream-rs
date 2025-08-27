@@ -1,3 +1,5 @@
+// Example purpose: Demonstrates expert-mode reading patterns, including typed vs raw payload
+// processing, and how to structure processing pipelines with zero-copy access.
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;

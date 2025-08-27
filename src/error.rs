@@ -11,9 +11,21 @@ pub enum Error {
     #[error("Checksum mismatch: expected {expected}, got {calculated}")]
     ChecksumMismatch { expected: u64, calculated: u64 },
 
-    /// Invalid frame error for malformed frames (e.g., unexpected EOF during length read).
-    #[error("Invalid frame: {message}")]
-    InvalidFrame { message: String },
+    /// Invalid frame error for malformed frames (e.g., oversized length, policy limits).
+    ///
+    /// Optional context fields help diagnose issues quickly while keeping errors lightweight.
+    #[error("Invalid frame: {message}{context}")]
+    InvalidFrame {
+        message: String,
+        /// Declared payload length (from header), if known
+        declared_len: Option<usize>,
+        /// Available bytes or current buffer length, if relevant
+        buffer_len: Option<usize>,
+        /// Configured limit (e.g., bounded adapters), if relevant
+        limit: Option<usize>,
+        /// Pre-rendered human-readable context string
+        context: String,
+    },
 
     /// FlatBuffers-specific deserialization issues.
     #[error("FlatBuffers error: {0}")]
@@ -29,6 +41,44 @@ impl Error {
     pub fn invalid_frame(message: impl Into<String>) -> Self {
         Self::InvalidFrame {
             message: message.into(),
+            declared_len: None,
+            buffer_len: None,
+            limit: None,
+            context: String::new(),
+        }
+    }
+
+    /// Create a new `InvalidFrame` error with contextual details.
+    ///
+    /// Context fields are optional; pass `Some(..)` where known to improve diagnostics.
+    pub fn invalid_frame_with(
+        message: impl Into<String>,
+        declared_len: Option<usize>,
+        buffer_len: Option<usize>,
+        limit: Option<usize>,
+    ) -> Self {
+        let mut ctx = String::new();
+        if declared_len.is_some() || buffer_len.is_some() || limit.is_some() {
+            ctx.push_str(" (");
+            if let Some(v) = declared_len {
+                ctx.push_str(&format!("declared_len={v}"));
+            }
+            if let Some(v) = buffer_len {
+                if !ctx.ends_with('(') { ctx.push_str(", "); }
+                ctx.push_str(&format!("buffer_len={v}"));
+            }
+            if let Some(v) = limit {
+                if !ctx.ends_with('(') { ctx.push_str(", "); }
+                ctx.push_str(&format!("limit={v}"));
+            }
+            ctx.push(')');
+        }
+        Self::InvalidFrame {
+            message: message.into(),
+            declared_len,
+            buffer_len,
+            limit,
+            context: ctx,
         }
     }
 

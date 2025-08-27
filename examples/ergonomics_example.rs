@@ -1,4 +1,6 @@
 //! Demonstrates the ergonomic helpers on StreamReader and StreamWriter.
+//! Example purpose: Show accessors, capacity management (with_capacity, reserve),
+//! and zero-copy process_all() usage in a concise flow.
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader, StreamWriter};

@@ -3,6 +3,9 @@ use std::io::{Cursor, Read, Write};
 
 /// A custom framer that adds a 2-byte magic number `0xABBA` before each message.
 /// Wire format: [2-byte magic | 4-byte length | payload]
+///
+/// Example purpose: Sketch how to define non-standard headers and how a matching
+/// deframer should reject mismatches with an InvalidFrame error.
 struct MagicHeaderFramer;
 
 impl Framer for MagicHeaderFramer {
@@ -36,9 +39,7 @@ impl Deframer for MagicHeaderDeframer {
 
         // Verify the magic number
         if magic_bytes != [0xAB, 0xBA] {
-            return Err(Error::InvalidFrame {
-                message: "Invalid magic number".to_string(),
-            });
+            return Err(Error::invalid_frame_with("Invalid magic number", None, None, None));
         }
 
         // Read length and payload (similar to DefaultDeframer)

@@ -43,7 +43,7 @@ fn bounded_deframer_over_limit() {
         .read_and_deframe(&mut reader, &mut buffer)
         .unwrap_err();
     match err {
-        Error::InvalidFrame { message } => {
+        Error::InvalidFrame { message, .. } => {
             assert!(message.contains("exceeds"));
         }
         other => panic!("expected InvalidFrame, got {other:?}"),

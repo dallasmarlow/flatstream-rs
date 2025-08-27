@@ -59,7 +59,7 @@ critcmp v2_final v2_5_implementation
 - **Memory Efficiency**: Buffer usage and allocation analysis
 
 ### 3. Regression Detection Benchmarks
-- **Small Message Writing**: Most sensitive to dispatch overhead
+- **Small Message Writing**: Most sensitive to hot-loop changes (serialize work + small call overhead)
 - **Monomorphization Stress**: Tests compiler optimization boundaries
 - **Instruction Cache Pressure**: Tests binary size and cache efficiency
 
@@ -85,7 +85,7 @@ For a high-performance library, an 8% regression is a serious issue that warrant
 
 **1. Failure to Monomorphize (Dynamic Dispatch)**
 - **What it is**: If the compiler cannot specialize the generic code and falls back to using trait objects (`dyn Framer`), it would introduce dynamic dispatch.
-- **Impact**: Instead of a direct function call, the program has to look up the correct function pointer in a virtual table (vtable) at runtime. This vtable lookup is a small but measurable overhead on every single write call. More importantly, it acts as an optimization barrier, preventing the compiler from inlining the framing logic. An 8% slowdown is plausible in this scenario, especially for very small messages where the dispatch overhead is a larger percentage of the total work.
+- **Impact**: This would add a vtable lookup on every call and block inlining. In our current design `StreamWriter::write<T: StreamSerialize>` is statically dispatched; the micro-benchmark "Pure Call Overhead" measures the remaining monomorphized call overhead (~sub-ns).
 
 **2. Compiler Optimization Boundaries**
 - **What it is**: The new function boundaries between the `StreamWriter` and the `Framer` trait could prevent certain optimizations.

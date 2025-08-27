@@ -1,3 +1,5 @@
+// Example purpose: End-to-end telemetry capture and processing. Demonstrates external
+// builder reuse for zero-allocation writes, BufWriter/BufReader, and processor API usage.
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 use std::fs::File;

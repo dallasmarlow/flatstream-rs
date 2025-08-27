@@ -1,3 +1,5 @@
+// Example purpose: Compose framers/deframers with user-defined serializable types.
+// Shows default vs checksum framing and end-to-end processing patterns.
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
 use std::fs::File;

@@ -119,6 +119,9 @@ where
     /// This is the **simple mode** API - convenient for uniform message sizes.
     ///
     /// # Performance
+    /// # Pitfalls
+    /// - The internal builder can grow to the largest message and stay that size; for mixed sizes,
+    ///   consider expert mode with multiple builders to avoid bloat.
     /// - Excellent for uniform, small-to-medium messages
     /// - Builder grows to accommodate largest message and stays that size
     /// - For mixed sizes or large messages, use `write_finished()` instead
@@ -168,7 +171,7 @@ where
     ///
     /// # Requirements
     /// The user must call `builder.finish()` within their `serialize()` implementation
-    /// before calling this method.
+    /// before calling this method. This method assumes the builder contains a finished root.
     pub fn write_finished<A2: flatbuffers::Allocator>(
         &mut self,
         builder: &mut FlatBufferBuilder<A2>,

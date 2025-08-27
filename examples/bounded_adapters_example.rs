@@ -1,3 +1,5 @@
+// Example purpose: Shows how to enforce frame/payload limits with bounded adapters,
+// and what errors to expect when limits are exceeded (InvalidFrame with context).
 //! Demonstrates enforcing maximum payload sizes on both write and read paths
 //! using `BoundedFramer`/`BoundedDeframer` and the fluent `.bounded()` helpers.
 

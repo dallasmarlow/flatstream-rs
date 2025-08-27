@@ -2,6 +2,7 @@
 //!
 //! This pattern is particularly useful when your application handles messages of
 //! vastly different sizes, preventing memory waste from builder bloat.
+//! Example purpose: Contrast separate builders per size/type vs a single builder.
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;

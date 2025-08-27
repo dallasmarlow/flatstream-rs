@@ -135,6 +135,8 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// This provides the "expert path" for users who need more control over
     /// the iteration process. Each call to `next_message()` returns a borrowed slice
     /// to the message payload, providing zero-copy access.
+    ///
+    /// Lifetimes: Each returned payload `&[u8]` is valid only until the next successful read.
     pub fn messages(&mut self) -> Messages<'_, R, D> {
         Messages { reader: self }
     }
@@ -214,7 +216,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// Processes all messages using unchecked FlatBuffer root access.
     ///
     /// Safety: Only use when the payloads are guaranteed to be valid for the
-    /// expected `T::Root`. This skips FlatBuffers verification.
+    /// expected `T::Root`. This skips FlatBuffers verification and relies on trusted data.
     #[cfg(feature = "unsafe_typed")]
     pub fn process_typed_unchecked<T, F>(&mut self, mut processor: F) -> Result<()>
     where
