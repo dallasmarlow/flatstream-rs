@@ -39,7 +39,12 @@ impl Deframer for MagicHeaderDeframer {
 
         // Verify the magic number
         if magic_bytes != [0xAB, 0xBA] {
-            return Err(Error::invalid_frame_with("Invalid magic number", None, None, None));
+            return Err(Error::invalid_frame_with(
+                "Invalid magic number",
+                None,
+                None,
+                None,
+            ));
         }
 
         // Read length and payload (similar to DefaultDeframer)

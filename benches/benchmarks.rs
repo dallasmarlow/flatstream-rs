@@ -1,8 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{
-    checksum::Checksum, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
-};
+use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 use flatstream::{SafeTakeDeframer, UnsafeDeframer};
 use std::io::Cursor;
