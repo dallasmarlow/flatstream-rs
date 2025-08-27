@@ -1,0 +1,36 @@
+// FlatBuffers schema for LOBSTER message file rows (Nx6 matrix).
+// Matches columns described in LOBSTER_SampleFiles_ReadMe.txt.
+//
+// Notes:
+// - Time is seconds after midnight with fractional precision; we store
+//   it as nanoseconds since midnight in an unsigned 64-bit integer.
+// - Price is given by LOBSTER as dollar price times 10000 (already scaled).
+//   We store it as a signed 64-bit integer.
+
+namespace flatstream.lobster;
+
+table MessageEvent {
+  // Seconds since midnight with fractional precision (native LOBSTER format).
+  timestamp: double;
+
+  // Event type codes:
+  // 1: Submission, 2: Cancellation, 3: Deletion,
+  // 4: Execution (visible), 5: Execution (hidden), 7: Trading halt indicator
+  event_type: ubyte;
+
+  // Unique order reference number.
+  order_id: ulong;
+
+  // Number of shares.
+  size: uint;
+
+  // Dollar price times 10000 (e.g., $91.14 => 911400).
+  price: long;
+
+  // -1: Sell, 1: Buy, 0: Not Applicable.
+  direction: byte;
+}
+
+root_type MessageEvent;
+
+

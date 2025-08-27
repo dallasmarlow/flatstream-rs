@@ -1,0 +1,29 @@
+// FlatBuffers schema for LOBSTER orderbook file rows (Nx(4*L) matrix).
+// Each row captures L levels with (ask_price, ask_size, bid_price, bid_size)
+// repeated for levels 1..L.
+//
+// Representation choice:
+// - Use vectors to hold parallel arrays of ask/bid prices and sizes.
+// - Price is stored as i64 (dollar price * 10000). Size as u64.
+// - Levels can vary by dataset; vectors capture that without recompiling.
+
+namespace flatstream.lobster;
+
+// Native representation for one price level (price is dollars * 10000)
+struct Level {
+  price: long;
+  size:  ulong;
+}
+
+table OrderBookSnapshot {
+  // Seconds since midnight with fractional precision (optional; aligns to message row k).
+  timestamp: double;
+
+  // Levels 1..L. Each index corresponds to level i+1.
+  asks: [Level];
+  bids: [Level];
+}
+
+root_type OrderBookSnapshot;
+
+

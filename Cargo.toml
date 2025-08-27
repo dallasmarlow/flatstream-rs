@@ -50,6 +50,9 @@ tempfile = "3.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
 rand = "0.8"
+csv = "1.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+anyhow = "1"
 
 [[bench]]
 name = "benchmarks"
@@ -91,6 +94,10 @@ required-features = ["comparative_bench"]
 
 [[bench]]
 name = "typed_vs_manual_benchmark"
+harness = false
+
+[[bench]]
+name = "lobster_benchmark"
 harness = false
 
 [[bench]]
