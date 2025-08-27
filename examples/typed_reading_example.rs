@@ -1,3 +1,5 @@
+// Example purpose: Minimal typed read flow. Writes string roots and reads them back
+// using process_typed<T>, demonstrating zero-copy access and basic typed API usage.
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
 use std::io::Cursor;
