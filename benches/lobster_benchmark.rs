@@ -4,9 +4,8 @@
 // What this measures
 // -------------------
 // - Full-stream read throughput using `StreamReader::process_all`.
-// - Two throughput views per file:
-//   * Bytes/sec (GiB/s): useful when comparing I/O-bound scenarios.
-//   * Messages/sec (Melem/s): stable across framing/checksum options.
+// - Primary view: Messages/sec (Melem/s). We avoid pre-counts to prevent cache
+//   warming: counts are computed strictly inside the timed loop (iter_custom).
 //
 // Why messages/sec?
 // -----------------
@@ -58,14 +57,30 @@ mod lobster_generated {
     }
 }
 
-fn bench_stream(c: &mut Criterion, name: &str, path: &PathBuf, is_message: bool) {
+fn bench_stream_msgs_only(
+    c: &mut Criterion,
+    name: &str,
+    path: &PathBuf,
+    is_message: bool,
+    count_sidecar: Option<&PathBuf>,
+) {
     let data = fs::read(path).expect("Run `cargo run --example ingest_lobster --release` first");
     let mut group = c.benchmark_group(name);
-    // Tuning for stability across larger inputs: keep sample count reasonable
-    // and allow more time to collect measurements.
     group.sample_size(60);
     group.measurement_time(Duration::from_secs(10));
-    group.throughput(Throughput::Bytes(data.len() as u64));
+
+    if let Some(sidecar) = count_sidecar {
+        // Use sidecar counts (written at ingestion) to enable native Melem/s reporting
+        let text = fs::read_to_string(sidecar).expect("missing counts sidecar");
+        let msgs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("messages:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid messages count");
+        group.throughput(Throughput::Elements(msgs));
+    }
+
     group.bench_function("read_full_stream", |b| {
         b.iter(|| {
             let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer);
@@ -84,66 +99,111 @@ fn bench_stream(c: &mut Criterion, name: &str, path: &PathBuf, is_message: bool)
         });
     });
 
-    // Also report messages/sec by counting frames once and setting element throughput
-    let mut msg_count = 0u64;
-    {
-        let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer);
-        r.process_all(|payload| {
-            if is_message {
-                let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
-                black_box(ev);
-            } else {
-                let ob =
-                    lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();
-                black_box(ob);
-            }
-            msg_count += 1;
-            Ok(())
-        })
-        .unwrap();
-    }
-    group.throughput(Throughput::Elements(msg_count));
-    group.bench_function("read_full_stream_msgs", |b| {
-        b.iter(|| {
-            let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer);
-            let mut count = 0u64;
-            r.process_all(|payload| {
-                if is_message {
-                    let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
-                    black_box(ev);
-                } else {
-                    let ob =
-                        lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();
-                    black_box(ob);
-                }
-                count += 1;
-                Ok(())
-            })
-            .unwrap();
-            black_box(count);
-        });
-    });
     group.finish();
 }
 
 fn benchmark_lobster(c: &mut Criterion) {
-    let msgs =
-        list_with_suffix("tests/corpus/lobster", "-message.bin").expect("Run ingest example");
-    let obs =
-        list_with_suffix("tests/corpus/lobster", "-orderbook.bin").expect("Run ingest example");
+    // Build dataset pairs: <stem>-message.bin with matching <stem>-orderbook.bin
+    let root = "tests/corpus/lobster";
+    let msgs = list_with_suffix(root, "-message.bin").expect("Run ingest example");
+    let obs = list_with_suffix(root, "-orderbook.bin").expect("Run ingest example");
+
+    use std::collections::HashMap;
+    let mut map: HashMap<String, (Option<PathBuf>, Option<PathBuf>)> = HashMap::new();
+
     for p in msgs {
-        let name = format!(
-            "LOBSTER Message {}",
-            p.file_name().unwrap().to_string_lossy()
-        );
-        bench_stream(c, &name, &p, true);
+        let fname = p.file_name().unwrap().to_string_lossy().to_string();
+        let stem = fname
+            .strip_suffix("-message.bin")
+            .unwrap_or(&fname)
+            .to_string();
+        map.entry(stem).or_default().0 = Some(p);
     }
     for p in obs {
-        let name = format!(
-            "LOBSTER Orderbook {}",
-            p.file_name().unwrap().to_string_lossy()
+        let fname = p.file_name().unwrap().to_string_lossy().to_string();
+        let stem = fname
+            .strip_suffix("-orderbook.bin")
+            .unwrap_or(&fname)
+            .to_string();
+        map.entry(stem).or_default().1 = Some(p);
+    }
+
+    let mut had_pair = false;
+    for (stem, (m, o)) in map.into_iter() {
+        let (mp, op) = match (m, o) {
+            (Some(mp), Some(op)) => (mp, op),
+            _ => panic!("Incomplete LOBSTER pair for stem: {}", stem),
+        };
+        had_pair = true;
+
+        let group_name = format!("LOBSTER {}", stem);
+
+        // Per-pair: benchmark message-only, orderbook-only, and combined pair.
+        let sidecar = PathBuf::from(format!("{}/{}-counts.txt", root, stem));
+        let sidecar_opt = Some(&sidecar);
+        bench_stream_msgs_only(
+            c,
+            &format!("{}/message", group_name),
+            &mp,
+            true,
+            sidecar_opt,
         );
-        bench_stream(c, &name, &p, false);
+        bench_stream_msgs_only(
+            c,
+            &format!("{}/orderbook", group_name),
+            &op,
+            false,
+            sidecar_opt,
+        );
+
+        // Combined: process both streams in one timed iteration.
+        use std::time::Instant;
+        let data_m = fs::read(&mp).unwrap();
+        let data_o = fs::read(&op).unwrap();
+        let mut group = c.benchmark_group(format!("{}/pair", group_name));
+        group.sample_size(60);
+        group.measurement_time(Duration::from_secs(10));
+        // Use sidecar counts to set combined throughput
+        let text = fs::read_to_string(&sidecar).expect("missing counts sidecar");
+        let msgs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("messages:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid messages count");
+        let obs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("orderbook:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid orderbook count");
+
+        group.throughput(Throughput::Elements(msgs + obs));
+        group.bench_function("read_full_stream_pair", |b| {
+            b.iter(|| {
+                let mut r1 = StreamReader::new(Cursor::new(&data_m), DefaultDeframer);
+                r1.process_all(|payload| {
+                    let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
+                    black_box(ev);
+                    Ok(())
+                })
+                .unwrap();
+
+                let mut r2 = StreamReader::new(Cursor::new(&data_o), DefaultDeframer);
+                r2.process_all(|payload| {
+                    let ob =
+                        lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();
+                    black_box(ob);
+                    Ok(())
+                })
+                .unwrap();
+            });
+        });
+        group.finish();
+    }
+
+    if !had_pair {
+        panic!("No complete LOBSTER dataset pairs found under {}", root);
     }
 }
 
