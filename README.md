@@ -795,6 +795,7 @@ This repository includes an optional workflow to benchmark and test against the 
 - Data structure reference: `https://lobsterdata.com/info/DataStructure.php`.
 - Location for ZIPs: `tests/corpus/lobster/zips/` (ignored by Git).
 - Checksums of ZIPs: `tests/corpus/lobster/zips/SHASUMS.txt` (committable for provenance).
+- Only ZIPs listed in `SHASUMS.txt` and passing SHA256 verification are processed. Subsets are allowed.
 
 Schemas (committed):
 - `examples/schemas/lobster_message.fbs` (Nx6 message rows; time is seconds [f64])
@@ -822,6 +823,14 @@ cargo test --test lobster_integration_test --features lobster
 
 # Run LOBSTER benches (reports GiB/s and msgs/sec)
 cargo bench --bench lobster_benchmark --features lobster
+```
+
+Verify checksums (optional but recommended):
+```bash
+# macOS
+shasum -a 256 -c tests/corpus/lobster/zips/SHASUMS.txt
+# Linux
+sha256sum -c tests/corpus/lobster/zips/SHASUMS.txt
 ```
 
 Benchmark reporting:

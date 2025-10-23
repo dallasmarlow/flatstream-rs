@@ -73,6 +73,7 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
     if file_bases.is_empty() {
         panic!("No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest.");
     }
+    let mut tested_any = 0usize;
     for base in file_bases {
         let p = std::path::Path::new(root).join(format!("{}-message.bin", base));
         if !p.exists() {
@@ -87,6 +88,12 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
             Ok(())
         })?;
         assert!(count > 0, "empty stream: {}", p.display());
+        tested_any += 1;
+    }
+    if tested_any == 0 {
+        panic!(
+            "No LOBSTER .bin files exercised. Run ingest to generate .bin files for verified ZIPs."
+        );
     }
     Ok(())
 }
@@ -101,6 +108,7 @@ fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
     if file_bases.is_empty() {
         panic!("No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest.");
     }
+    let mut tested_any = 0usize;
     for base in file_bases {
         let p = std::path::Path::new(root).join(format!("{}-orderbook.bin", base));
         if !p.exists() {
@@ -115,6 +123,12 @@ fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
             Ok(())
         })?;
         assert!(count > 0, "empty stream: {}", p.display());
+        tested_any += 1;
+    }
+    if tested_any == 0 {
+        panic!(
+            "No LOBSTER .bin files exercised. Run ingest to generate .bin files for verified ZIPs."
+        );
     }
     Ok(())
 }
