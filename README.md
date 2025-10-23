@@ -807,7 +807,7 @@ Generated bindings (checked in):
 Ingestion example (reads ZIPs and emits FlatStream binaries):
 - `examples/ingest_lobster.rs`
 - Input: any `*_message_*.csv` and `*_orderbook_*.csv` inside each ZIP (all ZIPs are processed)
-- Output (per ZIP): `tests/corpus/lobster/<zipstem>-message.bin` and `...-orderbook.bin`
+- Output (per ZIP): `tests/corpus/lobster/<file_base>-message.bin` and `...-orderbook.bin`
 - Timestamp handling:
   - Message time is stored as seconds since midnight (f64), exactly as in LOBSTER.
   - Orderbook snapshot row k inherits time from message row k; if no pairing exists, the time is `0.0`.

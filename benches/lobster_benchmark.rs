@@ -118,51 +118,42 @@ fn bench_stream_msgs_only(
 }
 
 fn benchmark_lobster(c: &mut Criterion) {
-    // Build dataset pairs: <stem>-message.bin with matching <stem>-orderbook.bin
+    // Build dataset pairs: <file_base>-message.bin with matching <file_base>-orderbook.bin
     let root = "tests/corpus/lobster";
-    let msgs = lobster_common::list_with_suffix(root, "-message.bin").unwrap_or_else(|| {
+    // Use only verified ZIP file bases
+    let file_bases = lobster_common::find_verified_zip_file_bases(
+        "tests/corpus/lobster/zips",
+        "tests/corpus/lobster/zips/SHASUMS.txt",
+    );
+    if file_bases.is_empty() {
         panic!(
-            "LOBSTER dataset missing. Place ZIPs under tests/corpus/lobster/zips/, then run:\n  cargo run --example ingest_lobster --release --features lobster"
-        )
-    });
-    let obs = lobster_common::list_with_suffix(root, "-orderbook.bin").unwrap_or_else(|| {
-        panic!(
-            "LOBSTER dataset missing. Place ZIPs under tests/corpus/lobster/zips/, then run:\n  cargo run --example ingest_lobster --release --features lobster"
-        )
-    });
+            "No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest."
+        );
+    }
 
     use std::collections::HashMap;
     let mut map: HashMap<String, (Option<PathBuf>, Option<PathBuf>)> = HashMap::new();
 
-    for p in msgs {
-        let fname = p.file_name().unwrap().to_string_lossy().to_string();
-        let stem = fname
-            .strip_suffix("-message.bin")
-            .unwrap_or(&fname)
-            .to_string();
-        map.entry(stem).or_default().0 = Some(p);
-    }
-    for p in obs {
-        let fname = p.file_name().unwrap().to_string_lossy().to_string();
-        let stem = fname
-            .strip_suffix("-orderbook.bin")
-            .unwrap_or(&fname)
-            .to_string();
-        map.entry(stem).or_default().1 = Some(p);
+    for base in file_bases {
+        let mp = PathBuf::from(format!("{}/{}-message.bin", root, base));
+        let op = PathBuf::from(format!("{}/{}-orderbook.bin", root, base));
+        let entry = map.entry(base.clone()).or_default();
+        entry.0 = if mp.exists() { Some(mp) } else { None };
+        entry.1 = if op.exists() { Some(op) } else { None };
     }
 
     let mut had_pair = false;
-    for (stem, (m, o)) in map.into_iter() {
+    for (file_base, (m, o)) in map.into_iter() {
         let (mp, op) = match (m, o) {
             (Some(mp), Some(op)) => (mp, op),
-            _ => panic!("Incomplete LOBSTER pair for stem: {}", stem),
+            _ => panic!("Incomplete LOBSTER pair for file base: {}", file_base),
         };
         had_pair = true;
 
-        let group_name = format!("LOBSTER {}", stem);
+        let group_name = format!("LOBSTER {}", file_base);
 
         // Per-pair: benchmark message-only, orderbook-only, and combined pair.
-        let sidecar = PathBuf::from(format!("{}/{}-counts.txt", root, stem));
+        let sidecar = PathBuf::from(format!("{}/{}-counts.txt", root, file_base));
         let sidecar_opt = Some(&sidecar);
         bench_stream_msgs_only(
             c,

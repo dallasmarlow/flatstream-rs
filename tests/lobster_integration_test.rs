@@ -66,13 +66,18 @@ mod lobster_common;
 #[test]
 fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
     let root = "tests/corpus/lobster";
-    let msg_paths = lobster_common::list_with_suffix(root, "-message.bin").unwrap_or_else(|| {
-        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
-    });
-    if msg_paths.is_empty() {
-        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster");
+    let file_bases = lobster_common::find_verified_zip_file_bases(
+        "tests/corpus/lobster/zips",
+        "tests/corpus/lobster/zips/SHASUMS.txt",
+    );
+    if file_bases.is_empty() {
+        panic!("No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest.");
     }
-    for p in msg_paths {
+    for base in file_bases {
+        let p = std::path::Path::new(root).join(format!("{}-message.bin", base));
+        if !p.exists() {
+            continue;
+        }
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
         let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
         let mut count = 0usize;
@@ -89,13 +94,18 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
 #[test]
 fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
     let root = "tests/corpus/lobster";
-    let ob_paths = lobster_common::list_with_suffix(root, "-orderbook.bin").unwrap_or_else(|| {
-        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
-    });
-    if ob_paths.is_empty() {
-        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster");
+    let file_bases = lobster_common::find_verified_zip_file_bases(
+        "tests/corpus/lobster/zips",
+        "tests/corpus/lobster/zips/SHASUMS.txt",
+    );
+    if file_bases.is_empty() {
+        panic!("No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest.");
     }
-    for p in ob_paths {
+    for base in file_bases {
+        let p = std::path::Path::new(root).join(format!("{}-orderbook.bin", base));
+        if !p.exists() {
+            continue;
+        }
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
         let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
         let mut count = 0usize;

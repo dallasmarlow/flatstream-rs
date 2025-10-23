@@ -6,6 +6,9 @@ use std::io::{BufWriter, Read};
 use std::path::Path;
 use thiserror::Error;
 use zip::read::ZipArchive;
+#[cfg(feature = "lobster")]
+#[path = "../tests/harness/lobster_common.rs"]
+mod lobster_common;
 
 // Include checked-in generated code so no build-time codegen is required.
 // Generate once with:
@@ -283,18 +286,18 @@ fn main() -> IngestResult<()> {
     let out_dir = Path::new("tests/corpus/lobster");
     fs::create_dir_all(out_dir)?;
 
-    let mut processed = 0usize;
-    for entry in fs::read_dir(zips_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("zip") {
-            continue;
-        }
+    // Only process verified, listed ZIP file bases
+    let file_bases = lobster_common::find_verified_zip_file_bases(
+        "tests/corpus/lobster/zips",
+        "tests/corpus/lobster/zips/SHASUMS.txt",
+    );
+    if file_bases.is_empty() {
+        eprintln!("No verified LOBSTER ZIPs found. Ensure files listed in SHASUMS.txt are present and valid.");
+    }
 
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("dataset");
+    let mut processed = 0usize;
+    for base in file_bases {
+        let path = zips_dir.join(format!("{}.zip", base));
 
         // Prefer paired ingestion (no temporary timestamp storage). Fallbacks handle single-file zips.
         let msg_csv = open_csv_from_zip(&path, |n| n.ends_with(".csv") && n.contains("_message_"));
@@ -308,11 +311,11 @@ fn main() -> IngestResult<()> {
                 let o_rdr = ReaderBuilder::new()
                     .has_headers(false)
                     .from_reader(ob.as_slice());
-                let m_out = out_dir.join(format!("{}-message.bin", stem));
-                let o_out = out_dir.join(format!("{}-orderbook.bin", stem));
+                let m_out = out_dir.join(format!("{}-message.bin", base));
+                let o_out = out_dir.join(format!("{}-orderbook.bin", base));
                 let (mc, oc) = write_pair_streams(m_rdr, o_rdr, &m_out, &o_out)?;
                 // Write counts sidecar for benchmarks: simple, parseable text
-                let counts_path = out_dir.join(format!("{}-counts.txt", stem));
+                let counts_path = out_dir.join(format!("{}-counts.txt", base));
                 let counts = format!("messages: {}\norderbook: {}\n", mc, oc);
                 std::fs::write(counts_path, counts)?;
             }
