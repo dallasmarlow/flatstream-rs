@@ -2,10 +2,10 @@
 // Matches columns described in LOBSTER_SampleFiles_ReadMe.txt.
 //
 // Notes:
-// - Time is seconds after midnight with fractional precision; we store
-//   it as nanoseconds since midnight in an unsigned 64-bit integer.
-// - Price is given by LOBSTER as dollar price times 10000 (already scaled).
-//   We store it as a signed 64-bit integer.
+// - Time is represented exactly as in LOBSTER: seconds after midnight with
+//   fractional precision; we store it as a `double`.
+// - Price is given by LOBSTER as dollar price times 10000 (already scaled),
+//   stored as a signed 64-bit integer.
 
 namespace flatstream.lobster;
 

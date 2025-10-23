@@ -815,13 +815,13 @@ Ingestion example (reads ZIPs and emits FlatStream binaries):
 Usage:
 ```bash
 # Generate/refresh .bin streams from ZIPs
-cargo run --example ingest_lobster --release
+cargo run --example ingest_lobster --release --features lobster
 
 # Run integration tests (iterate over all generated streams)
-cargo test --test lobster_integration_test
+cargo test --test lobster_integration_test --features lobster
 
 # Run LOBSTER benches (reports GiB/s and msgs/sec)
-cargo bench --bench lobster_benchmark
+cargo bench --bench lobster_benchmark --features lobster
 ```
 
 Benchmark reporting:

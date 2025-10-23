@@ -78,6 +78,8 @@ fn parse_message_row(rec: &StringRecord) -> IngestResult<MessageRow> {
     })
 }
 
+// Keep for potential future single-file ingestion; silences unused warnings.
+#[allow(dead_code)]
 fn write_message_stream<R: Read>(
     mut rdr: csv::Reader<R>,
     output_path: &Path,
@@ -112,6 +114,8 @@ fn write_message_stream<R: Read>(
     Ok(timestamps)
 }
 
+// Keep for potential future single-file ingestion; silences unused warnings.
+#[allow(dead_code)]
 fn write_orderbook_stream<R: Read>(
     mut rdr: csv::Reader<R>,
     output_path: &Path,
@@ -201,8 +205,9 @@ fn write_pair_streams<R1: Read, R2: Read>(
                 msg_count += 1;
 
                 // Orderbook row -> asks/bids
-                let mut asks: Vec<lo::Level> = Vec::new();
-                let mut bids: Vec<lo::Level> = Vec::new();
+                let cap = orec.len() / 4;
+                let mut asks: Vec<lo::Level> = Vec::with_capacity(cap);
+                let mut bids: Vec<lo::Level> = Vec::with_capacity(cap);
                 let mut i = 0usize;
                 while i + 3 < orec.len() {
                     let ap: i64 = orec.get(i).unwrap().parse()?;
