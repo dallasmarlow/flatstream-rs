@@ -301,7 +301,10 @@ impl Deframer for UnsafeDeframer {
 
         buffer.clear();
         if buffer.capacity() < payload_len {
-            buffer.reserve(payload_len - buffer.capacity());
+            // Reserve additional space relative to current length to ensure
+            // capacity >= payload_len. After clear(), len is 0, so reserve(payload_len)
+            // guarantees sufficient capacity.
+            buffer.reserve(payload_len - buffer.len());
         }
 
         unsafe {

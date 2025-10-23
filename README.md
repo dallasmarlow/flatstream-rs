@@ -788,6 +788,67 @@ Notes:
 - The medians printed by Criterion look like `[low mid high]`; use the middle value.
 - This README intentionally reports messages/sec (not byte/s), because wire overhead differs with checksum options.
 
+## Realistic dataset: LOBSTER (messages + orderbook)
+
+This repository includes an optional workflow to benchmark and test against the LOBSTER sample data (message and orderbook streams) using FlatStream with FlatBuffers payloads.
+
+- Data structure reference: `https://lobsterdata.com/info/DataStructure.php`.
+- Location for ZIPs: `tests/corpus/lobster/zips/` (ignored by Git).
+- Checksums of ZIPs: `tests/corpus/lobster/zips/SHASUMS.txt` (committable for provenance).
+- Only ZIPs listed in `SHASUMS.txt` and passing SHA256 verification are processed. Subsets are allowed.
+
+Schemas (committed):
+- `examples/schemas/lobster_message.fbs` (Nx6 message rows; time is seconds [f64])
+- `examples/schemas/lobster_orderbook.fbs` (Nx(4*L) orderbook rows; asks/bids as Level{price x10000, size})
+
+Generated bindings (checked in):
+- `examples/generated/lobster_message_generated.rs`
+- `examples/generated/lobster_orderbook_generated.rs`
+
+Ingestion example (reads ZIPs and emits FlatStream binaries):
+- `examples/ingest_lobster.rs`
+- Input: any `*_message_*.csv` and `*_orderbook_*.csv` inside each ZIP (all ZIPs are processed)
+- Output (per ZIP): `tests/corpus/lobster/<file_base>-message.bin` and `...-orderbook.bin`
+- Timestamp handling:
+  - Message time is stored as seconds since midnight (f64), exactly as in LOBSTER.
+  - Orderbook snapshot row k inherits time from message row k; if no pairing exists, the time is `0.0`.
+
+Usage:
+```bash
+# Generate/refresh .bin streams from ZIPs
+cargo run --example ingest_lobster --release --features lobster
+
+# Run integration tests (iterate over all generated streams)
+cargo test --test lobster_integration_test --features lobster
+
+# Run LOBSTER benches (reports GiB/s and msgs/sec)
+cargo bench --bench lobster_benchmark --features lobster
+```
+
+Verify checksums (optional but recommended):
+```bash
+# macOS
+shasum -a 256 -c tests/corpus/lobster/zips/SHASUMS.txt
+# Linux
+sha256sum -c tests/corpus/lobster/zips/SHASUMS.txt
+```
+
+Benchmark reporting:
+- Each generated file is benchmarked independently (all streams are included).
+- Throughput is reported in two ways per file:
+  - Bytes/sec via `Throughput::Bytes(total_bytes)` (GiB/s)
+  - Messages/sec via `Throughput::Elements(num_messages)` (Melem/s, i.e., million messages per second)
+- Example group names:
+  - `LOBSTER Message <file>/read_full_stream`
+  - `LOBSTER Message <file>/read_full_stream_msgs`
+  - `LOBSTER Orderbook <file>/read_full_stream`
+  - `LOBSTER Orderbook <file>/read_full_stream_msgs`
+
+Notes:
+- This path preserves FlatBuffers’ zero-copy semantics on reads: `StreamReader::process_all` yields `&[u8]`, deserialized with generated `root_as_*()` helpers.
+- Timestamps follow the official LOBSTER representation (seconds with fractional precision) for apples-to-apples comparisons.
+- The repository avoids build-time schema compilation; FlatBuffers bindings are checked in for reproducibility.
+
 ## Potential future considerations
 
 The following settings may improve benchmark consistency and absolute performance. Evaluate on your hardware and workloads before adopting.

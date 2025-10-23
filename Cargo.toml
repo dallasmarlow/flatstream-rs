@@ -31,6 +31,7 @@ unsafe_typed = []
 all_checksums = ["xxhash", "crc32", "crc16"]
 # Feature for comparative benchmarks against alternative serialization approaches
 comparative_bench = ["serde", "bincode", "serde_json", "bumpalo", "xxhash", "crc32", "crc16"]
+lobster = []
 
 [dependencies.xxhash-rust]
 version = "0.8"
@@ -50,6 +51,9 @@ tempfile = "3.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
 rand = "0.8"
+csv = "1.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
 
 [[bench]]
 name = "benchmarks"
@@ -94,9 +98,18 @@ name = "typed_vs_manual_benchmark"
 harness = false
 
 [[bench]]
+name = "lobster_benchmark"
+harness = false
+required-features = ["lobster"]
+
+[[bench]]
 name = "trait_dispatch_overhead"
 harness = false
 
 [[example]]
 name = "typed_reading_flatc_example"
 required-features = ["flatc_example"]
+
+[[example]]
+name = "ingest_lobster"
+required-features = ["lobster"]

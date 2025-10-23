@@ -64,11 +64,15 @@ impl Error {
                 ctx.push_str(&format!("declared_len={v}"));
             }
             if let Some(v) = buffer_len {
-                if !ctx.ends_with('(') { ctx.push_str(", "); }
+                if !ctx.ends_with('(') {
+                    ctx.push_str(", ");
+                }
                 ctx.push_str(&format!("buffer_len={v}"));
             }
             if let Some(v) = limit {
-                if !ctx.ends_with('(') { ctx.push_str(", "); }
+                if !ctx.ends_with('(') {
+                    ctx.push_str(", ");
+                }
                 ctx.push_str(&format!("limit={v}"));
             }
             ctx.push(')');

@@ -1,0 +1,229 @@
+#![cfg(feature = "lobster")]
+// Criterion benchmarks for LOBSTER streams (message + orderbook).
+//
+// What this measures
+// -------------------
+// - Full-stream read throughput using `StreamReader::process_all`.
+// - Primary view: Messages/sec (Melem/s). We avoid pre-counts to prevent cache
+//   warming: counts are computed strictly inside the timed loop (iter_custom).
+//
+// Why messages/sec?
+// -----------------
+// Byte throughput changes with framing overhead (e.g., checksums). Reporting
+// messages/sec keeps results comparable across configurations and better tracks
+// the deframing+deserialization hot path.
+//
+// Dataset handling
+// ----------------
+// - Discovers ALL generated files in `tests/corpus/lobster/` and benchmarks
+//   each independently. This avoids biasing the numbers to a single symbol/date.
+// - Payloads are deserialized using the checked-in FlatBuffers bindings.
+// - `Cursor<&[u8]>` is used to isolate parsing from filesystem I/O.
+//
+// Zero-copy note
+// --------------
+// `payload` in the closure is a borrowed slice from the reader’s internal
+// buffer. No extra copies are performed on the read path.
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use flatstream::{DefaultDeframer, StreamReader};
+use std::fs;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::time::Duration;
+
+mod lobster_generated {
+    mod lobster_message_generated {
+        #![allow(unused_imports)]
+        #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/generated/lobster_message_generated.rs"
+        ));
+    }
+    mod lobster_orderbook_generated {
+        #![allow(unused_imports)]
+        #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/generated/lobster_orderbook_generated.rs"
+        ));
+    }
+    pub mod message {
+        pub use super::lobster_message_generated::flatstream::lobster::*;
+    }
+    pub mod orderbook {
+        pub use super::lobster_orderbook_generated::flatstream::lobster::*;
+    }
+}
+
+// Reuse test harness helpers for dataset discovery (dev-only include)
+#[allow(dead_code)]
+mod lobster_common {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/harness/lobster_common.rs"
+    ));
+}
+
+fn bench_stream_msgs_only(
+    c: &mut Criterion,
+    name: &str,
+    path: &PathBuf,
+    is_message: bool,
+    count_sidecar: Option<&PathBuf>,
+) {
+    let data = fs::read(path).expect("Run `cargo run --example ingest_lobster --release` first");
+    let mut group = c.benchmark_group(name);
+    group.sample_size(60);
+    group.measurement_time(Duration::from_secs(10));
+
+    if let Some(sidecar) = count_sidecar {
+        // Strict: sidecar must exist and be valid when feature is enabled.
+        let text = fs::read_to_string(sidecar).expect("missing counts sidecar");
+        let msgs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("messages:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid messages count");
+        group.throughput(Throughput::Elements(msgs));
+    }
+
+    group.bench_function("read_full_stream", |b| {
+        b.iter(|| {
+            let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+            r.process_all(|payload| {
+                if is_message {
+                    let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
+                    black_box(ev);
+                } else {
+                    let ob =
+                        lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();
+                    black_box(ob);
+                }
+                Ok(())
+            })
+            .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_lobster(c: &mut Criterion) {
+    // Build dataset pairs: <file_base>-message.bin with matching <file_base>-orderbook.bin
+    let root = "tests/corpus/lobster";
+    // Use only verified ZIP file bases
+    let file_bases = lobster_common::find_verified_zip_file_bases(
+        "tests/corpus/lobster/zips",
+        "tests/corpus/lobster/zips/SHASUMS.txt",
+    );
+    if file_bases.is_empty() {
+        panic!(
+            "No verified LOBSTER ZIPs. Download files listed in SHASUMS.txt, place in zips/, then run ingest."
+        );
+    }
+
+    use std::collections::HashMap;
+    let mut map: HashMap<String, (Option<PathBuf>, Option<PathBuf>)> = HashMap::new();
+
+    for base in file_bases {
+        let mp = PathBuf::from(format!("{}/{}-message.bin", root, base));
+        let op = PathBuf::from(format!("{}/{}-orderbook.bin", root, base));
+        let entry = map.entry(base.clone()).or_default();
+        entry.0 = if mp.exists() { Some(mp) } else { None };
+        entry.1 = if op.exists() { Some(op) } else { None };
+    }
+
+    let mut had_pair = false;
+    for (file_base, (m, o)) in map.into_iter() {
+        let (mp, op) = match (m, o) {
+            (Some(mp), Some(op)) => (mp, op),
+            _ => panic!("Incomplete LOBSTER pair for file base: {}", file_base),
+        };
+        had_pair = true;
+
+        let group_name = format!("LOBSTER {}", file_base);
+
+        // Per-pair: benchmark message-only, orderbook-only, and combined pair.
+        let sidecar = PathBuf::from(format!("{}/{}-counts.txt", root, file_base));
+        let sidecar_opt = Some(&sidecar);
+        bench_stream_msgs_only(
+            c,
+            &format!("{}/message", group_name),
+            &mp,
+            true,
+            sidecar_opt,
+        );
+        bench_stream_msgs_only(
+            c,
+            &format!("{}/orderbook", group_name),
+            &op,
+            false,
+            sidecar_opt,
+        );
+
+        // Combined: process both streams in one timed iteration.
+        let data_m = fs::read(&mp).unwrap();
+        let data_o = fs::read(&op).unwrap();
+        let mut group = c.benchmark_group(format!("{}/pair", group_name));
+        group.sample_size(60);
+        group.measurement_time(Duration::from_secs(10));
+        // Use sidecar counts to set combined throughput
+        let text = fs::read_to_string(&sidecar).expect("missing counts sidecar");
+        let msgs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("messages:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid messages count");
+        let obs: u64 = text
+            .lines()
+            .find(|l| l.starts_with("orderbook:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("invalid orderbook count");
+
+        group.throughput(Throughput::Elements(msgs + obs));
+        group.bench_function("read_full_stream_pair", |b| {
+            b.iter(|| {
+                let mut r1 = StreamReader::new(Cursor::new(&data_m), DefaultDeframer);
+                r1.process_all(|payload| {
+                    let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
+                    black_box(ev);
+                    Ok(())
+                })
+                .unwrap();
+
+                let mut r2 = StreamReader::new(Cursor::new(&data_o), DefaultDeframer);
+                r2.process_all(|payload| {
+                    let ob =
+                        lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();
+                    black_box(ob);
+                    Ok(())
+                })
+                .unwrap();
+            });
+        });
+        group.finish();
+    }
+
+    if !had_pair {
+        panic!(
+            "No complete LOBSTER dataset pairs found under {}.\nGenerate with:\n  cargo run --example ingest_lobster --release --features lobster",
+            root
+        );
+    }
+}
+
+criterion_group!(benches, benchmark_lobster);
+criterion_main!(benches);
+
+// list_with_suffix now provided by tests/harness/lobster_common.rs

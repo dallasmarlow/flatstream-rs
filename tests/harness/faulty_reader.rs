@@ -38,7 +38,7 @@ impl<R: Read> Read for FaultyReader<R> {
                     Err(e) => Err(e),
                 }
             }
-            FaultMode::InterruptedEvery(n) if n != 0 && self.counter % n == 0 => {
+            FaultMode::InterruptedEvery(n) if n != 0 && self.counter.is_multiple_of(n) => {
                 Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
             }
             FaultMode::PrematureEofAt(n) if self.counter >= n => Ok(0),

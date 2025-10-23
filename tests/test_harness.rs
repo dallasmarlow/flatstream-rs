@@ -23,7 +23,7 @@ impl TestHarness {
         }
     }
 
-    pub fn writer<F: Framer>(&self, framer: F) -> StreamWriter<BufWriter<File>, F> {
+    pub fn writer<F: Framer>(&self, framer: F) -> StreamWriter<'_, BufWriter<File>, F> {
         // Purpose: Provide a buffered writer bound to a temp file for end-to-end tests.
         let file = File::create(&self.path).unwrap();
         StreamWriter::new(BufWriter::new(file), framer)
