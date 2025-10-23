@@ -26,7 +26,7 @@
 // - The LOBSTER FlatBuffers bindings are checked in for reproducibility.
 
 use flatstream::{DefaultDeframer, StreamReader};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
@@ -34,6 +34,9 @@ mod lobster_generated {
     mod lobster_message_generated {
         #![allow(unused_imports)]
         #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/generated/lobster_message_generated.rs"
@@ -42,6 +45,9 @@ mod lobster_generated {
     mod lobster_orderbook_generated {
         #![allow(unused_imports)]
         #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/generated/lobster_orderbook_generated.rs"
@@ -57,10 +63,16 @@ mod lobster_generated {
 
 #[test]
 fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
-    let paths = list_with_suffix("tests/corpus/lobster", "-message.bin")
-        .expect("Run `cargo run --example ingest_lobster --release` first");
-    assert!(!paths.is_empty(), "no message streams found");
-    for p in paths {
+    #[path = "harness/lobster_common.rs"]
+    mod lobster_common;
+    let root = "tests/corpus/lobster";
+    let msg_paths = lobster_common::list_with_suffix(root, "-message.bin").unwrap_or_else(|| {
+        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
+    });
+    if msg_paths.is_empty() {
+        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster");
+    }
+    for p in msg_paths {
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
         let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
         let mut count = 0usize;
@@ -76,10 +88,16 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
 
 #[test]
 fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
-    let paths = list_with_suffix("tests/corpus/lobster", "-orderbook.bin")
-        .expect("Run `cargo run --example ingest_lobster --release` first");
-    assert!(!paths.is_empty(), "no orderbook streams found");
-    for p in paths {
+    #[path = "harness/lobster_common.rs"]
+    mod lobster_common;
+    let root = "tests/corpus/lobster";
+    let ob_paths = lobster_common::list_with_suffix(root, "-orderbook.bin").unwrap_or_else(|| {
+        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
+    });
+    if ob_paths.is_empty() {
+        panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster");
+    }
+    for p in ob_paths {
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
         let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
         let mut count = 0usize;
@@ -93,16 +111,4 @@ fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
     Ok(())
 }
 
-fn list_with_suffix(dir: &str, suffix: &str) -> Option<Vec<PathBuf>> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
-    entries.sort();
-    Some(
-        entries
-            .into_iter()
-            .filter(|p| p.is_file() && p.to_string_lossy().ends_with(suffix))
-            .collect(),
-    )
-}
+// list_with_suffix moved to tests/harness/lobster_common.rs

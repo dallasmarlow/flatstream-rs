@@ -12,6 +12,10 @@ use std::io::Cursor;
 // Generated module path from step (2). Do not check generated code into the repo.
 mod generated {
     pub mod telemetry_generated {
+        #![allow(unused_imports)]
+        #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/generated/telemetry_generated.rs"

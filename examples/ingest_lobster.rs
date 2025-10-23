@@ -13,10 +13,20 @@ use zip::read::ZipArchive;
 #[allow(dead_code)]
 mod lobster_generated {
     pub mod message {
+        #![allow(unused_imports)]
+        #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!("generated/lobster_message_generated.rs");
         pub use self::flatstream::lobster::*;
     }
     pub mod orderbook {
+        #![allow(unused_imports)]
+        #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!("generated/lobster_orderbook_generated.rs");
         pub use self::flatstream::lobster::*;
     }

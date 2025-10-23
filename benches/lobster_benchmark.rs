@@ -36,6 +36,9 @@ mod lobster_generated {
     mod lobster_message_generated {
         #![allow(unused_imports)]
         #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/generated/lobster_message_generated.rs"
@@ -44,6 +47,9 @@ mod lobster_generated {
     mod lobster_orderbook_generated {
         #![allow(unused_imports)]
         #![allow(dead_code)]
+        #![allow(mismatched_lifetime_syntaxes)]
+        #![allow(clippy::extra_unused_lifetimes)]
+        #![allow(clippy::derivable_impls)]
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/generated/lobster_orderbook_generated.rs"
@@ -55,6 +61,12 @@ mod lobster_generated {
     pub mod orderbook {
         pub use super::lobster_orderbook_generated::flatstream::lobster::*;
     }
+}
+
+// Reuse test harness helpers for dataset discovery (dev-only include)
+#[allow(dead_code)]
+mod lobster_common {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/harness/lobster_common.rs"));
 }
 
 fn bench_stream_msgs_only(
@@ -70,7 +82,7 @@ fn bench_stream_msgs_only(
     group.measurement_time(Duration::from_secs(10));
 
     if let Some(sidecar) = count_sidecar {
-        // Use sidecar counts (written at ingestion) to enable native Melem/s reporting
+        // Strict: sidecar must exist and be valid when feature is enabled.
         let text = fs::read_to_string(sidecar).expect("missing counts sidecar");
         let msgs: u64 = text
             .lines()
@@ -105,8 +117,16 @@ fn bench_stream_msgs_only(
 fn benchmark_lobster(c: &mut Criterion) {
     // Build dataset pairs: <stem>-message.bin with matching <stem>-orderbook.bin
     let root = "tests/corpus/lobster";
-    let msgs = list_with_suffix(root, "-message.bin").expect("Run ingest example");
-    let obs = list_with_suffix(root, "-orderbook.bin").expect("Run ingest example");
+    let msgs = lobster_common::list_with_suffix(root, "-message.bin").unwrap_or_else(|| {
+        panic!(
+            "LOBSTER dataset missing. Place ZIPs under tests/corpus/lobster/zips/, then run:\n  cargo run --example ingest_lobster --release --features lobster"
+        )
+    });
+    let obs = lobster_common::list_with_suffix(root, "-orderbook.bin").unwrap_or_else(|| {
+        panic!(
+            "LOBSTER dataset missing. Place ZIPs under tests/corpus/lobster/zips/, then run:\n  cargo run --example ingest_lobster --release --features lobster"
+        )
+    });
 
     use std::collections::HashMap;
     let mut map: HashMap<String, (Option<PathBuf>, Option<PathBuf>)> = HashMap::new();
@@ -157,7 +177,6 @@ fn benchmark_lobster(c: &mut Criterion) {
         );
 
         // Combined: process both streams in one timed iteration.
-        use std::time::Instant;
         let data_m = fs::read(&mp).unwrap();
         let data_o = fs::read(&op).unwrap();
         let mut group = c.benchmark_group(format!("{}/pair", group_name));
@@ -203,7 +222,10 @@ fn benchmark_lobster(c: &mut Criterion) {
     }
 
     if !had_pair {
-        panic!("No complete LOBSTER dataset pairs found under {}", root);
+        panic!(
+            "No complete LOBSTER dataset pairs found under {}.\nGenerate with:\n  cargo run --example ingest_lobster --release --features lobster",
+            root
+        );
     }
 }
 
