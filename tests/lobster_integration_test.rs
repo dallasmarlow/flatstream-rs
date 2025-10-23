@@ -28,7 +28,6 @@
 use flatstream::{DefaultDeframer, StreamReader};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
 
 mod lobster_generated {
     mod lobster_message_generated {
@@ -61,10 +60,11 @@ mod lobster_generated {
     }
 }
 
+#[path = "harness/lobster_common.rs"]
+mod lobster_common;
+
 #[test]
 fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
-    #[path = "harness/lobster_common.rs"]
-    mod lobster_common;
     let root = "tests/corpus/lobster";
     let msg_paths = lobster_common::list_with_suffix(root, "-message.bin").unwrap_or_else(|| {
         panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
@@ -88,8 +88,6 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
 
 #[test]
 fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
-    #[path = "harness/lobster_common.rs"]
-    mod lobster_common;
     let root = "tests/corpus/lobster";
     let ob_paths = lobster_common::list_with_suffix(root, "-orderbook.bin").unwrap_or_else(|| {
         panic!("LOBSTER .bin files missing. Generate with: cargo run --example ingest_lobster --release --features lobster")
@@ -110,5 +108,3 @@ fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
     }
     Ok(())
 }
-
-// list_with_suffix moved to tests/harness/lobster_common.rs

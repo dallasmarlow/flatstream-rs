@@ -66,7 +66,10 @@ mod lobster_generated {
 // Reuse test harness helpers for dataset discovery (dev-only include)
 #[allow(dead_code)]
 mod lobster_common {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/harness/lobster_common.rs"));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/harness/lobster_common.rs"
+    ));
 }
 
 fn bench_stream_msgs_only(
@@ -232,16 +235,4 @@ fn benchmark_lobster(c: &mut Criterion) {
 criterion_group!(benches, benchmark_lobster);
 criterion_main!(benches);
 
-fn list_with_suffix(dir: &str, suffix: &str) -> Option<Vec<PathBuf>> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
-    entries.sort();
-    Some(
-        entries
-            .into_iter()
-            .filter(|p| p.is_file() && p.to_string_lossy().ends_with(suffix))
-            .collect(),
-    )
-}
+// list_with_suffix now provided by tests/harness/lobster_common.rs
