@@ -21,6 +21,15 @@ pub struct DefaultFramer;
 
 impl Framer for DefaultFramer {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        // Enforce 32-bit length header contract to avoid truncation on cast
+        if payload.len() > u32::MAX as usize {
+            return Err(Error::invalid_frame_with(
+                "payload length exceeds 32-bit header limit",
+                Some(payload.len()),
+                None,
+                Some(u32::MAX as usize),
+            ));
+        }
         let payload_len = payload.len() as u32;
         writer.write_all(&payload_len.to_le_bytes())?;
         writer.write_all(payload)?;
@@ -43,6 +52,15 @@ impl<C: Checksum> ChecksumFramer<C> {
 
 impl<C: Checksum> Framer for ChecksumFramer<C> {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        // Enforce 32-bit length header contract to avoid truncation on cast
+        if payload.len() > u32::MAX as usize {
+            return Err(Error::invalid_frame_with(
+                "payload length exceeds 32-bit header limit",
+                Some(payload.len()),
+                None,
+                Some(u32::MAX as usize),
+            ));
+        }
         let payload_len = payload.len() as u32;
         let checksum = self.checksum_alg.calculate(payload);
         let checksum_size = self.checksum_alg.size();
@@ -122,9 +140,10 @@ impl Deframer for DefaultDeframer {
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
         buffer.resize(payload_len, 0);
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
 
         Ok(Some(()))
     }
@@ -136,9 +155,10 @@ impl Deframer for DefaultDeframer {
         payload_len: usize,
     ) -> Result<Option<()>> {
         buffer.resize(payload_len, 0);
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
         Ok(Some(()))
     }
 }
@@ -215,9 +235,10 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         };
 
         buffer.resize(payload_len, 0);
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
 
         self.checksum_alg.verify(expected_checksum, buffer)?;
 
@@ -265,9 +286,10 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         };
 
         buffer.resize(payload_len, 0);
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
 
         self.checksum_alg.verify(expected_checksum, buffer)?;
         Ok(Some(()))
@@ -293,27 +315,30 @@ impl Deframer for UnsafeDeframer {
         buffer: &mut Vec<u8>,
     ) -> Result<Option<()>> {
         let mut len_bytes = [0u8; 4];
-        if reader.read_exact(&mut len_bytes).is_err() {
-            return Ok(None); // Clean EOF
+        match reader.read_exact(&mut len_bytes) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
 
         buffer.clear();
         if buffer.capacity() < payload_len {
-            // Reserve additional space relative to current length to ensure
-            // capacity >= payload_len. After clear(), len is 0, so reserve(payload_len)
-            // guarantees sufficient capacity.
-            buffer.reserve(payload_len - buffer.len());
+            let additional = payload_len.saturating_sub(buffer.len());
+            if additional > 0 {
+                buffer.reserve(additional);
+            }
         }
 
         unsafe {
             buffer.set_len(payload_len);
         }
 
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
         Ok(Some(()))
     }
 
@@ -325,15 +350,18 @@ impl Deframer for UnsafeDeframer {
     ) -> Result<Option<()>> {
         // Only grow the buffer if current capacity is insufficient.
         if buffer.capacity() < payload_len {
-            // Reserve just enough additional capacity to reach payload_len.
-            buffer.reserve(payload_len - buffer.len());
+            let additional = payload_len.saturating_sub(buffer.len());
+            if additional > 0 {
+                buffer.reserve(additional);
+            }
         }
         unsafe {
             buffer.set_len(payload_len);
         }
-        reader
-            .read_exact(buffer)
-            .map_err(|_| Error::UnexpectedEof)?;
+        reader.read_exact(buffer).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+            _ => e.into(),
+        })?;
         Ok(Some(()))
     }
 }
@@ -356,8 +384,10 @@ impl Deframer for SafeTakeDeframer {
         buffer: &mut Vec<u8>,
     ) -> Result<Option<()>> {
         let mut len_bytes = [0u8; 4];
-        if reader.read_exact(&mut len_bytes).is_err() {
-            return Ok(None); // Clean EOF
+        match reader.read_exact(&mut len_bytes) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
 
         let payload_len = u32::from_le_bytes(len_bytes) as usize;
