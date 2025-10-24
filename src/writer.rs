@@ -220,7 +220,7 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn test_write_with_checksum() {
+    fn test_write_default_framer() {
         let mut buffer = Vec::new();
         let framer = DefaultFramer;
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
@@ -234,7 +234,7 @@ mod tests {
 
         let data = buffer;
         assert!(!data.is_empty());
-        // Should have: 4 bytes (length) + payload (no checksum)
+        // DefaultFramer: 4 bytes (length) + payload (no checksum)
         assert!(data.len() >= 4);
     }
 

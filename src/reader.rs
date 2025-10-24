@@ -70,7 +70,6 @@ pub struct StreamReader<R: Read, D: Deframer> {
     // The reader owns its buffer, resizing as needed.
     // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
-    _phantom: PhantomData<D>, // PhantomData because D is only used in method calls
 }
 
 impl<R: Read, D: Deframer> StreamReader<R, D> {
@@ -80,7 +79,6 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             reader,
             deframer,
             buffer: Vec::new(),
-            _phantom: PhantomData,
         }
     }
 
@@ -90,7 +88,6 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             reader,
             deframer,
             buffer: Vec::with_capacity(capacity),
-            _phantom: PhantomData,
         }
     }
 
@@ -371,7 +368,7 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn test_read_message_with_checksum() {
+    fn test_read_message_default_framer() {
         // Write a message first
         let mut buffer = Vec::new();
         let framer = DefaultFramer;
@@ -395,7 +392,7 @@ mod tests {
 
     #[cfg(feature = "xxhash")]
     #[test]
-    fn test_read_message_with_checksum_feature() {
+    fn test_read_message_with_xxhash64_feature() {
         // Write a message first
         let mut buffer = Vec::new();
         let checksum = XxHash64::new();
@@ -420,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_message_without_checksum() {
+    fn test_read_message_default_no_checksum() {
         // Write a message first
         let mut buffer = Vec::new();
         let framer = DefaultFramer;

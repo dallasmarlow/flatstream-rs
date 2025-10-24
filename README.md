@@ -466,6 +466,34 @@ reader.process_all(|payload: &[u8]| {
 })?;
 ```
 
+### Hardening against malicious data (recommended)
+
+When reading from untrusted sources (e.g., network sockets), a malicious actor could send a frame with an extremely large length prefix (e.g., 2GB). Without protection, your application would try to allocate a huge buffer, leading to an Out-Of-Memory (OOM) crash.
+
+FlatStream provides the `.bounded()` adapter to prevent this. It's a zero-cost abstraction that checks the length *before* allocation.
+
+**Recommendation**: Always use `.bounded()` on deframers when reading from untrusted streams.
+
+```rust
+use flatstream::{StreamReader, DefaultDeframer, DeframerExt, Result};
+use std::io::Cursor;
+
+fn read_safely(data: Vec<u8>) -> Result<()> {
+    const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MiB
+
+    let reader_backend = Cursor::new(data);
+    let deframer = DefaultDeframer.bounded(MAX_MESSAGE_SIZE); // Enforce limit
+    let mut reader = StreamReader::new(reader_backend, deframer);
+
+    reader.process_all(|payload: &[u8]| {
+        // ... process payload ...
+        Ok(())
+    })?;
+
+    Ok(())
+}
+```
+
 ### Advanced: Manual Iteration Control
 
 For cases requiring early termination or custom control flow:
