@@ -180,7 +180,7 @@ fn process_all_and_messages_propagate_validation_failed() {
     let mut reader = StreamReader::new(Cursor::new(framed.clone()), deframer);
 
     let err = reader.process_all(|_| Ok(())).unwrap_err();
-    matches!(err, Error::ValidationFailed { .. });
+    assert!(matches!(err, Error::ValidationFailed { .. }));
 
     let mut reader = StreamReader::new(
         Cursor::new(framed),
@@ -188,5 +188,5 @@ fn process_all_and_messages_propagate_validation_failed() {
     );
     let mut iter = reader.messages();
     let err = iter.next().unwrap_err();
-    matches!(err, Error::ValidationFailed { .. });
+    assert!(matches!(err, Error::ValidationFailed { .. }));
 }

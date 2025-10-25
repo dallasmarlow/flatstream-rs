@@ -96,7 +96,7 @@
 //! let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
 //! let mut reader = StreamReader::new(Cursor::new(data), deframer);
 //! reader.process_all(|payload| {
-//!     // payload is an in-place &_[u8] slice; no copies or allocations
+//!     // payload is an in-place &[u8] slice; no copies or allocations
 //!     Ok(())
 //! })?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())

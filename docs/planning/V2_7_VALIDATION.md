@@ -361,3 +361,25 @@ let deframer = DefaultDeframer::default()
 
 let mut reader = StreamReader::new(file, deframer);
 This extension demonstrates the power of the V2 (Strategy-Coupled) design. By establishing a simple trait, we have created a stable platform for adding new, powerful, and domain-specific capabilities without altering the library's core.ConclusionThe analysis of the evolutionary design documents and the existing source code is unambiguous.The V1 design 1 is architecturally unsound, non-composable, and misaligned with the library's core principles. It is formally rejected.The V2 design 1 is the correct architecture. Its Validator trait perfectly parallels the Checksum trait, respects the zero-cost abstraction principle, and provides a powerful platform for extensibility.The V3 document 1 provides the correct philosophical justification, aligning the V2 design with industry-best-practices for safety as seen in frameworks like rkyv.7The implementation shall proceed as detailed in Section 7 of this report. This involves creating the src/validation.rs module based on the V2 Validator trait and integrating it into the library using the superior ValidatingFramer/ValidatingDeframer adapter pattern, which is synthesized from the best parts of the V2 document and the existing src/framing.rs adapter design.1This implementation will close a critical production-readiness gap, transform flatstream-rs into a demonstrably safe streaming library, and provide a new, stable platform for future feature development.
+---
+
+Implementation Note: StructuralValidator verification strategy
+
+One suggestion during review was to replace the explicit root-offset + `Verifier::visit_table(..)` approach with a single call to `flatbuffers::root_with_opts::<flatbuffers::Table>(..)`. We investigated this and kept the explicit verifier path for the following reasons:
+
+1) `Table` is not `Verifiable` in the current Rust flatbuffers API
+- The signature of `root_with_opts` requires `T: Follow<'a> + Verifiable`. `flatbuffers::Table<'_>` does not implement `Verifiable`, which leads to a compile-time error.
+- As a result, `root_with_opts::<Table>` is not available for a type-agnostic validator.
+
+2) Explicit `Verifier::visit_table(..)` is portable and type-agnostic
+- We read the root uoffset (first 4 bytes) and pass the absolute position to `visit_table(..)`, which performs the same structural checks governed by `VerifierOptions` (depth, table count, apparent size) without schema knowledge.
+- This keeps the validator independent of generated code and resilient to flatbuffers crate changes.
+
+3) Consistency with flatstream’s framing model
+- flatstream uses its own 4-byte length header; the payload FlatBuffer itself is not size-prefixed by the builder. Reading the uoffset at payload start and visiting the table matches this model precisely.
+- If future payloads include size-prefixed FlatBuffers, we can add a variant to handle that, but today the explicit path is correct and minimal.
+
+4) Zero-copy and performance preserved
+- `visit_table(..)` operates directly on the in-place buffer and is fully bounds-checked, preserving zero-copy behavior and safety.
+
+In short, the manual verifier path is the only portable, type-agnostic option supported by the current Rust flatbuffers API, and it aligns with our wire format. We retain it and document the rationale here for future maintainers.
