@@ -1,4 +1,3 @@
-```markdown
 # Design Document: flatstream-rs v2.6 - Structural Validation for High-Throughput Capture
 
 Version: 1.0  
@@ -404,4 +403,3 @@ This incremental improvement demonstrates that production hardening doesn't requ
 ---
 
 *The v2.6 design philosophy: "Catch corruption early, fail fast, maintain throughput."*
-```
