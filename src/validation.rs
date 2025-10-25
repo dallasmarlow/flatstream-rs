@@ -319,15 +319,9 @@ impl TypedValidator {
     }
 }
 
-impl Default for TypedValidator {
-    fn default() -> Self {
-        Self {
-            opts: flatbuffers::VerifierOptions::default(),
-            verify: |_opts, _payload| Ok(()),
-            name_static: "TypedValidator",
-        }
-    }
-}
+// Intentionally no Default implementation for `TypedValidator` to prevent
+// accidental construction of a no-op typed validator. Use the explicit
+// constructors: `for_type`, `with_limits_for_type`, `from_verify_named`, etc.
 
 impl Validator for TypedValidator {
     #[inline]

@@ -75,6 +75,32 @@
 //! * **`Deframer`**: Defines how messages are parsed from the byte stream
 //!
 //! This separation allows for maximum flexibility and composability.
+//!
+//! ## Validation (Zero-Copy)
+//!
+//! Validation is an optional, composable layer that operates directly on the
+//! in-place payload slice (`&[u8]`). It introduces no allocations and preserves
+//! the library's zero-copy guarantees.
+//!
+//! - Writers: `FramerExt::with_validator(..)` validates before bytes are written.
+//! - Readers: `DeframerExt::with_validator(..)` validates after deframing (and
+//!   after checksum verification if present) but before yielding to user code.
+//! - Opt-out: `NoValidator` is a zero-cost path (`#[inline(always)]`) and is
+//!   optimized away by the compiler in release builds.
+//!
+//! ```rust
+//! # use flatstream::*;
+//! # use std::io::Cursor;
+//! // Read with structural validation (type-agnostic)
+//! let data: Vec<u8> = vec![]; // framed bytes
+//! let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+//! let mut reader = StreamReader::new(Cursor::new(data), deframer);
+//! reader.process_all(|payload| {
+//!     // payload is an in-place &_[u8] slice; no copies or allocations
+//!     Ok(())
+//! })?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 pub mod checksum;
 pub mod error;
