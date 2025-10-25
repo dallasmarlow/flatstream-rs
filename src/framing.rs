@@ -2,6 +2,7 @@
 
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};
+use crate::validation::Validator;
 use std::io::{Read, Write};
 
 //--- Framer Trait and Implementations ---
@@ -514,6 +515,78 @@ impl<F: Framer> Framer for BoundedFramer<F> {
     }
 }
 
+//--- Validation Adapters ---
+
+/// A composable adapter that adds validation to any `Framer`.
+#[derive(Debug, Clone)]
+pub struct ValidatingFramer<F: Framer, V: Validator> {
+    inner: F,
+    validator: V,
+}
+
+impl<F: Framer, V: Validator> ValidatingFramer<F, V> {
+    #[inline]
+    pub fn new(inner: F, validator: V) -> Self {
+        Self { inner, validator }
+    }
+}
+
+impl<F: Framer, V: Validator> Framer for ValidatingFramer<F, V> {
+    #[inline]
+    fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        // Validate before writing to ensure malformed data never hits the wire
+        self.validator.validate(payload)?;
+        self.inner.frame_and_write(writer, payload)
+    }
+}
+
+/// A composable adapter that adds validation to any `Deframer`.
+#[derive(Debug, Clone)]
+pub struct ValidatingDeframer<D: Deframer, V: Validator> {
+    inner: D,
+    validator: V,
+}
+
+impl<D: Deframer, V: Validator> ValidatingDeframer<D, V> {
+    #[inline]
+    pub fn new(inner: D, validator: V) -> Self {
+        Self { inner, validator }
+    }
+}
+
+impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
+    #[inline]
+    fn read_and_deframe<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<()>> {
+        match self.inner.read_and_deframe(reader, buffer)? {
+            Some(()) => {
+                self.validator.validate(buffer)?;
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[inline]
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<()>> {
+        match self.inner.read_after_length(reader, buffer, payload_len)? {
+            Some(()) => {
+                self.validator.validate(buffer)?;
+                Ok(Some(()))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 //--- Observer Adapters ---
 
 /// An adapter that allows observing payloads on the write path without copying or mutating.
@@ -595,6 +668,12 @@ pub trait FramerExt: Framer + Sized {
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
         ObserverFramer::new(self, callback)
     }
+
+    /// Adds a validation layer to this framer.
+    #[inline]
+    fn with_validator<V: Validator>(self, validator: V) -> ValidatingFramer<Self, V> {
+        ValidatingFramer::new(self, validator)
+    }
 }
 
 impl<T: Framer> FramerExt for T {}
@@ -609,6 +688,12 @@ pub trait DeframerExt: Deframer + Sized {
     /// Observe payloads on the read path without copying. Useful for metrics/logging.
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
         ObserverDeframer::new(self, callback)
+    }
+
+    /// Adds a validation layer to this deframer.
+    #[inline]
+    fn with_validator<V: Validator>(self, validator: V) -> ValidatingDeframer<Self, V> {
+        ValidatingDeframer::new(self, validator)
     }
 }
 
