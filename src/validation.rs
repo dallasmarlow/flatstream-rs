@@ -10,7 +10,8 @@ use crate::error::{Error, Result};
 /// A trait for message validation strategies.
 ///
 /// Implementations validate a deframed payload (after any checksum verification)
-/// to ensure safety before the application accesses it.
+/// to ensure safety before the application accesses it. Validators must be
+/// thread-safe (`Send + Sync`) to compose cleanly across adapters and readers.
 pub trait Validator: Send + Sync {
     /// Validates the payload according to the implementation's rules.
     ///
@@ -160,8 +161,12 @@ impl Validator for SizeValidator {
 }
 
 /// Compose multiple validators into a pipeline.
+///
+/// Validators are executed in insertion order and short-circuit on the first
+/// failure. Internally stores `Box<dyn Validator + Send + Sync>` to preserve
+/// thread-safety when composed.
 pub struct CompositeValidator {
-    validators: Vec<Box<dyn Validator>>,
+    validators: Vec<Box<dyn Validator + Send + Sync + 'static>>,
 }
 
 impl CompositeValidator {
@@ -174,7 +179,8 @@ impl CompositeValidator {
     /// Adds a validator to the pipeline (AND semantics).
     #[allow(clippy::should_implement_trait)]
     pub fn add<V: Validator + 'static>(mut self, validator: V) -> Self {
-        self.validators.push(Box::new(validator));
+        self.validators
+            .push(Box::new(validator) as Box<dyn Validator + Send + Sync>);
         self
     }
 }
@@ -185,13 +191,7 @@ impl Default for CompositeValidator {
     }
 }
 
-impl std::ops::Add<Box<dyn Validator>> for CompositeValidator {
-    type Output = CompositeValidator;
-    fn add(mut self, rhs: Box<dyn Validator>) -> Self::Output {
-        self.validators.push(rhs);
-        self
-    }
-}
+// Intentionally do not implement std::ops::Add to avoid surprising semantics.
 
 impl Validator for CompositeValidator {
     fn validate(&self, payload: &[u8]) -> Result<()> {
@@ -207,12 +207,16 @@ impl Validator for CompositeValidator {
 }
 
 /// A type-specific validator created for a concrete FlatBuffer root type.
+///
+/// This validator verifies that the payload contains a valid FlatBuffer whose
+/// root type is a specific generated table `T` (e.g., `TelemetryEvent`).
 pub struct TypedValidator {
     opts: flatbuffers::VerifierOptions,
     verify: fn(
         &flatbuffers::VerifierOptions,
         &[u8],
     ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    name_static: &'static str,
 }
 
 impl TypedValidator {
@@ -224,6 +228,7 @@ impl TypedValidator {
         Self {
             opts: flatbuffers::VerifierOptions::default(),
             verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+            name_static: std::any::type_name::<T>(),
         }
     }
 
@@ -240,6 +245,23 @@ impl TypedValidator {
         Self {
             opts,
             verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+            name_static: std::any::type_name::<T>(),
+        }
+    }
+
+    /// Creates a typed validator from a schema-specific verification function
+    /// and a static name for diagnostics.
+    pub fn from_verify_named(
+        name: &'static str,
+        verify: fn(
+            &flatbuffers::VerifierOptions,
+            &[u8],
+        ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    ) -> Self {
+        Self {
+            opts: flatbuffers::VerifierOptions::default(),
+            verify,
+            name_static: name,
         }
     }
 
@@ -250,10 +272,7 @@ impl TypedValidator {
             &[u8],
         ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
     ) -> Self {
-        Self {
-            opts: flatbuffers::VerifierOptions::default(),
-            verify,
-        }
+        Self::from_verify_named("TypedValidator", verify)
     }
 
     /// Creates a typed validator with limits from a schema-specific verification function.
@@ -270,7 +289,33 @@ impl TypedValidator {
             max_tables,
             ..Default::default()
         };
-        Self { opts, verify }
+        Self {
+            opts,
+            verify,
+            name_static: "TypedValidator",
+        }
+    }
+
+    /// Creates a typed validator with limits and a static name.
+    pub fn with_limits_from_verify_named(
+        max_depth: usize,
+        max_tables: usize,
+        name: &'static str,
+        verify: fn(
+            &flatbuffers::VerifierOptions,
+            &[u8],
+        ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    ) -> Self {
+        let opts = flatbuffers::VerifierOptions {
+            max_depth,
+            max_tables,
+            ..Default::default()
+        };
+        Self {
+            opts,
+            verify,
+            name_static: name,
+        }
     }
 }
 
@@ -279,6 +324,7 @@ impl Default for TypedValidator {
         Self {
             opts: flatbuffers::VerifierOptions::default(),
             verify: |_opts, _payload| Ok(()),
+            name_static: "TypedValidator",
         }
     }
 }
@@ -293,7 +339,7 @@ impl Validator for TypedValidator {
     }
 
     fn name(&self) -> &'static str {
-        "TypedValidator"
+        self.name_static
     }
 }
 
