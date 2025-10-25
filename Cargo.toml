@@ -106,6 +106,10 @@ required-features = ["lobster"]
 name = "trait_dispatch_overhead"
 harness = false
 
+[[bench]]
+name = "validation_benchmarks"
+harness = false
+
 [[example]]
 name = "typed_reading_flatc_example"
 required-features = ["flatc_example"]
