@@ -160,6 +160,7 @@ Optional functionality is controlled by feature flags:
 - `InvalidFrame { message }` - Malformed message structure
 - `FlatbuffersError(InvalidFlatbuffer)` - Deserialization failures
 - `UnexpectedEof` - Premature stream termination
+ - `ValidationFailed { validator: &'static str, reason: String }` - Validator rejection
 
 **Usage Pattern:**
 ```rust

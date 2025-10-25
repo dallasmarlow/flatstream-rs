@@ -114,9 +114,9 @@ fn bench_validation_read_path(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_validation_write_path,
-    bench_validation_read_path
-);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().measurement_time(std::time::Duration::from_secs(10)).sample_size(100);
+    targets = bench_validation_write_path, bench_validation_read_path
+}
 criterion_main!(benches);

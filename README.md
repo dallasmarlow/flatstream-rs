@@ -510,15 +510,18 @@ reader.process_all(|payload: &[u8]| {
 })?;
 ```
 
-#### Generic verification (also supported)
+#### Generic verification (type-agnostic)
+
+For type-agnostic checks, use FlatStream’s `StructuralValidator`, which internally
+performs structural verification with `Verifier::visit_table(..)` (works without
+any generated types):
 
 ```rust
-use flatbuffers::VerifierOptions;
+use flatstream::{DeframerExt, StructuralValidator};
 
+let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
 reader.process_all(|payload: &[u8]| {
-    let opts = VerifierOptions::default();
-    // Validate structure without a generated type
-    let _ = flatbuffers::root_with_opts::<flatbuffers::Table>(&opts, payload)?;
+    // payload has passed structural verification
     Ok(())
 })?;
 ```

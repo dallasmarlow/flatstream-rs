@@ -178,6 +178,7 @@ impl CompositeValidator {
 
     /// Adds a validator to the pipeline (AND semantics).
     #[allow(clippy::should_implement_trait)]
+    #[must_use]
     pub fn add<V: Validator + 'static>(mut self, validator: V) -> Self {
         self.validators
             .push(Box::new(validator) as Box<dyn Validator + Send + Sync>);
