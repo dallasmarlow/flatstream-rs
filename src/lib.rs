@@ -81,6 +81,7 @@ pub mod error;
 pub mod framing;
 pub mod reader;
 pub mod traits;
+pub mod validation;
 pub mod writer;
 
 // Re-export the main public API for user convenience.
@@ -89,11 +90,14 @@ pub use error::{Error, Result};
 #[allow(deprecated)]
 pub use framing::{
     BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
-    SafeTakeDeframer, UnsafeDeframer,
+    SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
 };
 pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
+pub use validation::{
+    CompositeValidator, NoValidator, SizeValidator, StructuralValidator, Validator,
+};
 pub use writer::StreamWriter;
 
 #[cfg(feature = "xxhash")]

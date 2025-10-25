@@ -31,6 +31,15 @@ pub enum Error {
     #[error("FlatBuffers error: {0}")]
     FlatbuffersError(#[from] flatbuffers::InvalidFlatbuffer),
 
+    /// Validation failure from a configured validator.
+    ///
+    /// `validator` is typically the value returned by the validator's `.name()` method.
+    #[error("Validation failed (validator: {validator}): {reason}")]
+    ValidationFailed {
+        validator: &'static str,
+        reason: String,
+    },
+
     /// Unexpected end of file while reading stream data.
     #[error("Unexpected end of file while reading stream")]
     UnexpectedEof,
