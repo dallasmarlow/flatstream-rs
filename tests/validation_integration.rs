@@ -3,7 +3,9 @@ use flatstream::framing::{DeframerExt, FramerExt};
 use flatstream::*;
 use std::io::Cursor;
 
-// Bring generated modules into scope for typed validator tests (suppress lints in generated code)
+// Tests-only import of generated schemas used to validate TypedValidator behavior.
+// These imports do not affect the core library; clippy is suppressed only for
+// these generated files to avoid noise in test builds.
 #[allow(clippy::extra_unused_lifetimes, mismatched_lifetime_syntaxes)]
 #[path = "../examples/generated/lobster_message_generated.rs"]
 mod lobster_generated;
