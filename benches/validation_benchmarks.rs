@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use flatbuffers::FlatBufferBuilder;
+use flatstream::framing::{DeframerExt, FramerExt};
 use flatstream::*;
 use std::io::{sink, Cursor};
 
@@ -24,7 +25,7 @@ fn bench_validation_write_path(c: &mut Criterion) {
 
     group.bench_function("DefaultFramer (baseline)", |b| {
         b.iter_batched(
-            || sink(),
+            sink,
             |mut w| {
                 black_box(&DefaultFramer)
                     .frame_and_write(&mut w, black_box(&payload))
@@ -37,7 +38,7 @@ fn bench_validation_write_path(c: &mut Criterion) {
     group.bench_function("ValidatingFramer + NoValidator (zero-cost)", |b| {
         let framer = DefaultFramer.with_validator(NoValidator);
         b.iter_batched(
-            || sink(),
+            sink,
             |mut w| {
                 black_box(&framer)
                     .frame_and_write(&mut w, black_box(&payload))
@@ -50,7 +51,7 @@ fn bench_validation_write_path(c: &mut Criterion) {
     group.bench_function("ValidatingFramer + StructuralValidator", |b| {
         let framer = DefaultFramer.with_validator(StructuralValidator::new());
         b.iter_batched(
-            || sink(),
+            sink,
             |mut w| {
                 black_box(&framer)
                     .frame_and_write(&mut w, black_box(&payload))

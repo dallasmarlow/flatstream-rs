@@ -5,6 +5,7 @@
 //! strategy pattern to preserve orthogonality and zero-cost opt-out.
 
 use crate::error::{Error, Result};
+// no extra markers needed
 
 /// A trait for message validation strategies.
 ///
@@ -171,6 +172,7 @@ impl CompositeValidator {
     }
 
     /// Adds a validator to the pipeline (AND semantics).
+    #[allow(clippy::should_implement_trait)]
     pub fn add<V: Validator + 'static>(mut self, validator: V) -> Self {
         self.validators.push(Box::new(validator));
         self
@@ -201,6 +203,97 @@ impl Validator for CompositeValidator {
 
     fn name(&self) -> &'static str {
         "CompositeValidator"
+    }
+}
+
+/// A type-specific validator created for a concrete FlatBuffer root type.
+pub struct TypedValidator {
+    opts: flatbuffers::VerifierOptions,
+    verify: fn(
+        &flatbuffers::VerifierOptions,
+        &[u8],
+    ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+}
+
+impl TypedValidator {
+    /// Creates a typed validator for the given root type `T` with default limits.
+    pub fn for_type<T>() -> Self
+    where
+        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
+    {
+        Self {
+            opts: flatbuffers::VerifierOptions::default(),
+            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+        }
+    }
+
+    /// Creates a typed validator with custom limits for root type `T`.
+    pub fn with_limits_for_type<T>(max_depth: usize, max_tables: usize) -> Self
+    where
+        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
+    {
+        let opts = flatbuffers::VerifierOptions {
+            max_depth,
+            max_tables,
+            ..Default::default()
+        };
+        Self {
+            opts,
+            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+        }
+    }
+
+    /// Creates a typed validator from a schema-specific verification function.
+    pub fn from_verify(
+        verify: fn(
+            &flatbuffers::VerifierOptions,
+            &[u8],
+        ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    ) -> Self {
+        Self {
+            opts: flatbuffers::VerifierOptions::default(),
+            verify,
+        }
+    }
+
+    /// Creates a typed validator with limits from a schema-specific verification function.
+    pub fn with_limits_from_verify(
+        max_depth: usize,
+        max_tables: usize,
+        verify: fn(
+            &flatbuffers::VerifierOptions,
+            &[u8],
+        ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    ) -> Self {
+        let opts = flatbuffers::VerifierOptions {
+            max_depth,
+            max_tables,
+            ..Default::default()
+        };
+        Self { opts, verify }
+    }
+}
+
+impl Default for TypedValidator {
+    fn default() -> Self {
+        Self {
+            opts: flatbuffers::VerifierOptions::default(),
+            verify: |_opts, _payload| Ok(()),
+        }
+    }
+}
+
+impl Validator for TypedValidator {
+    #[inline]
+    fn validate(&self, payload: &[u8]) -> Result<()> {
+        (self.verify)(&self.opts, payload).map_err(|e| Error::ValidationFailed {
+            validator: self.name(),
+            reason: e.to_string(),
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "TypedValidator"
     }
 }
 

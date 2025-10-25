@@ -519,7 +519,7 @@ impl<F: Framer> Framer for BoundedFramer<F> {
 
 /// A composable adapter that adds validation to any `Framer`.
 #[derive(Debug, Clone)]
-pub struct ValidatingFramer<F: Framer + Clone, V: Validator + Clone> {
+pub struct ValidatingFramer<F: Framer, V: Validator> {
     inner: F,
     validator: V,
 }
@@ -532,6 +532,7 @@ impl<F: Framer, V: Validator> ValidatingFramer<F, V> {
 }
 
 impl<F: Framer, V: Validator> Framer for ValidatingFramer<F, V> {
+    #[inline]
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
         // Validate before writing to ensure malformed data never hits the wire
         self.validator.validate(payload)?;
@@ -541,7 +542,7 @@ impl<F: Framer, V: Validator> Framer for ValidatingFramer<F, V> {
 
 /// A composable adapter that adds validation to any `Deframer`.
 #[derive(Debug, Clone)]
-pub struct ValidatingDeframer<D: Deframer + Clone, V: Validator + Clone> {
+pub struct ValidatingDeframer<D: Deframer, V: Validator> {
     inner: D,
     validator: V,
 }
@@ -554,6 +555,7 @@ impl<D: Deframer, V: Validator> ValidatingDeframer<D, V> {
 }
 
 impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
+    #[inline]
     fn read_and_deframe<R: Read>(
         &self,
         reader: &mut R,
@@ -568,6 +570,7 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
         }
     }
 
+    #[inline]
     fn read_after_length<R: Read>(
         &self,
         reader: &mut R,

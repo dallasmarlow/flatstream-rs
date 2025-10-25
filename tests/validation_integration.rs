@@ -1,6 +1,15 @@
 use flatbuffers::FlatBufferBuilder;
+use flatstream::framing::{DeframerExt, FramerExt};
 use flatstream::*;
 use std::io::Cursor;
+
+// Bring generated modules into scope for typed validator tests (suppress lints in generated code)
+#[allow(clippy::extra_unused_lifetimes, mismatched_lifetime_syntaxes)]
+#[path = "../examples/generated/lobster_message_generated.rs"]
+mod lobster_generated;
+#[allow(clippy::extra_unused_lifetimes, mismatched_lifetime_syntaxes)]
+#[path = "../examples/generated/telemetry_generated.rs"]
+mod telemetry_generated;
 
 fn build_empty_table_vec() -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
@@ -83,7 +92,8 @@ fn fluent_api_compiles_and_runs() {
             .add(StructuralValidator::new()),
     );
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
-    assert!(reader.read_message().unwrap().is_some());
+    // Use process_all to validate that the pipeline accepts the typed message
+    reader.process_all(|_| Ok(())).unwrap();
 }
 
 #[test]
@@ -98,4 +108,83 @@ fn validating_framer_rejects_invalid_before_write() {
         Error::ValidationFailed { validator, .. } => assert_eq!(validator, "StructuralValidator"),
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
+}
+
+// --- TypedValidator tests ---
+
+#[test]
+fn typed_validator_accepts_matching_root() {
+    // Build a minimal TelemetryEvent buffer using the generated API
+    let mut b = FlatBufferBuilder::new();
+    let msg = b.create_string("");
+    let mut tb = telemetry_generated::telemetry::TelemetryEventBuilder::new(&mut b);
+    tb.add_message(msg);
+    tb.add_timestamp(0);
+    let root = tb.finish();
+    b.finish(root, None);
+    let buf = b.finished_data().to_vec();
+
+    let validator = TypedValidator::from_verify(|opts, payload| {
+        telemetry_generated::telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
+    });
+    let deframer = DefaultDeframer.with_validator(validator);
+    let mut framed = Vec::new();
+    DefaultFramer.frame_and_write(&mut framed, &buf).unwrap();
+    let mut reader = StreamReader::new(Cursor::new(framed), deframer);
+    assert!(reader.read_message().unwrap().is_some());
+}
+
+#[test]
+fn typed_validator_rejects_wrong_type() {
+    // Build a valid Lobster MessageEvent and attempt to validate as TelemetryEvent (wrong schema)
+    let mut b = FlatBufferBuilder::new();
+    {
+        use lobster_generated::flatstream::lobster as lob;
+        let mut mb = lob::MessageEventBuilder::new(&mut b);
+        mb.add_timestamp(0.0);
+        mb.add_event_type(1);
+        mb.add_order_id(42);
+        mb.add_size(1);
+        mb.add_price(100);
+        mb.add_direction(1);
+        let root = mb.finish();
+        b.finish(root, None);
+    }
+    let buf = b.finished_data().to_vec();
+    let validator = TypedValidator::from_verify(|opts, payload| {
+        telemetry_generated::telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
+    });
+    let deframer = DefaultDeframer.with_validator(validator);
+    let mut framed = Vec::new();
+    DefaultFramer.frame_and_write(&mut framed, &buf).unwrap();
+    let mut reader = StreamReader::new(Cursor::new(framed), deframer);
+    let err = reader.process_all(|_| Ok(())).unwrap_err();
+    match err {
+        Error::ValidationFailed { validator, .. } => assert_eq!(validator, "TypedValidator"),
+        other => panic!("expected ValidationFailed, got {other:?}"),
+    }
+}
+
+#[test]
+fn process_all_and_messages_propagate_validation_failed() {
+    // Frame structurally invalid payload so validation runs and fails
+    let payload = b"not a flatbuffer table".to_vec();
+    let mut framed = Vec::new();
+    DefaultFramer
+        .frame_and_write(&mut framed, &payload)
+        .unwrap();
+
+    let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+    let mut reader = StreamReader::new(Cursor::new(framed.clone()), deframer);
+
+    let err = reader.process_all(|_| Ok(())).unwrap_err();
+    matches!(err, Error::ValidationFailed { .. });
+
+    let mut reader = StreamReader::new(
+        Cursor::new(framed),
+        DefaultDeframer.with_validator(StructuralValidator::new()),
+    );
+    let mut iter = reader.messages();
+    let err = iter.next().unwrap_err();
+    matches!(err, Error::ValidationFailed { .. });
 }

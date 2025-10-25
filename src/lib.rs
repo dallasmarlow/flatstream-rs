@@ -96,7 +96,7 @@ pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{
-    CompositeValidator, NoValidator, SizeValidator, StructuralValidator, Validator,
+    CompositeValidator, NoValidator, SizeValidator, StructuralValidator, TypedValidator, Validator,
 };
 pub use writer::StreamWriter;
 
