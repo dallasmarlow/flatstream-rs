@@ -138,6 +138,63 @@ sequenceDiagram
 | `Bounded*` adapters | Enforce max payload size on read/write |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 
+## Payload Validation (Zero-Copy Safety)
+
+FlatStream includes a first-class, composable validation layer to ensure malformed FlatBuffers never cross the trust boundary into your application logic.
+
+- **Why**: Prevent panics or undefined behavior from malformed data by validating in the deframing pipeline (inspired by rkyv/bytecheck’s upfront validation philosophy).
+- **How**: The `Validator` trait mirrors `Checksum`. Add validation with a fluent `.with_validator(...)` on both framers and deframers. Validators operate directly on `&[u8]` slices – no allocations.
+- **Zero-cost opt-out**: `NoValidator` is optimized away in release builds.
+
+### Validator types
+
+- `NoValidator`: Zero-cost, always succeeds.
+- `StructuralValidator`: Type-agnostic structural FlatBuffer verification using the flatbuffers `Verifier`. Validates table/vtable structure and DoS limits, but not schema-specific fields.
+- `SizeValidator`: Fast size sanity checks (min/max bytes).
+- `CompositeValidator`: Compose multiple validators (AND semantics) in order.
+- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`. No built-in schemas are required or assumed by the library.
+
+### Fluent API examples
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, StructuralValidator};
+use std::io::Cursor;
+
+// Structural safety before your code sees any payload
+let data: Vec<u8> = vec![]; // framed bytes
+let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
+reader.process_all(|payload| {
+    // payload: &[u8] (in-place, zero-copy)
+    Ok(())
+})?;
+```
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, CompositeValidator, StructuralValidator, SizeValidator};
+
+// Compose size + structural validation (AND semantics)
+let validator = CompositeValidator::new()
+    .add(SizeValidator::new(64, 1024 * 1024))
+    .add(StructuralValidator::new());
+let deframer = DefaultDeframer.with_validator(validator);
+```
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, TypedValidator};
+// Example using generated `my_schema::MyMessage` root type:
+let deframer = DefaultDeframer.with_validator(TypedValidator::for_type::<my_schema::MyMessage>());
+```
+
+### Error handling
+
+Validation errors propagate as `Error::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `Error::ChecksumMismatch`.
+
+### Performance
+
+- `NoValidator` is zero-cost (fully optimized away in hot paths).
+- `StructuralValidator` adds minimal overhead (see `benches/validation_benchmarks.rs`).
+
 ## FAQ
 
 - **Why not use FlatBuffers’ size-prefixed buffers?**

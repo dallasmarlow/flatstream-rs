@@ -36,7 +36,8 @@ src/
 ├── error.rs        # Error types and Result aliases
 ├── traits.rs       # StreamSerialize trait definition
 ├── checksum.rs     # Checksum trait and implementations (NoChecksum, XxHash64, Crc32)
-├── framing.rs      # Framer and Deframer traits and implementations
+├── framing.rs      # Framer/Deframer traits + adapters (bounded/observer/validating)
+├── validation.rs   # Validator trait + implementations (No/Size/Structural/Typed/Composite)
 ├── writer.rs       # StreamWriter implementation
 └── reader.rs       # StreamReader implementation
 ```
@@ -105,12 +106,14 @@ The library uses a composable, trait-based architecture that enables:
 - `Framer`: Defines how messages are framed in the byte stream
 - `Deframer`: Defines how messages are parsed from the byte stream
 - `Checksum`: Defines checksum algorithms for data integrity
+ - `Validator`: Defines payload safety checks (type-agnostic or schema-aware)
 
 **Built-in Implementations:**
 - `StreamSerialize` for `&str` and `String` (convenience)
 - `DefaultFramer`/`DefaultDeframer`: Length-prefixed framing
 - `ChecksumFramer`/`ChecksumDeframer`: Length + variable-size checksum framing
 - `NoChecksum` (0 bytes), `XxHash64` (8 bytes), `Crc32` (4 bytes), `Crc16` (2 bytes): Checksum implementations
+ - `NoValidator` (zero-cost), `SizeValidator`, `StructuralValidator` (type-agnostic), `TypedValidator` (schema-aware), `CompositeValidator` (AND pipeline)
 
 **Composability:**
 ```rust
@@ -124,6 +127,16 @@ let mut writer = StreamWriter::new(file, framer);
 
 // Or use default framing
 let writer = StreamWriter::new(file, DefaultFramer);
+
+// Validation on read path (recommended)
+use flatstream::{DeframerExt, StructuralValidator, CompositeValidator, SizeValidator};
+let deframer = DefaultDeframer
+    .bounded(1024 * 1024)
+    .with_validator(
+        CompositeValidator::new()
+            .add(SizeValidator::new(64, 1024 * 1024))
+            .add(StructuralValidator::new())
+    );
 ```
 
 ### Feature-Gated Dependencies
