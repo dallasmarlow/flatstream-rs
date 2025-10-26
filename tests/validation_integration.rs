@@ -72,8 +72,7 @@ fn validating_deframer_with_checksum_propagates_checksum_error() {
         framed[12] ^= 1;
     }
 
-    let deframer =
-        ChecksumDeframer::new(XxHash64::new()).with_validator(TableRootValidator::new());
+    let deframer = ChecksumDeframer::new(XxHash64::new()).with_validator(TableRootValidator::new());
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let err = reader.read_message().unwrap_err();
     match err {

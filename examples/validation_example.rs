@@ -71,7 +71,10 @@ fn main() -> Result<()> {
         let err = stream.process_all(|_| Ok(())).unwrap_err();
         match err {
             Error::ValidationFailed { reason, .. } => {
-                println!("TableRootValidator: expected failure observed: {}", reason.trim());
+                println!(
+                    "TableRootValidator: expected failure observed: {}",
+                    reason.trim()
+                );
             }
             other => panic!("expected ValidationFailed, got {other:?}"),
         }
