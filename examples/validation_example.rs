@@ -1,60 +1,73 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::framing::{DeframerExt, FramerExt};
 use flatstream::*;
-use std::io::{BufReader, BufWriter, Cursor};
+use std::io::{BufReader, Cursor};
 
-fn build_empty_table() -> Vec<u8> {
+// Use a generated schema so we validate a non-empty table as well
+#[allow(clippy::extra_unused_lifetimes, mismatched_lifetime_syntaxes)]
+#[path = "generated/telemetry_generated.rs"]
+mod telemetry_generated;
+
+fn build_telemetry_event() -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
-    let start = b.start_table();
-    let root = b.end_table(start);
+    let msg = b.create_string("hello");
+    let mut tb = telemetry_generated::telemetry::TelemetryEventBuilder::new(&mut b);
+    tb.add_message(msg);
+    tb.add_timestamp(123);
+    let root = tb.finish();
     b.finish(root, None);
     b.finished_data().to_vec()
+}
+
+fn write_framed(payload: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    DefaultFramer.frame_and_write(&mut out, payload)?;
+    Ok(out)
+}
+
+fn process_with<D: Deframer>(deframer: D, framed: &[u8], label: &str) -> Result<()> {
+    let reader = BufReader::new(Cursor::new(framed));
+    let mut stream = StreamReader::new(reader, deframer);
+    stream.process_all(|payload| {
+        // Use the payload so examples don’t warn
+        let _ = payload.len();
+        Ok(())
+    })?;
+    println!("{}: ok", label);
+    Ok(())
 }
 
 fn main() -> Result<()> {
     println!("validation_example: starting");
     // 1) Write: DefaultFramer (no validation on write)
-    let mut framed = Vec::new();
-    {
-        let writer = BufWriter::new(Cursor::new(&mut framed));
-        let mut stream = StreamWriter::new(writer, DefaultFramer);
-        // Build a minimal FlatBuffer table so structural validation will succeed later.
-        let mut b = FlatBufferBuilder::new();
-        let start = b.start_table();
-        let root = b.end_table(start);
-        b.finish(root, None);
-        stream.write_finished(&mut b)?;
-        stream.flush()?;
-    }
+    // Use a non-empty telemetry event for realism
+    let telemetry = build_telemetry_event();
+    let framed = write_framed(&telemetry)?;
 
     // 2) Read: NoValidator (zero-cost)
-    {
-        let reader = BufReader::new(Cursor::new(&framed));
-        let mut stream = StreamReader::new(reader, DefaultDeframer.with_validator(NoValidator));
-        stream.process_all(|_payload| Ok(()))?;
-        println!("NoValidator: ok");
-    }
+    process_with(
+        DefaultDeframer.with_validator(NoValidator),
+        &framed,
+        "NoValidator",
+    )?;
 
     // 3) Read: TableRootValidator (type-agnostic table-root verification)
-    {
-        let reader = BufReader::new(Cursor::new(&framed));
-        let mut stream = StreamReader::new(
-            reader,
-            DefaultDeframer.with_validator(TableRootValidator::new()),
-        );
-        stream.process_all(|_payload| Ok(()))?;
-        println!("TableRootValidator: ok");
-    }
+    process_with(
+        DefaultDeframer.with_validator(TableRootValidator::new()),
+        &framed,
+        "TableRootValidator",
+    )?;
 
     // 4) Read: CompositeValidator (Size + TableRoot)
     {
         let validator = CompositeValidator::new()
             .add(SizeValidator::new(1, 1024 * 1024))
             .add(TableRootValidator::new());
-        let reader = BufReader::new(Cursor::new(&framed));
-        let mut stream = StreamReader::new(reader, DefaultDeframer.with_validator(validator));
-        stream.process_all(|_payload| Ok(()))?;
-        println!("CompositeValidator (Size + TableRoot): ok");
+        process_with(
+            DefaultDeframer.with_validator(validator),
+            &framed,
+            "CompositeValidator (Size + TableRoot)",
+        )?;
     }
 
     // 5) Demonstrate failure: table-root validator rejects invalid payload
@@ -63,12 +76,12 @@ fn main() -> Result<()> {
         let mut invalid_framed = Vec::new();
         DefaultFramer.frame_and_write(&mut invalid_framed, &invalid_payload)?;
 
-        let reader = BufReader::new(Cursor::new(&invalid_framed));
-        let mut stream = StreamReader::new(
-            reader,
+        let err = StreamReader::new(
+            BufReader::new(Cursor::new(&invalid_framed)),
             DefaultDeframer.with_validator(TableRootValidator::new()),
-        );
-        let err = stream.process_all(|_| Ok(())).unwrap_err();
+        )
+        .process_all(|_| Ok(()))
+        .unwrap_err();
         match err {
             Error::ValidationFailed { reason, .. } => {
                 println!(
@@ -91,8 +104,7 @@ fn main() -> Result<()> {
     {
         let mut out = Vec::new();
         let framer = DefaultFramer.with_validator(TableRootValidator::new());
-        let valid = build_empty_table();
-        framer.frame_and_write(&mut out, &valid)?;
+        framer.frame_and_write(&mut out, &telemetry)?;
         println!("ValidatingFramer (write path): ok");
     }
 
