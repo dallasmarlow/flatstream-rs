@@ -93,7 +93,7 @@
 //! # use std::io::Cursor;
 //! // Read with structural validation (type-agnostic)
 //! let data: Vec<u8> = vec![]; // framed bytes
-//! let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+//! let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
 //! let mut reader = StreamReader::new(Cursor::new(data), deframer);
 //! reader.process_all(|payload| {
 //!     // payload is an in-place &[u8] slice; no copies or allocations
@@ -122,7 +122,7 @@ pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{
-    CompositeValidator, NoValidator, SizeValidator, StructuralValidator, TypedValidator, Validator,
+    CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };
 pub use writer::StreamWriter;
 

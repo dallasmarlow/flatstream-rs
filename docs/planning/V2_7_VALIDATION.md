@@ -35,18 +35,18 @@ impl Validator for NoValidator {
         "NoValidator"
     }
 }
-Implementation 2: StructuralValidator (The Core Feature)Rust/// Structural validation for FlatBuffer integrity.
+Implementation 2: TableRootValidator (The Core Feature)Rust/// Table-root structural validation for FlatBuffer integrity.
 ///
 /// This validator uses the `flatbuffers` crate's built-in verifier
 /// to ensure the payload is a structurally valid FlatBuffer,
 /// preventing panics from malformed data.
 #[derive(Clone, Copy)]
-pub struct StructuralValidator {
+pub struct TableRootValidator {
     max_depth: u16,
     max_tables: u16,
 }
 
-impl StructuralValidator {
+impl TableRootValidator {
     pub fn new() -> Self {
         Self {
             max_depth: 64, // Default from flatbuffers, V2 used 8 
@@ -59,13 +59,13 @@ impl StructuralValidator {
     }
 }
 
-impl Default for StructuralValidator {
+impl Default for TableRootValidator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Validator for StructuralValidator {
+impl Validator for TableRootValidator {
     #[inline]
     fn validate(&self, payload: &[u8]) -> Result<()> {
         // Use FlatBuffers' built-in verifier with configured limits.
@@ -84,7 +84,7 @@ impl Validator for StructuralValidator {
     }
 
     fn name(&self) -> &'static str {
-        "StructuralValidator"
+        "TableRootValidator"
     }
 }
 Implementation 3: SizeValidator (Utility Validator)Rust/// Size-based validator for quick sanity checks.
@@ -264,7 +264,7 @@ After (New Fluent, Composable API):Rust// In application code:
 // Start with a base deframer and fluently add capabilities
 let deframer = DefaultDeframer::default()
   .bounded(1024 * 1024) // Add size limit
-  .with_validator(StructuralValidator::new()); // Add safety
+  .with_validator(TableRootValidator::new()); // Add safety
 
 // Or, a fully-featured pipeline:
 let deframer = DefaultDeframer::default()
@@ -273,7 +273,7 @@ let deframer = DefaultDeframer::default()
   .with_validator(
         CompositeValidator::new()
           .add(SizeValidator::new(64, 1024 * 1024))
-          .add(StructuralValidator::new())
+          .add(TableRootValidator::new())
     );
 
 let mut reader = StreamReader::new(file, deframer);
@@ -351,7 +351,7 @@ let typed_validator = TypedValidator::<MyEventType>::with_limits(64, 128);
 
 let pipeline = CompositeValidator::new()
   .add(SizeValidator::new(128, 4096))
-  .add(StructuralValidator::new())
+  .add(TableRootValidator::new())
   .add(typed_validator);
 
 // This pipeline can be passed directly to the deframer
@@ -363,7 +363,7 @@ let mut reader = StreamReader::new(file, deframer);
 This extension demonstrates the power of the V2 (Strategy-Coupled) design. By establishing a simple trait, we have created a stable platform for adding new, powerful, and domain-specific capabilities without altering the library's core.ConclusionThe analysis of the evolutionary design documents and the existing source code is unambiguous.The V1 design 1 is architecturally unsound, non-composable, and misaligned with the library's core principles. It is formally rejected.The V2 design 1 is the correct architecture. Its Validator trait perfectly parallels the Checksum trait, respects the zero-cost abstraction principle, and provides a powerful platform for extensibility.The V3 document 1 provides the correct philosophical justification, aligning the V2 design with industry-best-practices for safety as seen in frameworks like rkyv.7The implementation shall proceed as detailed in Section 7 of this report. This involves creating the src/validation.rs module based on the V2 Validator trait and integrating it into the library using the superior ValidatingFramer/ValidatingDeframer adapter pattern, which is synthesized from the best parts of the V2 document and the existing src/framing.rs adapter design.1This implementation will close a critical production-readiness gap, transform flatstream-rs into a demonstrably safe streaming library, and provide a new, stable platform for future feature development.
 ---
 
-Implementation Note: StructuralValidator verification strategy
+Implementation Note: TableRootValidator verification strategy
 
 One suggestion during review was to replace the explicit root-offset + `Verifier::visit_table(..)` approach with a single call to `flatbuffers::root_with_opts::<flatbuffers::Table>(..)`. We investigated this and kept the explicit verifier path for the following reasons:
 

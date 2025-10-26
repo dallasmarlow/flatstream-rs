@@ -35,29 +35,29 @@ fn main() -> Result<()> {
         println!("NoValidator: ok");
     }
 
-    // 3) Read: StructuralValidator (type-agnostic structural verification)
+    // 3) Read: TableRootValidator (type-agnostic table-root verification)
     {
         let reader = BufReader::new(Cursor::new(&framed));
         let mut stream = StreamReader::new(
             reader,
-            DefaultDeframer.with_validator(StructuralValidator::new()),
+            DefaultDeframer.with_validator(TableRootValidator::new()),
         );
         stream.process_all(|_payload| Ok(()))?;
-        println!("StructuralValidator: ok");
+        println!("TableRootValidator: ok");
     }
 
-    // 4) Read: CompositeValidator (Size + Structural)
+    // 4) Read: CompositeValidator (Size + TableRoot)
     {
         let validator = CompositeValidator::new()
             .add(SizeValidator::new(1, 1024 * 1024))
-            .add(StructuralValidator::new());
+            .add(TableRootValidator::new());
         let reader = BufReader::new(Cursor::new(&framed));
         let mut stream = StreamReader::new(reader, DefaultDeframer.with_validator(validator));
         stream.process_all(|_payload| Ok(()))?;
-        println!("CompositeValidator (Size + Structural): ok");
+        println!("CompositeValidator (Size + TableRoot): ok");
     }
 
-    // 5) Demonstrate failure: structural validator rejects invalid payload
+    // 5) Demonstrate failure: table-root validator rejects invalid payload
     {
         let invalid_payload = b"not a flatbuffer table".to_vec();
         let mut invalid_framed = Vec::new();
@@ -66,15 +66,12 @@ fn main() -> Result<()> {
         let reader = BufReader::new(Cursor::new(&invalid_framed));
         let mut stream = StreamReader::new(
             reader,
-            DefaultDeframer.with_validator(StructuralValidator::new()),
+            DefaultDeframer.with_validator(TableRootValidator::new()),
         );
         let err = stream.process_all(|_| Ok(())).unwrap_err();
         match err {
             Error::ValidationFailed { reason, .. } => {
-                println!(
-                    "StructuralValidator: expected failure observed: {}",
-                    reason.trim()
-                );
+                println!("TableRootValidator: expected failure observed: {}", reason.trim());
             }
             other => panic!("expected ValidationFailed, got {other:?}"),
         }
@@ -90,7 +87,7 @@ fn main() -> Result<()> {
     // 7) Write path with validation: ValidatingFramer validates before write
     {
         let mut out = Vec::new();
-        let framer = DefaultFramer.with_validator(StructuralValidator::new());
+        let framer = DefaultFramer.with_validator(TableRootValidator::new());
         let valid = build_empty_table();
         framer.frame_and_write(&mut out, &valid)?;
         println!("ValidatingFramer (write path): ok");

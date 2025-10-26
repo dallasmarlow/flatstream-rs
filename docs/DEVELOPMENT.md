@@ -113,7 +113,7 @@ The library uses a composable, trait-based architecture that enables:
 - `DefaultFramer`/`DefaultDeframer`: Length-prefixed framing
 - `ChecksumFramer`/`ChecksumDeframer`: Length + variable-size checksum framing
 - `NoChecksum` (0 bytes), `XxHash64` (8 bytes), `Crc32` (4 bytes), `Crc16` (2 bytes): Checksum implementations
- - `NoValidator` (zero-cost), `SizeValidator`, `StructuralValidator` (type-agnostic), `TypedValidator` (schema-aware), `CompositeValidator` (AND pipeline)
+ - `NoValidator` (zero-cost), `SizeValidator`, `TableRootValidator` (type-agnostic table-root), `TypedValidator` (schema-aware), `CompositeValidator` (AND pipeline)
 
 **Composability:**
 ```rust
@@ -129,13 +129,13 @@ let mut writer = StreamWriter::new(file, framer);
 let writer = StreamWriter::new(file, DefaultFramer);
 
 // Validation on read path (recommended)
-use flatstream::{DeframerExt, StructuralValidator, CompositeValidator, SizeValidator};
+use flatstream::{DeframerExt, TableRootValidator, CompositeValidator, SizeValidator};
 let deframer = DefaultDeframer
     .bounded(1024 * 1024)
     .with_validator(
         CompositeValidator::new()
             .add(SizeValidator::new(64, 1024 * 1024))
-            .add(StructuralValidator::new())
+            .add(TableRootValidator::new())
     );
 ```
 

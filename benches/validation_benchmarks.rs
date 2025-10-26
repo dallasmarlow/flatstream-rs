@@ -48,8 +48,8 @@ fn bench_validation_write_path(c: &mut Criterion) {
         )
     });
 
-    group.bench_function("ValidatingFramer + StructuralValidator", |b| {
-        let framer = DefaultFramer.with_validator(StructuralValidator::new());
+    group.bench_function("ValidatingFramer + TableRootValidator", |b| {
+        let framer = DefaultFramer.with_validator(TableRootValidator::new());
         b.iter_batched(
             sink,
             |mut w| {
@@ -97,8 +97,8 @@ fn bench_validation_read_path(c: &mut Criterion) {
         )
     });
 
-    group.bench_function("ValidatingDeframer + StructuralValidator", |b| {
-        let d = DefaultDeframer.with_validator(StructuralValidator::new());
+    group.bench_function("ValidatingDeframer + TableRootValidator", |b| {
+        let d = DefaultDeframer.with_validator(TableRootValidator::new());
         b.iter_batched(
             || (Cursor::new(framed.clone()), Vec::new()),
             |(mut r, mut buf)| {

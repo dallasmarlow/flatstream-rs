@@ -138,18 +138,18 @@ sequenceDiagram
 | `Bounded*` adapters | Enforce max payload size on read/write |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 
-## Payload Validation (Zero-Copy Safety)
+## Payload Validation
 
-FlatStream includes a first-class, composable validation layer to ensure malformed FlatBuffers never cross the trust boundary into your application logic.
+FlatStream includes an optional composable validation layer to ensure malformed FlatBuffers are never written to streams.
 
-- **Why**: Prevent panics or undefined behavior from malformed data by validating in the deframing pipeline (inspired by rkyv/bytecheck’s upfront validation philosophy).
+- **Why**: Prevent panics or undefined behavior from malformed data by validating in the deframing pipeline.
 - **How**: The `Validator` trait mirrors `Checksum`. Add validation with a fluent `.with_validator(...)` on both framers and deframers. Validators operate directly on `&[u8]` slices – no allocations.
 - **Zero-cost opt-out**: `NoValidator` is optimized away in release builds.
 
 ### Validator types
 
 - `NoValidator`: Zero-cost, always succeeds.
-- `StructuralValidator`: Type-agnostic structural FlatBuffer verification using the flatbuffers `Verifier`. Validates table/vtable structure and DoS limits, but not schema-specific fields.
+- `TableRootValidator`: Type-agnostic table-root FlatBuffer verification using the flatbuffers verifier. Validates table/vtable structure and DoS limits, but not schema-specific fields.
 - `SizeValidator`: Fast size sanity checks (min/max bytes).
 - `CompositeValidator`: Compose multiple validators (AND semantics) in order.
 - `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`. No built-in schemas are required or assumed by the library.
@@ -157,12 +157,12 @@ FlatStream includes a first-class, composable validation layer to ensure malform
 ### Fluent API examples
 
 ```rust
-use flatstream::{DefaultDeframer, DeframerExt, StructuralValidator};
+use flatstream::{DefaultDeframer, DeframerExt, TableRootValidator};
 use std::io::Cursor;
 
 // Structural safety before your code sees any payload
 let data: Vec<u8> = vec![]; // framed bytes
-let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
 let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
 reader.process_all(|payload| {
     // payload: &[u8] (in-place, zero-copy)
@@ -171,12 +171,12 @@ reader.process_all(|payload| {
 ```
 
 ```rust
-use flatstream::{DefaultDeframer, DeframerExt, CompositeValidator, StructuralValidator, SizeValidator};
+use flatstream::{DefaultDeframer, DeframerExt, CompositeValidator, TableRootValidator, SizeValidator};
 
 // Compose size + structural validation (AND semantics)
 let validator = CompositeValidator::new()
     .add(SizeValidator::new(64, 1024 * 1024))
-    .add(StructuralValidator::new());
+    .add(TableRootValidator::new());
 let deframer = DefaultDeframer.with_validator(validator);
 ```
 
@@ -193,7 +193,7 @@ Validation errors propagate as `Error::ValidationFailed { validator, reason }`. 
 ### Performance
 
 - `NoValidator` is zero-cost (fully optimized away in hot paths).
-- `StructuralValidator` adds minimal overhead (see `benches/validation_benchmarks.rs`).
+- `TableRootValidator` adds minimal overhead (see `benches/validation_benchmarks.rs`).
 
 ## FAQ
 
@@ -512,14 +512,14 @@ reader.process_all(|payload: &[u8]| {
 
 #### Generic verification (type-agnostic)
 
-For type-agnostic checks, use FlatStream’s `StructuralValidator`, which internally
+For type-agnostic checks, use FlatStream’s `TableRootValidator`, which internally
 performs structural verification with `Verifier::visit_table(..)` (works without
 any generated types):
 
 ```rust
-use flatstream::{DeframerExt, StructuralValidator};
+use flatstream::{DeframerExt, TableRootValidator};
 
-let deframer = DefaultDeframer.with_validator(StructuralValidator::new());
+let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
 reader.process_all(|payload: &[u8]| {
     // payload has passed structural verification
     Ok(())

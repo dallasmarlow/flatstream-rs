@@ -40,26 +40,25 @@ impl Validator for NoValidator {
     }
 }
 
-/// Structural validation for FlatBuffer integrity.
+/// Table-root structural validation for FlatBuffer integrity.
 ///
-/// Uses the `flatbuffers` crate verifier to ensure the buffer describes a
-/// structurally valid FlatBuffer table without schema knowledge.
+/// Uses the `flatbuffers` verifier to ensure the buffer describes a
+/// structurally valid FlatBuffer table root without schema knowledge.
 ///
 /// Limitations:
-/// - This validator is type-agnostic. It checks that the buffer has a valid
+/// - Validates only table-root buffers. It checks that the buffer has a valid
 ///   table/vtable layout and respects DoS-limiting options (depth, table count),
-///   but it does not perform schema-specific, recursive field verification.
-/// - For streams with a known root type that require full schema checks, prefer
-///   composing this validator with a future `TypedValidator<T>` using
-///   `CompositeValidator::add(...)`.
+///   but it does not perform schema-specific field verification.
+/// - For non-table roots (e.g., struct/vector) or when you need type certainty,
+///   use `TypedValidator` with your generated verifier.
 #[derive(Clone, Copy, Debug)]
-pub struct StructuralValidator {
+pub struct TableRootValidator {
     max_depth: usize,
     max_tables: usize,
 }
 
-impl StructuralValidator {
-    /// Creates a new `StructuralValidator` with conservative defaults.
+impl TableRootValidator {
+    /// Creates a new `TableRootValidator` with conservative defaults.
     pub fn new() -> Self {
         Self {
             max_depth: 64,
@@ -76,13 +75,13 @@ impl StructuralValidator {
     }
 }
 
-impl Default for StructuralValidator {
+impl Default for TableRootValidator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Validator for StructuralValidator {
+impl Validator for TableRootValidator {
     #[inline]
     fn validate(&self, payload: &[u8]) -> Result<()> {
         // Fast path trivial size sanity check; avoids constructing options for empty buffers.
@@ -119,7 +118,7 @@ impl Validator for StructuralValidator {
     }
 
     fn name(&self) -> &'static str {
-        "StructuralValidator"
+        "TableRootValidator"
     }
 }
 
@@ -373,17 +372,17 @@ mod tests {
 
     #[test]
     fn structural_validator_rejects_tiny_buffer() {
-        let sv = StructuralValidator::new();
+        let sv = TableRootValidator::new();
         let small = [0u8; 2];
         assert!(matches!(
             sv.validate(&small),
-            Err(Error::ValidationFailed { validator, .. }) if validator == "StructuralValidator"
+            Err(Error::ValidationFailed { validator, .. }) if validator == "TableRootValidator"
         ));
     }
 
     #[test]
     fn structural_validator_accepts_valid_table() {
-        let sv = StructuralValidator::new();
+        let sv = TableRootValidator::new();
         let buf = build_empty_table();
         assert!(sv.validate(&buf).is_ok());
     }
@@ -393,7 +392,7 @@ mod tests {
         let buf = build_empty_table();
         let composite = CompositeValidator::new()
             .add(SizeValidator::new(1, 10_000))
-            .add(StructuralValidator::new());
+            .add(TableRootValidator::new());
         assert!(composite.validate(&buf).is_ok());
 
         let bad = b"ab";
