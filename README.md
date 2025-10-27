@@ -149,8 +149,8 @@ FlatStream includes an optional composable validation layer to ensure malformed 
 ### Validator types
 
 - `NoValidator`: Zero-cost, always succeeds.
-- `TableRootValidator`: Type-agnostic table-root FlatBuffer verification using the flatbuffers verifier. Validates table/vtable structure and DoS limits, but not schema-specific fields.
-- `SizeValidator`: Fast size sanity checks (min/max bytes).
+- `TableRootValidator`: Uses FlatBuffers’ built-in verifier to check that a buffer is a valid table root and to enforce verifier limits (e.g., depth, table count). It does not validate schema-specific fields.
+- `SizeValidator`: Size sanity checks (min/max bytes).
 - `CompositeValidator`: Compose multiple validators (AND semantics) in order.
 - `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
 
