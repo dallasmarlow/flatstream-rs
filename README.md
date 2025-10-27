@@ -160,10 +160,31 @@ FlatStream includes an optional, composable validation layer that operates on bo
 ### Fluent API examples
 
 ```rust
+use flatstream::{DefaultFramer, FramerExt, StreamWriter, TableRootValidator, Result};
+use flatbuffers::FlatBufferBuilder;
+use std::io::Cursor;
+
+// Write path: prevent malformed data from ever being written.
+let mut bytes = Vec::new();
+let framer = DefaultFramer.with_validator(TableRootValidator::new());
+let mut stream = StreamWriter::new(Cursor::new(&mut bytes), framer);
+
+// This valid FlatBuffer payload (an empty table) will be written successfully.
+let mut b = FlatBufferBuilder::new();
+let start = b.start_table();
+let table_root = b.end_table(start);
+b.finish(table_root, None);
+stream.write_finished(&mut b)?;
+
+// Attempting to write a malformed payload would fail here with Error::ValidationFailed.
+// For example: stream.write_payload(b"a string that is not a valid flatbuffer root")?;
+```
+
+```rust
 use flatstream::{DefaultDeframer, DeframerExt, TableRootValidator};
 use std::io::Cursor;
 
-// Structural safety before your code sees any payload
+// Read path: structural safety before your code sees any payload.
 let data: Vec<u8> = vec![]; // framed bytes
 let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
 let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
