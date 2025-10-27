@@ -30,7 +30,7 @@ FlatStream is a small framing layer around FlatBuffers for streams (files/socket
 - **Use FlatStream when**:
   - You need to write/read many FlatBuffers messages to a file or socket.
   - You want zero-copy access to message payloads as `&[u8]`.
-  - You want composable adapters (bounds, checksums, observers) without extra allocations.
+  - You want composable adapters (bounds, checksums, observers, validators) without extra allocations.
 
 - **Probably not a fit when**:
   - You need a full RPC protocol, service discovery, or schema negotiation.
@@ -137,6 +137,7 @@ sequenceDiagram
 | `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
 | `Bounded*` adapters | Enforce max payload size on read/write |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
+| `Validating*` adapters | Ensure payload safety via the `Validator` trait |
 
 ## Payload Validation
 
