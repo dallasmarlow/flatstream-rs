@@ -140,11 +140,13 @@ sequenceDiagram
 
 ## Payload Validation
 
-FlatStream includes an optional composable validation layer to ensure malformed FlatBuffers are never written to streams.
+FlatStream includes an optional, composable validation layer that operates on both the write and read paths, ensuring payload integrity before I/O operations.
 
-- **Why**: Prevent panics or undefined behavior from malformed data by validating in the deframing pipeline.
-- **How**: The `Validator` trait mirrors `Checksum`. Add validation with a fluent `.with_validator(...)` on both framers and deframers. Validators operate directly on `&[u8]` slices – no allocations.
-- **Zero-cost opt-out**: `NoValidator` is optimized away in release builds.
+- **Why**: To prevent malformed data from ever being written to a stream, and to protect application code from processing malformed data read from a stream. This prevents panics or undefined behavior in the core processing pipeline.
+- **How**: The `Validator` trait mirrors `Checksum`. You can add a validation layer with a fluent `.with_validator(...)` call on both framers (for writing) and deframers (for reading).
+  - On write, validation runs *before* the payload is written.
+  - On read, validation runs *after* the payload is deframed but *before* it is yielded to application code.
+- **Zero-cost opt-out**: `NoValidator` provides a compile-time opt-out that is fully optimized away in release builds.
 
 ### Validator types
 
