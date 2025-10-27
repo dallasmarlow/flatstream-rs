@@ -37,7 +37,7 @@ src/
 ├── traits.rs       # StreamSerialize trait definition
 ├── checksum.rs     # Checksum trait and implementations (NoChecksum, XxHash64, Crc32)
 ├── framing.rs      # Framer/Deframer traits + adapters (bounded/observer/validating)
-├── validation.rs   # Validator trait + implementations (No/Size/Structural/Typed/Composite)
+├── validation.rs   # Validator trait + implementations (No/Size/TableRoot/Typed/Composite)
 ├── writer.rs       # StreamWriter implementation
 └── reader.rs       # StreamReader implementation
 ```

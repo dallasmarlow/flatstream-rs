@@ -1418,7 +1418,7 @@ v2.7 introduces a first-class validation layer that complements checksums and fr
 - Implementations:
   - `NoValidator`: zero-cost, inlined
   - `SizeValidator`: fast min/max byte checks
-  - `StructuralValidator`: type-agnostic FlatBuffers structural verification (`Verifier::visit_table(..)`), enforcing limits without schema knowledge
+  - `TableRootValidator`: type-agnostic FlatBuffers structural verification (`Verifier::visit_table(..)`), enforcing limits without schema knowledge
   - `TypedValidator`: schema-aware via function pointer to generated `root_with_opts` (object-safe constructors like `for_type::<T>()` and `from_verify(..)`)
   - `CompositeValidator`: AND-composes multiple validators with short-circuiting
 - Errors: New `Error::ValidationFailed { validator: &'static str, reason: String }` with clear diagnostics.
