@@ -41,5 +41,3 @@ fn table_root_validator_does_not_traverse_children_under_low_limits() {
     let v = TableRootValidator::with_limits(2, 2);
     assert!(v.validate(&buf).is_ok());
 }
-
-
