@@ -1,5 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+use criterion::{BenchmarkId, Throughput};
 use flatbuffers::FlatBufferBuilder;
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream::checksum::Checksum;
 use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
 #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]

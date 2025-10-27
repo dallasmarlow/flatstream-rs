@@ -19,6 +19,7 @@ This document details the complete architectural evolution of `flatstream-rs` fr
 11. [Future Extensibility](#future-extensibility)
 12. [v2.5: The Processor API](#v25-the-processor-api---perfecting-the-design)
 13. [From v2.5 to v2.6: The Pragmatic Compromise](#from-v25-to-v26-the-pragmatic-compromise)
+14. [v2.7: Validation Layer (Composable Safety)](#v27-validation-layer-composable-safety)
 
 ## Motivation for Change
 
@@ -1407,3 +1408,29 @@ Key achievements across all versions:
 - **Flexibility**: Users can choose the right tool for their needs
 
 This evolution demonstrates the value of iterative design refinement, user feedback, and pragmatic engineering decisions. The library successfully balances performance, safety, and usability - making it suitable for both high-frequency production systems and general-purpose streaming applications.* 
+
+## v2.7: Validation Layer (Composable Safety)
+
+v2.7 introduces a first-class validation layer that complements checksums and framing while preserving zero-copy behavior and composability.
+
+- Validator trait: Orthogonal to `Framer`, `Deframer`, and `Checksum`, providing a pluggable payload safety strategy with zero-cost opt-out (`NoValidator`).
+- Adapters: `ValidatingFramer` validates before writing; `ValidatingDeframer` validates after deframing and checksum (if present), before yielding to user code.
+- Implementations:
+  - `NoValidator`: zero-cost, inlined
+  - `SizeValidator`: fast min/max byte checks
+  - `TableRootValidator`: type-agnostic FlatBuffers structural verification (`Verifier::visit_table(..)`), enforcing limits without schema knowledge
+  - `TypedValidator`: schema-aware via function pointer to generated `root_with_opts` (object-safe constructors like `for_type::<T>()` and `from_verify(..)`)
+  - `CompositeValidator`: AND-composes multiple validators with short-circuiting
+- Errors: New `Error::ValidationFailed { validator: &'static str, reason: String }` with clear diagnostics.
+- Fluent API: `FramerExt::with_validator(..)` and `DeframerExt::with_validator(..)` mirror existing composition patterns.
+- Performance: `NoValidator` compiles away; `StructuralValidator` adds a small constant overhead (~2 ns in micro-benchmarks). Validation is allocation-free and zero-copy.
+
+Design rationale:
+- Preserves architectural principles established in v2 (orthogonal traits, adapters, zero-cost abstractions).
+- Aligns with safety philosophy seen in rkyv/bytecheck: upfront validation at the stream boundary to prevent malformed payloads from crossing trust boundaries.
+- Avoids coupling to generated types by default; `TypedValidator` is opt-in and object-safe via function pointers to user-provided verifiers.
+
+Migration and usage:
+- Backward compatible: existing pipelines work unchanged; validation is opt-in.
+- Recommended read path from untrusted sources: `DefaultDeframer.bounded(max).with_validator(StructuralValidator::new())`.
+- Benchmarks added to demonstrate near-zero cost for `NoValidator` and small, predictable overhead for structural checks.

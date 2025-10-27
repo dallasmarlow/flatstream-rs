@@ -138,6 +138,65 @@ sequenceDiagram
 | `Bounded*` adapters | Enforce max payload size on read/write |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 
+## Payload Validation
+
+FlatStream includes an optional, composable validation layer that operates on both the write and read paths, ensuring payload integrity before I/O operations.
+
+- **Why**: To prevent malformed data from ever being written to a stream, and to protect application code from processing malformed data read from a stream. This prevents panics or undefined behavior in the core processing pipeline.
+- **How**: The `Validator` trait mirrors `Checksum`. You can add a validation layer with a fluent `.with_validator(...)` call on both framers (for writing) and deframers (for reading).
+  - On write, validation runs *before* the payload is written.
+  - On read, validation runs *after* the payload is deframed but *before* it is yielded to application code.
+- **Zero-cost opt-out**: `NoValidator` provides a compile-time opt-out that is fully optimized away in release builds.
+
+### Validator types
+
+- `NoValidator`: Zero-cost, always succeeds.
+- `TableRootValidator`: Uses FlatBuffers’ built-in verifier to check that a buffer is a valid table root and to enforce verifier limits (e.g., depth, table count). It does not validate schema-specific fields.
+- `SizeValidator`: Size sanity checks (min/max bytes).
+- `CompositeValidator`: Compose multiple validators (AND semantics) in order.
+- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
+
+### Fluent API examples
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, TableRootValidator};
+use std::io::Cursor;
+
+// Structural safety before your code sees any payload
+let data: Vec<u8> = vec![]; // framed bytes
+let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
+reader.process_all(|payload| {
+    // payload: &[u8] (in-place, zero-copy)
+    Ok(())
+})?;
+```
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, CompositeValidator, TableRootValidator, SizeValidator};
+
+// Compose size + structural validation (AND semantics)
+let validator = CompositeValidator::new()
+    .add(SizeValidator::new(64, 1024 * 1024))
+    .add(TableRootValidator::new());
+let deframer = DefaultDeframer.with_validator(validator);
+```
+
+```rust
+use flatstream::{DefaultDeframer, DeframerExt, TypedValidator};
+// Example using generated `my_schema::MyMessage` root type:
+let deframer = DefaultDeframer.with_validator(TypedValidator::for_type::<my_schema::MyMessage>());
+```
+
+### Error handling
+
+Validation errors propagate as `Error::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `Error::ChecksumMismatch`.
+
+### Performance
+
+- `NoValidator` is zero-cost (fully optimized away in hot paths).
+- Benchmarks: see `benches/validation_benchmarks.rs` for validation measurements.
+
 ## FAQ
 
 - **Why not use FlatBuffers’ size-prefixed buffers?**
@@ -453,15 +512,18 @@ reader.process_all(|payload: &[u8]| {
 })?;
 ```
 
-#### Generic verification (also supported)
+#### Generic verification (type-agnostic)
+
+For type-agnostic checks, use FlatStream’s `TableRootValidator`, which internally
+performs structural verification with `Verifier::visit_table(..)` (works without
+any generated types):
 
 ```rust
-use flatbuffers::VerifierOptions;
+use flatstream::{DeframerExt, TableRootValidator};
 
+let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
 reader.process_all(|payload: &[u8]| {
-    let opts = VerifierOptions::default();
-    // Validate structure without a generated type
-    let _ = flatbuffers::root_with_opts::<flatbuffers::Table>(&opts, payload)?;
+    // payload has passed structural verification
     Ok(())
 })?;
 ```
