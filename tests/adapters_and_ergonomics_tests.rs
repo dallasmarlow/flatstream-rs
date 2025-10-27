@@ -441,7 +441,8 @@ fn stream_writer_with_builder_alloc() {
     let framer = DefaultFramer;
 
     let builder: FlatBufferBuilder = FlatBufferBuilder::new();
-    let mut sw = StreamWriter::with_builder_alloc(writer, framer, builder);
+    let mut sw: StreamWriter<_, _, NoOpPolicy, _> =
+        StreamWriter::with_builder_alloc(writer, framer, builder);
 
     let mut b = FlatBufferBuilder::new();
     let s = b.create_string("alloc test");

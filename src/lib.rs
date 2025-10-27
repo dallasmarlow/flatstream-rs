@@ -105,6 +105,7 @@
 pub mod checksum;
 pub mod error;
 pub mod framing;
+pub mod policy;
 pub mod reader;
 pub mod traits;
 pub mod validation;
@@ -121,6 +122,7 @@ pub use framing::{
 pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
+pub use policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
 pub use validation::{
     CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };
