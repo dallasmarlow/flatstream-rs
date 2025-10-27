@@ -280,87 +280,106 @@ let mut reader = StreamReader::new(file, deframer);
 
 // The application can now call `reader.process_all` with a
 // strong guarantee that the payload is not malformed.
-Future Architectural Extensibility (The V2 Platform)This implementation plan, based on the V2 design 1, accomplishes more than just adding a single feature. It establishes validation-as-a-platform, opening a new, stable axis of customization for the library. By defining a simple, stable Validator trait, we have enabled a rich ecosystem of future extensions, both for the core team and for end-users.Production-Grade HooksThe V2 proposals for InstrumentedValidator and DebugValidator 1 are key examples of this new platform's power.Metrics: An InstrumentedValidator can be implemented to wrap any other validator. It would execute the inner validate() call, but wrap it in a std::time::Instant block. It could then emit metrics (e.g., via Prometheus, StatsD, or log::) on validation duration, payload sizes, and failure rates (by inspecting the Result). This provides critical, real-time operational insight into stream health with zero changes to application logic.Debugging: A DebugValidator 1 could be used to conditionally sample and log payloads that fail validation, or even a random 1% of payloads that pass, enabling production-environment debugging without performance impact.Domain-Specific Logic at the Stream BoundaryThe most profound long-term implication is the one surfaced by the CriticalFieldValidator proposal.1 This represents a fundamental shift in the library's capability.Because the Validator trait operates on the raw &[u8] payload before it is passed to StreamDeserialize, it allows an application to inject domain-specific business logic at the I/O boundary.Consider a high-throughput telemetry system. A CriticalFieldValidator could be written to:Read a device_id (u64) from a known, fixed offset in the FlatBuffer (a fast, unsafe read).Check this device_id against a HashSet or BloomFilter of whitelisted, active devices.If the ID is not in the set, return Err(Error::ValidationFailed) with reason "unknown device_id".The message is rejected before it is ever deserialized, before it is passed to the application's main logic, and before it can consume further processing resources. This moves application-aware filtering from the "slow path" (after full deserialization) to the "fast path" (inside the I/O pipeline). This powerful pattern for building high-performance, resource-efficient systems is made possible only because the V2 Validator trait is a flexible, composable, strategy-based design.New Extensibility: TypedValidator<T> for Schema-Aware ValidationAs requested, the Validator platform can be immediately extended to support type-specific validation. This was anticipated in the V2 design document 1 and is a natural fit for the architecture.This new validator is designed for streams where the root message type is known by the application ahead of time. It provides a much stricter guarantee than the default StructuralValidator.StructuralValidator: Guarantees the payload is a structurally valid FlatBuffer table. It does not know or care which table it is.TypedValidator<T>: Guarantees the payload is a structurally valid FlatBuffer table and that its root is specifically of type T (e.g., TelemetryEvent).Implementation:Rustuse std::marker::PhantomData;
+Future Architectural Extensibility (The V2 Platform)This implementation plan, based on the V2 design 1, accomplishes more than just adding a single feature. It establishes validation-as-a-platform, opening a new, stable axis of customization for the library. By defining a simple, stable Validator trait, we have enabled a rich ecosystem of future extensions, both for the core team and for end-users.Production-Grade HooksThe V2 proposals for InstrumentedValidator and DebugValidator 1 are key examples of this new platform's power.Metrics: An InstrumentedValidator can be implemented to wrap any other validator. It would execute the inner validate() call, but wrap it in a std::time::Instant block. It could then emit metrics (e.g., via Prometheus, or log::) on validation duration, payload sizes, and failure rates (by inspecting the Result). This provides critical, real-time operational insight into stream health with zero changes to application logic.Debugging: A DebugValidator 1 could be used to conditionally sample and log payloads that fail validation, or even a random 1% of payloads that pass, enabling production-environment debugging without performance impact.Domain-Specific Logic at the Stream BoundaryThe most profound long-term implication is the one surfaced by the CriticalFieldValidator proposal.1 This represents a fundamental shift in the library's capability.Because the Validator trait operates on the raw &[u8] payload before it is passed to StreamDeserialize, it allows an application to inject domain-specific business logic at the I/O boundary.Consider a high-throughput telemetry system. A CriticalFieldValidator could be written to:Read a device_id (u64) from a known, fixed offset in the FlatBuffer (a fast, unsafe read).Check this device_id against a HashSet or BloomFilter of whitelisted, active devices.If the ID is not in the set, return Err(Error::ValidationFailed) with reason "unknown device_id".The message is rejected before it is ever deserialized, before it is passed to the application's main logic, and before it can consume further processing resources. This moves application-aware filtering from the "slow path" (after full deserialization) to the "fast path" (inside the I/O pipeline). This powerful pattern for building high-performance, resource-efficient systems is made possible only because the V2 Validator trait is a flexible, composable, strategy-based design.
+New Extensibility: TypedValidator for Schema-Aware Validation
+The final implementation of `TypedValidator` improved on the initial design sketch by using a concrete struct that holds a function pointer. This avoids code bloat from generics and provides a more flexible API.
 
-/// A type-specific validator for streams with a known root type.
-///
-/// This validator verifies that a payload is not just a valid FlatBuffer,
-/// but that its root is specifically of the type `T`.
-pub struct TypedValidator<T>
-where
-    for<'a> T: flatbuffers::Follow<'a> + 'static,
-{
-    _phantom: PhantomData<T>,
+The `TypedValidator` provides a much stricter guarantee than the `TableRootValidator`:
+
+*   **`TableRootValidator`**: Guarantees the payload is a structurally valid FlatBuffer table, without knowing its specific type.
+*   **`TypedValidator`**: Guarantees the payload is a valid FlatBuffer for a *specific* root type `T` (e.g., `TelemetryEvent`).
+
+Final Implementation:
+```rust
+/// A type-specific validator created for a concrete FlatBuffer root type.
+pub struct TypedValidator {
     opts: flatbuffers::VerifierOptions,
+    verify: fn(
+        &flatbuffers::VerifierOptions,
+        &[u8],
+    ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    name_static: &'static str,
 }
 
-impl<T> TypedValidator<T>
-where
-    for<'a> T: flatbuffers::Follow<'a> + 'static,
-{
-    /// Creates a new typed validator with default verifier limits.
-    pub fn new() -> Self {
+impl TypedValidator {
+    /// Creates a typed validator for a root type `T` with default limits.
+    pub fn for_type<T>() -> Self
+    where
+        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
+    {
         Self {
-            _phantom: PhantomData,
             opts: flatbuffers::VerifierOptions::default(),
+            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+            name_static: std::any::type_name::<T>(),
         }
     }
 
-    /// Creates a typed validator with custom verifier limits.
-    pub fn with_limits(max_depth: u16, max_tables: u16) -> Self {
-        let mut opts = flatbuffers::VerifierOptions::default();
-        opts.max_depth = max_depth as usize;
-        opts.max_tables = max_tables as usize;
+    /// Creates a typed validator with custom limits for root type `T`.
+    pub fn with_limits_for_type<T>(max_depth: usize, max_tables: usize) -> Self
+    where
+        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
+    {
+        let opts = flatbuffers::VerifierOptions {
+            max_depth,
+            max_tables,
+            ..Default::default()
+        };
         Self {
-            _phantom: PhantomData,
             opts,
+            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
+            name_static: std::any::type_name::<T>(),
+        }
+    }
+
+    /// Creates a typed validator from a schema-specific verification function
+    /// and a static name for diagnostics.
+    pub fn from_verify_named(
+        name: &'static str,
+        verify: fn(
+            &flatbuffers::VerifierOptions,
+            &[u8],
+        ) -> core::result::Result<(), flatbuffers::InvalidFlatbuffer>,
+    ) -> Self {
+        Self {
+            opts: flatbuffers::VerifierOptions::default(),
+            verify,
+            name_static: name,
         }
     }
 }
 
-impl<T> Validator for TypedValidator<T>
-where
-    for<'a> T: flatbuffers::Follow<'a> + 'static,
-{
+impl Validator for TypedValidator {
     #[inline]
     fn validate(&self, payload: &[u8]) -> Result<()> {
-        // Use `root_with_opts`, which is a safe function that
-        // verifies the buffer *and* checks the root type.
-        // This is crucial for validating the specific schema.
-        flatbuffers::root_with_opts::<T>(&self.opts, payload)
-           .map(|_| ()) // Success. Discard the root accessor.
-           .map_err(|e| Error::ValidationFailed {
-                validator: self.name(),
-                reason: format!("typed validation failed for {}: {}",
-                                std.any::type_name::<T>(), e),
-            })
+        (self.verify)(&self.opts, payload).map_err(|e| Error::ValidationFailed {
+            validator: self.name(),
+            reason: e.to_string(),
+        })
     }
 
     fn name(&self) -> &'static str {
-        // Note: A macro or more complex solution could provide
-        // the actual type name, but for this design, a static
-        // name is sufficient.
-        "TypedValidator"
+        self.name_static
     }
 }
-Composition Example:This new validator plugs directly into the CompositeValidator provided by the V2 architecture 1, allowing for powerful, layered validation pipelines as requested.Rust// Example: A pipeline that checks size, then generic structure,
-// then the specific message type.
+```
 
-// (Assuming `MyEventType` is the generated FlatBuffer struct)
-let typed_validator = TypedValidator::<MyEventType>::with_limits(64, 128);
+Composition Example:
+This validator plugs directly into the `CompositeValidator`, allowing for powerful, layered validation pipelines.
+```rust
+// (Assuming `MyEventType` is a generated FlatBuffer struct)
+let typed_validator = TypedValidator::for_type::<MyEventType>();
 
 let pipeline = CompositeValidator::new()
   .add(SizeValidator::new(128, 4096))
   .add(TableRootValidator::new())
   .add(typed_validator);
 
-// This pipeline can be passed directly to the deframer
 let deframer = DefaultDeframer::default()
    .bounded(4096)
    .with_validator(pipeline);
-
-let mut reader = StreamReader::new(file, deframer);
-This extension demonstrates the power of the V2 (Strategy-Coupled) design. By establishing a simple trait, we have created a stable platform for adding new, powerful, and domain-specific capabilities without altering the library's core.ConclusionThe analysis of the evolutionary design documents and the existing source code is unambiguous.The V1 design 1 is architecturally unsound, non-composable, and misaligned with the library's core principles. It is formally rejected.The V2 design 1 is the correct architecture. Its Validator trait perfectly parallels the Checksum trait, respects the zero-cost abstraction principle, and provides a powerful platform for extensibility.The V3 document 1 provides the correct philosophical justification, aligning the V2 design with industry-best-practices for safety as seen in frameworks like rkyv.7The implementation shall proceed as detailed in Section 7 of this report. This involves creating the src/validation.rs module based on the V2 Validator trait and integrating it into the library using the superior ValidatingFramer/ValidatingDeframer adapter pattern, which is synthesized from the best parts of the V2 document and the existing src/framing.rs adapter design.1This implementation will close a critical production-readiness gap, transform flatstream-rs into a demonstrably safe streaming library, and provide a new, stable platform for future feature development.
+```
+This extension demonstrates the power of the V2 (Strategy-Coupled) design. By establishing a simple trait, we have created a stable platform for adding new, powerful, and domain-specific capabilities without altering the library's core.
+ConclusionThe analysis of the evolutionary design documents and the existing source code is unambiguous.The V1 design 1 is architecturally unsound, non-composable, and misaligned with the library's core principles. It is formally rejected.The V2 design 1 is the correct architecture. Its Validator trait perfectly parallels the Checksum trait, respects the zero-cost abstraction principle, and provides a powerful platform for extensibility.The V3 document 1 provides the correct philosophical justification, aligning the V2 design with industry-best-practices for safety as seen in frameworks like rkyv.7The implementation shall proceed as detailed in Section 7 of this report. This involves creating the src/validation.rs module based on the V2 Validator trait and integrating it into the library using the superior ValidatingFramer/ValidatingDeframer adapter pattern, which is synthesized from the best parts of the V2 document and the existing src/framing.rs adapter design.1This implementation will close a critical production-readiness gap, transform flatstream-rs into a demonstrably safe streaming library, and provide a new, stable platform for future feature development.
 ---
 
 Implementation Note: TableRootValidator verification strategy
