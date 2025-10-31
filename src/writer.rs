@@ -2,9 +2,9 @@
 
 use crate::error::Result;
 use crate::framing::Framer;
-use crate::traits::StreamSerialize;
 use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
-use flatbuffers::{FlatBufferBuilder, DefaultAllocator};
+use crate::traits::StreamSerialize;
+use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
 
 /// A writer for streaming FlatBuffer messages.
@@ -55,10 +55,11 @@ where
 pub struct ReclamationInfo {
     pub reason: ReclamationReason,
     pub last_message_size: usize,
+    pub capacity_before: usize,
     pub capacity_after: usize,
 }
 
-type ReclaimCallback = dyn Fn(&ReclamationInfo) + Send + Sync + 'static;
+type ReclaimCallback = dyn Fn(&ReclamationInfo) + Send + 'static;
 
 const DEFAULT_BUILDER_CAPACITY: usize = 16 * 1024;
 
@@ -127,7 +128,6 @@ where
     P: MemoryPolicy,
     A: flatbuffers::Allocator,
 {
-
     // write() is only available when using the default allocator internally.
 
     /// Writes a finished FlatBuffer message to the stream.
@@ -250,13 +250,25 @@ where
 
         // Evaluate policy after a successful write
         let last_message_size = payload.len();
-        if let Some(reason) = self.policy.should_reset(last_message_size) {
+        // Capacity read:
+        // - The FlatBufferBuilder API does not expose a direct capacity() getter.
+        // - mut_finished_buffer() returns (&mut [u8], start_index) for the finished buffer.
+        // - The slice length corresponds to the backing buffer size (our effective "capacity").
+        // - This is O(1), no allocations/copies; we do not mutate the slice.
+        // - Safe here because the buffer is finished and framing/write have completed.
+        let (buf, _start_idx) = self.builder.mut_finished_buffer();
+        let current_capacity = buf.len();
+        if let Some(reason) = self
+            .policy
+            .should_reset(last_message_size, current_capacity)
+        {
             // Recreate the builder with a configured default capacity
             self.builder = FlatBufferBuilder::with_capacity(self.default_buffer_capacity);
             if let Some(cb) = &self.on_reclaim {
                 (cb)(&ReclamationInfo {
                     reason,
                     last_message_size,
+                    capacity_before: current_capacity,
                     capacity_after: self.default_buffer_capacity,
                 });
             }
@@ -305,7 +317,7 @@ where
 
     pub fn with_reclaim_callback<Cb>(mut self, callback: Cb) -> Self
     where
-        Cb: Fn(&ReclamationInfo) + Send + Sync + 'static,
+        Cb: Fn(&ReclamationInfo) + Send + 'static,
     {
         self.on_reclaim = Some(Box::new(callback));
         self

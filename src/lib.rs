@@ -119,10 +119,13 @@ pub use framing::{
     BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
     SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
 };
-pub use reader::{Messages, StreamReader, TypedMessages};
+pub use reader::StreamReader;
+// Backward-compatible type aliases (fix arity after adding policy generic)
+pub type Messages<'a, R, D> = reader::Messages<'a, R, D, NoOpPolicy>;
+pub type TypedMessages<'a, R, D, T> = reader::TypedMessages<'a, R, D, NoOpPolicy, T>;
+pub use policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
-pub use policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
 pub use validation::{
     CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };

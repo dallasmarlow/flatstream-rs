@@ -17,25 +17,31 @@ pub enum ReclamationReason {
 }
 
 /// A trait that defines a stateful policy for when to reset the internal builder.
-///
-/// The policy operates on message-size history. Builder capacity is not observable,
-/// so policies should use observed sizes and optional time-based signals.
 pub trait MemoryPolicy {
     /// Called after each successful write.
     ///
     /// Arguments
     /// - `last_message_size`: The size in bytes of the message just written.
+    /// - `current_capacity`: The current capacity of the internal builder.
     ///
     /// Returns
     /// - `Some(ReclamationReason)` if the builder should be reset, otherwise `None`.
-    fn should_reset(&mut self, last_message_size: usize) -> Option<ReclamationReason>;
+    fn should_reset(
+        &mut self,
+        last_message_size: usize,
+        current_capacity: usize,
+    ) -> Option<ReclamationReason>;
 }
 
 // Allow boxed trait objects to be used where a `MemoryPolicy` is expected.
 impl<T: MemoryPolicy + ?Sized> MemoryPolicy for Box<T> {
     #[inline]
-    fn should_reset(&mut self, last_message_size: usize) -> Option<ReclamationReason> {
-        (**self).should_reset(last_message_size)
+    fn should_reset(
+        &mut self,
+        last_message_size: usize,
+        current_capacity: usize,
+    ) -> Option<ReclamationReason> {
+        (**self).should_reset(last_message_size, current_capacity)
     }
 }
 
@@ -45,73 +51,80 @@ pub struct NoOpPolicy;
 
 impl MemoryPolicy for NoOpPolicy {
     #[inline(always)]
-    fn should_reset(&mut self, _last_message_size: usize) -> Option<ReclamationReason> {
+    fn should_reset(
+        &mut self,
+        _last_message_size: usize,
+        _current_capacity: usize,
+    ) -> Option<ReclamationReason> {
         None
     }
 }
 
-use core::cmp;
 use std::time::{Duration, Instant};
 
-/// An adaptive, hysteresis-based policy that reduces oscillation.
-///
-/// It tracks the largest recently observed message (high-water mark) and waits
-/// for a configurable number of smaller messages and/or a cooldown period before
-/// triggering a reset. Upon reset, the baseline is updated to the recent smaller size
-/// to further dampen oscillations.
+/// An adaptive, capacity-aware policy with hysteresis to avoid thrashing.
 #[derive(Debug, Clone)]
 pub struct AdaptiveWatermarkPolicy {
-    pub high_watermark_bytes: usize,
-    pub messages_since_high: u32,
-    /// How many messages smaller than the watermark to observe before resetting.
+    /// Trigger when `current_capacity >= last_message_size * shrink_multiple`.
+    pub shrink_multiple: usize,
+    /// How many qualifying messages to observe before resetting.
     pub messages_to_wait: u32,
-    pub last_high_seen_at: Option<Instant>,
-    /// Optional cooldown; if elapsed since the last high-water event, triggers reset.
+    /// Optional cooldown; if elapsed since the last overprovision event, triggers reset.
     pub cooldown: Option<Duration>,
+    // Internal state
+    messages_since_over: u32,
+    last_over_seen_at: Option<Instant>,
 }
 
 impl Default for AdaptiveWatermarkPolicy {
     fn default() -> Self {
         Self {
-            high_watermark_bytes: 0,
-            messages_since_high: 0,
+            shrink_multiple: 4,
             messages_to_wait: 5,
-            last_high_seen_at: None,
             cooldown: None,
+            messages_since_over: 0,
+            last_over_seen_at: None,
         }
     }
 }
 
 impl MemoryPolicy for AdaptiveWatermarkPolicy {
-    fn should_reset(&mut self, last_message_size: usize) -> Option<ReclamationReason> {
-        let now = if self.cooldown.is_some() {
-            Some(Instant::now())
-        } else {
-            None
-        };
-
-        if last_message_size > self.high_watermark_bytes {
-            // New high-water mark. Reset counters.
-            self.high_watermark_bytes = last_message_size;
-            self.messages_since_high = 0;
-            self.last_high_seen_at = now;
+    fn should_reset(
+        &mut self,
+        last_message_size: usize,
+        current_capacity: usize,
+    ) -> Option<ReclamationReason> {
+        if last_message_size == 0 {
+            // Avoid division-by-zero style logic; treat as no signal
+            self.messages_since_over = 0;
+            self.last_over_seen_at = None;
             return None;
         }
 
-        // Smaller than watermark: increment counter
-        self.messages_since_high = self.messages_since_high.saturating_add(1);
+        let overprovisioned =
+            current_capacity >= last_message_size.saturating_mul(self.shrink_multiple);
+        let now = self.cooldown.as_ref().map(|_| Instant::now());
 
-        let count_ok = self.messages_since_high >= self.messages_to_wait;
-        let time_ok = match (self.cooldown, self.last_high_seen_at, now) {
+        if overprovisioned {
+            self.messages_since_over = self.messages_since_over.saturating_add(1);
+            if self.last_over_seen_at.is_none() {
+                self.last_over_seen_at = now;
+            }
+        } else {
+            // Reset counters when signal disappears to avoid thrashing
+            self.messages_since_over = 0;
+            self.last_over_seen_at = None;
+        }
+
+        let count_ok = overprovisioned && self.messages_since_over >= self.messages_to_wait;
+        let time_ok = match (self.cooldown, self.last_over_seen_at, now) {
             (Some(cd), Some(t0), Some(t1)) => t1.duration_since(t0) >= cd,
             _ => false,
         };
 
         if count_ok || time_ok {
-            // Reset baseline to the recent smaller size to reduce oscillation
-            self.high_watermark_bytes = cmp::max(self.high_watermark_bytes / 2, last_message_size);
-            self.messages_since_high = 0;
-            self.last_high_seen_at = now;
+            self.messages_since_over = 0;
+            self.last_over_seen_at = now;
             return Some(if time_ok {
                 ReclamationReason::TimeCooldown
             } else {
@@ -158,8 +171,12 @@ impl Default for SizeThresholdPolicy {
 }
 
 impl MemoryPolicy for SizeThresholdPolicy {
-    fn should_reset(&mut self, last_message_size: usize) -> Option<ReclamationReason> {
-        if last_message_size > self.grow_above_bytes {
+    fn should_reset(
+        &mut self,
+        last_message_size: usize,
+        current_capacity: usize,
+    ) -> Option<ReclamationReason> {
+        if current_capacity > self.grow_above_bytes {
             self.large_event_seen = true;
             self.small_since_large = 0;
             return None;
@@ -177,5 +194,3 @@ impl MemoryPolicy for SizeThresholdPolicy {
         None
     }
 }
-
-
