@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Deframer;
-use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
+use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationInfo};
 use crate::traits::StreamDeserialize;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -77,18 +77,8 @@ where
     // Optional capacity-aware policy
     policy: P,
     default_buffer_capacity: usize,
-    on_reclaim: Option<Box<ReadReclaimCallback>>,
     pending_shrink: bool,
 }
-
-pub struct ReadReclamationInfo {
-    pub reason: ReclamationReason,
-    pub last_message_size: usize,
-    pub capacity_before: usize,
-    pub capacity_after: usize,
-}
-
-type ReadReclaimCallback = dyn Fn(&ReadReclamationInfo) + Send + 'static;
 
 const DEFAULT_READ_BUFFER_CAPACITY: usize = 16 * 1024;
 
@@ -101,7 +91,6 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             buffer: Vec::new(),
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
-            on_reclaim: None,
             pending_shrink: false,
         }
     }
@@ -114,7 +103,6 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             buffer: Vec::with_capacity(capacity),
             policy: NoOpPolicy,
             default_buffer_capacity: capacity,
-            on_reclaim: None,
             pending_shrink: false,
         }
     }
@@ -126,7 +114,6 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             deframer,
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
-            on_reclaim: None,
         }
     }
 }
@@ -155,14 +142,12 @@ where
                 {
                     // Schedule shrink before next read to avoid invalidating current payload
                     self.pending_shrink = true;
-                    if let Some(cb) = &self.on_reclaim {
-                        (cb)(&ReadReclamationInfo {
-                            reason,
-                            last_message_size: self.buffer.len(),
-                            capacity_before: self.buffer.capacity(),
-                            capacity_after: self.default_buffer_capacity,
-                        });
-                    }
+                    self.policy.on_reclaim(&ReclamationInfo {
+                        reason,
+                        last_message_size: self.buffer.len(),
+                        capacity_before: self.buffer.capacity(),
+                        capacity_after: self.default_buffer_capacity,
+                    });
                 }
                 Ok(Some(&self.buffer))
             }
@@ -432,7 +417,6 @@ where
     deframer: D,
     policy: P,
     default_buffer_capacity: usize,
-    on_reclaim: Option<Box<ReadReclaimCallback>>,
 }
 
 impl<R, D, P> StreamReaderBuilder<R, D, P>
@@ -447,20 +431,11 @@ where
             deframer: self.deframer,
             policy,
             default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
         }
     }
 
     pub fn with_default_capacity(mut self, capacity: usize) -> Self {
         self.default_buffer_capacity = capacity;
-        self
-    }
-
-    pub fn with_reclaim_callback<Cb>(mut self, callback: Cb) -> Self
-    where
-        Cb: Fn(&ReadReclamationInfo) + Send + 'static,
-    {
-        self.on_reclaim = Some(Box::new(callback));
         self
     }
 
@@ -471,19 +446,6 @@ where
             buffer: Vec::with_capacity(self.default_buffer_capacity),
             policy: self.policy,
             default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
-            pending_shrink: false,
-        }
-    }
-
-    pub fn build_dyn(self) -> StreamReader<R, D, Box<dyn MemoryPolicy + 'static>> {
-        StreamReader {
-            reader: self.reader,
-            deframer: self.deframer,
-            buffer: Vec::with_capacity(self.default_buffer_capacity),
-            policy: Box::new(self.policy),
-            default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
             pending_shrink: false,
         }
     }

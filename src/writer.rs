@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Framer;
-use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
+use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationInfo};
 use crate::traits::StreamSerialize;
 use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
@@ -48,18 +48,7 @@ where
     builder: FlatBufferBuilder<'a, A>,
     policy: P,
     default_buffer_capacity: usize,
-    on_reclaim: Option<Box<ReclaimCallback>>,
 }
-
-/// Information passed to the optional reclamation callback when a reset occurs.
-pub struct ReclamationInfo {
-    pub reason: ReclamationReason,
-    pub last_message_size: usize,
-    pub capacity_before: usize,
-    pub capacity_after: usize,
-}
-
-type ReclaimCallback = dyn Fn(&ReclamationInfo) + Send + 'static;
 
 const DEFAULT_BUILDER_CAPACITY: usize = 16 * 1024;
 
@@ -79,7 +68,6 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             builder: FlatBufferBuilder::new(),
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
-            on_reclaim: None,
         }
     }
 
@@ -92,7 +80,6 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             builder,
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
-            on_reclaim: None,
         }
     }
 
@@ -106,7 +93,6 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             builder: FlatBufferBuilder::with_capacity(capacity),
             policy: NoOpPolicy,
             default_buffer_capacity: capacity,
-            on_reclaim: None,
         }
     }
 
@@ -117,7 +103,6 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             framer,
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
-            on_reclaim: None,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -221,7 +206,6 @@ where
             builder,
             policy: NoOpPolicy,
             default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
-            on_reclaim: None,
         }
     }
 }
@@ -264,14 +248,12 @@ where
         {
             // Recreate the builder with a configured default capacity
             self.builder = FlatBufferBuilder::with_capacity(self.default_buffer_capacity);
-            if let Some(cb) = &self.on_reclaim {
-                (cb)(&ReclamationInfo {
-                    reason,
-                    last_message_size,
-                    capacity_before: current_capacity,
-                    capacity_after: self.default_buffer_capacity,
-                });
-            }
+            self.policy.on_reclaim(&ReclamationInfo {
+                reason,
+                last_message_size,
+                capacity_before: current_capacity,
+                capacity_after: self.default_buffer_capacity,
+            });
         }
 
         Ok(())
@@ -289,7 +271,6 @@ where
     framer: F,
     policy: P,
     default_buffer_capacity: usize,
-    on_reclaim: Option<Box<ReclaimCallback>>,
     _phantom: core::marker::PhantomData<&'a ()>,
 }
 
@@ -305,21 +286,12 @@ where
             framer: self.framer,
             policy,
             default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
             _phantom: core::marker::PhantomData,
         }
     }
 
     pub fn with_default_capacity(mut self, capacity: usize) -> Self {
         self.default_buffer_capacity = capacity;
-        self
-    }
-
-    pub fn with_reclaim_callback<Cb>(mut self, callback: Cb) -> Self
-    where
-        Cb: Fn(&ReclamationInfo) + Send + 'static,
-    {
-        self.on_reclaim = Some(Box::new(callback));
         self
     }
 
@@ -330,18 +302,6 @@ where
             builder: FlatBufferBuilder::with_capacity(self.default_buffer_capacity),
             policy: self.policy,
             default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
-        }
-    }
-
-    pub fn build_dyn(self) -> StreamWriter<'a, W, F, Box<dyn MemoryPolicy + 'a>, DefaultAllocator> {
-        StreamWriter {
-            writer: self.writer,
-            framer: self.framer,
-            builder: FlatBufferBuilder::with_capacity(self.default_buffer_capacity),
-            policy: Box::new(self.policy),
-            default_buffer_capacity: self.default_buffer_capacity,
-            on_reclaim: self.on_reclaim,
         }
     }
 }

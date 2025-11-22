@@ -16,6 +16,15 @@ pub enum ReclamationReason {
     SizeThreshold,
 }
 
+/// Information about a reclamation event.
+#[derive(Debug, Clone, Copy)]
+pub struct ReclamationInfo {
+    pub reason: ReclamationReason,
+    pub last_message_size: usize,
+    pub capacity_before: usize,
+    pub capacity_after: usize,
+}
+
 /// A trait that defines a stateful policy for when to reset the internal builder.
 pub trait MemoryPolicy {
     /// Called after each successful write.
@@ -31,18 +40,11 @@ pub trait MemoryPolicy {
         last_message_size: usize,
         current_capacity: usize,
     ) -> Option<ReclamationReason>;
-}
 
-// Allow boxed trait objects to be used where a `MemoryPolicy` is expected.
-impl<T: MemoryPolicy + ?Sized> MemoryPolicy for Box<T> {
-    #[inline]
-    fn should_reset(
-        &mut self,
-        last_message_size: usize,
-        current_capacity: usize,
-    ) -> Option<ReclamationReason> {
-        (**self).should_reset(last_message_size, current_capacity)
-    }
+    /// Optional hook called after a reset occurs.
+    /// Useful for logging or metrics without overhead when unused.
+    #[inline(always)]
+    fn on_reclaim(&mut self, _info: &ReclamationInfo) {}
 }
 
 /// A zero-cost policy that never triggers a reset.
