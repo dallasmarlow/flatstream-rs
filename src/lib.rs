@@ -90,6 +90,7 @@
 //!
 //! ```rust
 //! # use flatstream::*;
+//! # use flatstream::framing::DeframerExt;
 //! # use std::io::Cursor;
 //! // Read with structural validation (type-agnostic)
 //! let data: Vec<u8> = vec![]; // framed bytes
