@@ -1,9 +1,20 @@
 //! Memory reclamation policies for `StreamWriter`.
 //!
-//! This module defines a composable `MemoryPolicy` trait and several
-//! implementations to control when the simple writer path should reset
-//! its internal `FlatBufferBuilder` to reclaim memory after bursts of
-//! large messages.
+//! # The High-Water Mark Problem
+//!
+//! Standard `FlatBufferBuilder`s grow their internal buffer to accommodate the largest
+//! message seen so far. This capacity is retained indefinitely to avoid re-allocation
+//! overhead. In long-running services handling bursty workloads (e.g., rare large
+//! config dumps amidst small telemetry events), this can lead to "memory bloat" where
+//! a service holds onto peak memory usage long after the burst has passed.
+//!
+//! # The Solution: Adaptive Policies
+//!
+//! This module provides policies to detect when a builder is "over-provisioned"
+//! relative to the current workload. When a policy triggers, the `StreamWriter`
+//! resets its builder, freeing the large buffer and replacing it with a smaller
+//! baseline capacity. This trades a small amount of CPU (allocator churn) for
+//! significant memory savings.
 
 /// Reason for a reclamation (reset) action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +76,19 @@ impl MemoryPolicy for NoOpPolicy {
 use std::time::{Duration, Instant};
 
 /// An adaptive, capacity-aware policy with hysteresis to avoid thrashing.
+///
+/// # How it works
+///
+/// This policy implements a **hysteresis loop** to prevent rapid allocation/deallocation
+/// cycles ("thrashing") when message sizes fluctuate.
+///
+/// 1. **Detection**: It monitors the ratio between the builder's current capacity and
+///    the size of the messages being written.
+/// 2. **Signal**: If `capacity > message_size * shrink_multiple`, the builder is
+///    considered "over-provisioned."
+/// 3. **Stability**: It requires this signal to persist for `messages_to_wait` consecutive
+///    writes (or a time duration) before triggering a reset. This ensures we don't
+///    shrink immediately after a large message, only to grow again for the next one.
 #[derive(Debug, Clone)]
 pub struct AdaptiveWatermarkPolicy {
     /// Trigger when `current_capacity >= last_message_size * shrink_multiple`.

@@ -58,39 +58,65 @@ fn benchmark_oscillation(c: &mut Criterion) {
     let large_data = BenchData(vec![0u8; 1024 * 1024]); // 1MB
     let small_data = BenchData(vec![0u8; 1024]); // 1KB
 
-    // Scenario: 1 Large, 10 Small (repeated)
-    // This stresses the reclamation logic.
+    // Scenario: Mixed workload with rare large messages.
+    // 
+    // Workload per iteration (Repeated 10 times):
+    // 1. Write 1 Large Message (1 MB)
+    // 2. Write 1,100 Small Messages (1 KB)
+    //
+    // This simulates a long-running stream where a rare large event expands the buffer.
+    // We compare two strategies:
+    // - Unbounded (NoOp): The buffer grows to 1MB and stays there. Fast CPU, high RAM.
+    // - Adaptive: The buffer shrinks back to default (16KB) after a burst of small messages.
+    //   This trades a small amount of CPU (re-allocation) for significant memory savings.
+    
+    // Enough small messages to trigger the reset (1000) plus a few more (100) to use the reclaimed buffer
+    let small_msg_count = 1_100;
+    let cycles_per_iter = 10;
 
     // 1. Unbounded Growth (NoOp)
-    // Memory usage will stay high (1MB+), but CPU cost is low (no re-allocs).
+    // Result: Maximum performance. The 1MB buffer is reused for everything.
+    // Trade-off: The application holds 1MB of memory indefinitely, even if 99% of traffic is small.
     group.bench_function("oscillation_noop_unbounded", |b| {
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
             .with_policy(NoOpPolicy)
             .build();
-
+            
         b.iter(|| {
-            writer.write(&large_data).unwrap();
-            for _ in 0..10 {
-                writer.write(&small_data).unwrap();
+            for _ in 0..cycles_per_iter {
+                writer.write(&large_data).unwrap();
+                for _ in 0..small_msg_count {
+                    writer.write(&small_data).unwrap();
+                }
             }
         });
     });
 
     // 2. Adaptive Reclamation
-    // Memory usage drops after small messages, but incurs re-alloc cost on next large message.
+    // Result: Memory efficient.
+    // Logic:
+    // - The large message expands capacity to 1MB.
+    // - After 1000 small messages (configured below), the policy detects over-capacity.
+    // - The 1MB buffer is dropped and replaced with a 16KB buffer.
+    // - The remaining small messages use the 16KB buffer.
+    // - The cycle repeats 10 times per iteration.
+    //
+    // This accurately measures the cost of 10 full grow-shrink cycles.
     group.bench_function("oscillation_adaptive_reclaim", |b| {
         let mut policy = AdaptiveWatermarkPolicy::default();
         policy.shrink_multiple = 4;
-        policy.messages_to_wait = 5; // Reclaim after 5 small messages
+        policy.messages_to_wait = 1000; // Reclaim after 1000 small messages
 
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
             .with_policy(policy)
             .build();
-
+            
         b.iter(|| {
-            writer.write(&large_data).unwrap();
-            for _ in 0..10 {
-                writer.write(&small_data).unwrap();
+            for _ in 0..cycles_per_iter {
+                writer.write(&large_data).unwrap();
+                for _ in 0..small_msg_count {
+                    writer.write(&small_data).unwrap();
+                }
             }
         });
     });

@@ -242,6 +242,15 @@ where
         // - Safe here because the buffer is finished and framing/write have completed.
         let (buf, _start_idx) = self.builder.mut_finished_buffer();
         let current_capacity = buf.len();
+
+        // Evaluate policy after a successful write.
+        //
+        // We check the policy *after* writing to avoid invalidating the buffer we just
+        // finished using. If the policy triggers:
+        // 1. We drop the current `builder` (freeing the potentially large backing buffer).
+        // 2. We create a new `builder` with `default_buffer_capacity` (allocating a small baseline).
+        //
+        // This effectively "resets the high-water mark" of the stream.
         if let Some(reason) = self
             .policy
             .should_reset(last_message_size, current_capacity)
