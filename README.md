@@ -653,7 +653,7 @@ use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
 
 let policy = AdaptiveWatermarkPolicy::default();
 let mut writer = StreamWriter::builder(file, DefaultFramer)
-    .with_policy(policy)
+    .with_memory_policy(policy)
     .with_default_capacity(16 * 1024) // 16KB baseline after reset
     .build();
 ```

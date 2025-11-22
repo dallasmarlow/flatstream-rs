@@ -57,7 +57,7 @@ fn test_adaptive_policy_resets_builder() {
     let r_cap = last_capacity.clone();
 
     let mut base_policy = AdaptiveWatermarkPolicy::default();
-    base_policy.shrink_multiple = 2;
+    base_policy.size_ratio_threshold = 2;
     base_policy.messages_to_wait = 3;
 
     let policy = ObservingPolicy {
@@ -70,7 +70,7 @@ fn test_adaptive_policy_resets_builder() {
 
     let mut buffer = Vec::new();
     let mut writer = StreamWriter::builder(Cursor::new(&mut buffer), DefaultFramer)
-        .with_policy(policy)
+        .with_memory_policy(policy)
         .with_default_capacity(1024)
         .build();
 
@@ -140,7 +140,7 @@ fn test_noop_policy_never_resets() {
 
     let mut buffer = Vec::new();
     let mut writer = StreamWriter::builder(Cursor::new(&mut buffer), DefaultFramer)
-        .with_policy(policy)
+        .with_memory_policy(policy)
         .build();
 
     // Write mixed sizes

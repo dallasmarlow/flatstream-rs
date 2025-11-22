@@ -26,7 +26,7 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
     // Baseline: NoOpPolicy (Zero cost)
     group.bench_function("noop_policy", |b| {
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_policy(NoOpPolicy)
+            .with_memory_policy(NoOpPolicy)
             .build();
 
         b.iter(|| {
@@ -35,13 +35,19 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
     });
 
     // Comparison: AdaptiveWatermarkPolicy (Inactive/Steady State)
-    // Configured so it never triggers (very high threshold)
+    //
+    // We configure the threshold to be unreachable (1000x message size).
+    // This prevents any resets from occurring.
+    //
+    // GOAL: Measure the pure CPU overhead of the policy's book-keeping logic
+    // (tracking sizes, checking thresholds) to prove it is negligible when
+    // not actively reclaiming memory.
     group.bench_function("adaptive_policy_inactive", |b| {
         let mut policy = AdaptiveWatermarkPolicy::default();
-        policy.shrink_multiple = 1000; // Unreachable
+        policy.size_ratio_threshold = 1000; // Unreachable by design
 
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_policy(policy)
+            .with_memory_policy(policy)
             .build();
 
         b.iter(|| {
@@ -79,9 +85,9 @@ fn benchmark_oscillation(c: &mut Criterion) {
     // Trade-off: The application holds 1MB of memory indefinitely, even if 99% of traffic is small.
     group.bench_function("oscillation_noop_unbounded", |b| {
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_policy(NoOpPolicy)
+            .with_memory_policy(NoOpPolicy)
             .build();
-
+            
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();
@@ -104,13 +110,13 @@ fn benchmark_oscillation(c: &mut Criterion) {
     // This accurately measures the cost of 10 full grow-shrink cycles.
     group.bench_function("oscillation_adaptive_reclaim", |b| {
         let mut policy = AdaptiveWatermarkPolicy::default();
-        policy.shrink_multiple = 4;
+        policy.size_ratio_threshold = 4;
         policy.messages_to_wait = 1000; // Reclaim after 1000 small messages
 
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_policy(policy)
+            .with_memory_policy(policy)
             .build();
-
+            
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();

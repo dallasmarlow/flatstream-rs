@@ -53,7 +53,7 @@ fn main() -> flatstream::Result<()> {
     // - Reset if capacity is >= 4x the current message size
     // - Wait for 10 consecutive small messages before resetting
     let mut base_policy = AdaptiveWatermarkPolicy::default();
-    base_policy.shrink_multiple = 4;
+    base_policy.size_ratio_threshold = 4;
     base_policy.messages_to_wait = 10;
     base_policy.cooldown = None; // No time-based cooldown for this deterministic demo
 
@@ -64,7 +64,7 @@ fn main() -> flatstream::Result<()> {
     println!("1. Initializing writer with default capacity (16KB)...");
 
     let mut writer = StreamWriter::builder(sink, DefaultFramer)
-        .with_policy(policy)
+        .with_memory_policy(policy)
         .with_default_capacity(16 * 1024)
         .build();
 

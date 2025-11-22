@@ -84,15 +84,15 @@ use std::time::{Duration, Instant};
 ///
 /// 1. **Detection**: It monitors the ratio between the builder's current capacity and
 ///    the size of the messages being written.
-/// 2. **Signal**: If `capacity > message_size * shrink_multiple`, the builder is
-///    considered "over-provisioned."
+    /// 2. **Signal**: If `capacity > message_size * size_ratio_threshold`, the builder is
+    ///    considered "over-provisioned."
 /// 3. **Stability**: It requires this signal to persist for `messages_to_wait` consecutive
 ///    writes (or a time duration) before triggering a reset. This ensures we don't
 ///    shrink immediately after a large message, only to grow again for the next one.
 #[derive(Debug, Clone)]
 pub struct AdaptiveWatermarkPolicy {
-    /// Trigger when `current_capacity >= last_message_size * shrink_multiple`.
-    pub shrink_multiple: usize,
+    /// Trigger when `current_capacity >= last_message_size * size_ratio_threshold`.
+    pub size_ratio_threshold: usize,
     /// How many qualifying messages to observe before resetting.
     pub messages_to_wait: u32,
     /// Optional cooldown; if elapsed since the last overprovision event, triggers reset.
@@ -105,7 +105,7 @@ pub struct AdaptiveWatermarkPolicy {
 impl Default for AdaptiveWatermarkPolicy {
     fn default() -> Self {
         Self {
-            shrink_multiple: 4,
+            size_ratio_threshold: 4,
             messages_to_wait: 5,
             cooldown: None,
             messages_since_over: 0,
@@ -128,7 +128,7 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
         }
 
         let overprovisioned =
-            current_capacity >= last_message_size.saturating_mul(self.shrink_multiple);
+            current_capacity >= last_message_size.saturating_mul(self.size_ratio_threshold);
         let now = self.cooldown.as_ref().map(|_| Instant::now());
 
         if overprovisioned {
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn test_adaptive_hysteresis() {
         let mut policy = AdaptiveWatermarkPolicy {
-            shrink_multiple: 10,
+            size_ratio_threshold: 10,
             messages_to_wait: 3,
             cooldown: None,
             messages_since_over: 0,
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_adaptive_cooldown() {
         let mut policy = AdaptiveWatermarkPolicy {
-            shrink_multiple: 10,
+            size_ratio_threshold: 10,
             messages_to_wait: 100, // High count, rely on time
             cooldown: Some(Duration::from_millis(50)),
             messages_since_over: 0,

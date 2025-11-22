@@ -320,7 +320,7 @@ let policy = AdaptiveWatermarkPolicy {
 };
 
 let mut writer_with_policy = StreamWriter::builder(file, DefaultFramer)
-    .with_policy(policy)
+    .with_memory_policy(policy)
     .with_default_capacity(16 * 1024)
     .with_reclaim_callback(|info| {
         // emit metrics/logs
@@ -336,9 +336,15 @@ If desired, use `build_dyn()` to avoid generic policy types in the resulting wri
 
 ```rust
 let mut writer_dyn = StreamWriter::builder(file, DefaultFramer)
-    .with_policy(policy)
+    .with_memory_policy(policy)
     .build_dyn();
 ```
+
+> **Implementation Note: Accessing Builder Capacity**
+>
+> Currently, `flatstream-rs` inspects the builder's capacity by accessing the finished buffer slice (`mut_finished_buffer().len()`). While functional, this relies on the implementation detail that the slice length equals the backing buffer's capacity at the moment of finalization.
+>
+> **Future Plan:** Contribute a public `capacity()` method to the upstream `flatbuffers` crate. Future versions of `flatstream-rs` should be updated to reference this explicit API once available, ensuring long-term stability and correctness.
 
 ## 5.1 Documentation & Guidance (Allocator Considerations)
 

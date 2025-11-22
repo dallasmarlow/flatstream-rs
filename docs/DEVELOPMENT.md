@@ -727,12 +727,13 @@ Notes:
 
 ```bash
 cargo fmt --all
-cargo check
+cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 cargo test --doc --all-features
 cargo bench --all-targets --all-features
 
+# fix
 cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
 cargo fix --all-targets --allow-dirty
 ```

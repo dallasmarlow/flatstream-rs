@@ -289,7 +289,7 @@ where
     F: Framer,
     P: MemoryPolicy + 'a,
 {
-    pub fn with_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamWriterBuilder<'a, W, F, P2> {
+    pub fn with_memory_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamWriterBuilder<'a, W, F, P2> {
         StreamWriterBuilder {
             writer: self.writer,
             framer: self.framer,

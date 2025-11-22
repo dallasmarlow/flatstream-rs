@@ -425,7 +425,7 @@ where
     D: Deframer,
     P: MemoryPolicy + 'static,
 {
-    pub fn with_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamReaderBuilder<R, D, P2> {
+    pub fn with_memory_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamReaderBuilder<R, D, P2> {
         StreamReaderBuilder {
             reader: self.reader,
             deframer: self.deframer,

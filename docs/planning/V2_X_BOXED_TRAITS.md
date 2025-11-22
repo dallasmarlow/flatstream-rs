@@ -186,7 +186,7 @@ This allows `StreamWriter` to be instantiated with a dynamic policy via the stan
 ```rust
 // P becomes BoxMemoryPolicy
 let writer = StreamWriter::builder(w, framer)
-    .with_policy(my_boxed_policy)
+    .with_memory_policy(my_boxed_policy)
     .build();
 ```
 
