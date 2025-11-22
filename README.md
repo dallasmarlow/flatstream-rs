@@ -139,6 +139,26 @@ sequenceDiagram
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
 
+## Memory Management (New!)
+
+FlatStream 0.2.7 introduces **Adaptive Memory Policy** to solve the "High-Water Mark" problem in long-running streams.
+
+- **The Problem**: The `StreamWriter` (in simple mode) reuses a single `FlatBufferBuilder`. If a single large message (e.g., 1MB) is written, the builder's internal buffer grows to accommodate it and *never shrinks* automatically. This can lead to persistent memory bloat in services that handle bursty workloads.
+- **The Solution**: The `StreamWriter` now accepts an optional `MemoryPolicy`. The recommended `AdaptiveWatermarkPolicy` monitors message sizes and automatically resets the builder to a smaller capacity after a sustained period of small messages.
+
+```rust
+use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
+
+// Enable adaptive memory reclamation
+let policy = AdaptiveWatermarkPolicy::default();
+let mut writer = StreamWriter::builder(file, DefaultFramer)
+    .with_policy(policy)
+    .with_default_capacity(16 * 1024) // 16KB baseline
+    .build();
+```
+
+This feature is zero-cost (`NoOpPolicy`) by default.
+
 ## Payload Validation
 
 FlatStream includes an optional, composable validation layer that operates on both the write and read paths, ensuring payload integrity before I/O operations.
@@ -155,7 +175,7 @@ FlatStream includes an optional, composable validation layer that operates on bo
 - `TableRootValidator`: Uses FlatBuffers’ built-in verifier to check that a buffer is a valid table root and to enforce verifier limits (e.g., depth, table count). It does not validate schema-specific fields.
 - `SizeValidator`: Size sanity checks (min/max bytes).
 - `CompositeValidator`: Compose multiple validators (AND semantics) in order.
-- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
+- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
 
 ### Fluent API examples
 

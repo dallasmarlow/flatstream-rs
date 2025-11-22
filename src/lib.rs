@@ -124,7 +124,10 @@ pub use reader::StreamReader;
 // Backward-compatible type aliases (fix arity after adding policy generic)
 pub type Messages<'a, R, D> = reader::Messages<'a, R, D, NoOpPolicy>;
 pub type TypedMessages<'a, R, D, T> = reader::TypedMessages<'a, R, D, NoOpPolicy, T>;
-pub use policy::{MemoryPolicy, NoOpPolicy, ReclamationReason};
+pub use policy::{
+    AdaptiveWatermarkPolicy, MemoryPolicy, NoOpPolicy, ReclamationInfo, ReclamationReason,
+    SizeThresholdPolicy,
+};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{

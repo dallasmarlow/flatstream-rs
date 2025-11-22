@@ -196,3 +196,87 @@ impl MemoryPolicy for SizeThresholdPolicy {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noop_policy() {
+        let mut policy = NoOpPolicy;
+        assert_eq!(policy.should_reset(100, 1000), None);
+        assert_eq!(policy.should_reset(1000, 1000), None);
+    }
+
+    #[test]
+    fn test_adaptive_hysteresis() {
+        let mut policy = AdaptiveWatermarkPolicy {
+            shrink_multiple: 10,
+            messages_to_wait: 3,
+            cooldown: None,
+            messages_since_over: 0,
+            last_over_seen_at: None,
+        };
+
+        let capacity = 1000;
+
+        // 1. Message too large relative to capacity (150 > 1000/10), no shrink signal
+        assert_eq!(policy.should_reset(150, capacity), None);
+        assert_eq!(policy.messages_since_over, 0);
+
+        // 2. Message small enough (90 <= 1000/10), signal starts
+        assert_eq!(policy.should_reset(90, capacity), None);
+        assert_eq!(policy.messages_since_over, 1);
+
+        // 3. Another small message
+        assert_eq!(policy.should_reset(80, capacity), None);
+        assert_eq!(policy.messages_since_over, 2);
+
+        // 4. Large message interrupts sequence
+        assert_eq!(policy.should_reset(200, capacity), None);
+        assert_eq!(policy.messages_since_over, 0);
+
+        // 5. Sequence completes
+        assert_eq!(policy.should_reset(50, capacity), None); // 1
+        assert_eq!(policy.should_reset(50, capacity), None); // 2
+        assert_eq!(
+            policy.should_reset(50, capacity),
+            Some(ReclamationReason::MessageCount)
+        ); // 3 -> Reset
+        
+        // After reset returns Some, counters usually reset by the caller re-init or manually,
+        // but the policy internal state also resets.
+        assert_eq!(policy.messages_since_over, 0);
+    }
+
+    #[test]
+    fn test_adaptive_cooldown() {
+        let mut policy = AdaptiveWatermarkPolicy {
+            shrink_multiple: 10,
+            messages_to_wait: 100, // High count, rely on time
+            cooldown: Some(Duration::from_millis(50)),
+            messages_since_over: 0,
+            last_over_seen_at: None,
+        };
+        
+        let capacity = 1000;
+        let small_msg = 50;
+
+        // First trigger starts the clock
+        assert_eq!(policy.should_reset(small_msg, capacity), None);
+        assert!(policy.last_over_seen_at.is_some());
+
+        // Immediate follow-up: no reset
+        assert_eq!(policy.should_reset(small_msg, capacity), None);
+
+        // Wait for cooldown
+        std::thread::sleep(Duration::from_millis(60));
+
+        // Next write triggers reset via time
+        assert_eq!(
+            policy.should_reset(small_msg, capacity),
+            Some(ReclamationReason::TimeCooldown)
+        );
+        assert_eq!(policy.messages_since_over, 0);
+    }
+}
