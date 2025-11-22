@@ -5,7 +5,9 @@
 //! a memory reclamation event (resetting the internal builder).
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream::policy::{AdaptiveWatermarkPolicy, MemoryPolicy, ReclamationInfo, ReclamationReason};
+use flatstream::policy::{
+    AdaptiveWatermarkPolicy, MemoryPolicy, ReclamationInfo, ReclamationReason,
+};
 use flatstream::{DefaultFramer, StreamSerialize, StreamWriter};
 
 // A simple serializable wrapper for byte vectors
@@ -46,7 +48,7 @@ impl<P: MemoryPolicy> MemoryPolicy for LoggingPolicy<P> {
 fn main() -> flatstream::Result<()> {
     // Use a sink that discards data for the example, or a file
     let sink = std::io::sink();
-    
+
     // Configure the policy:
     // - Reset if capacity is >= 4x the current message size
     // - Wait for 10 consecutive small messages before resetting
@@ -79,7 +81,7 @@ fn main() -> flatstream::Result<()> {
 
     for i in 1..=15 {
         writer.write(&small_blob)?;
-        
+
         // The policy is configured to wait for 10 messages.
         // On the 10th small message, we expect a reset.
         if i == 10 {
@@ -90,4 +92,3 @@ fn main() -> flatstream::Result<()> {
     println!("4. Done.");
     Ok(())
 }
-

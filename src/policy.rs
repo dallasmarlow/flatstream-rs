@@ -243,7 +243,7 @@ mod tests {
             policy.should_reset(50, capacity),
             Some(ReclamationReason::MessageCount)
         ); // 3 -> Reset
-        
+
         // After reset returns Some, counters usually reset by the caller re-init or manually,
         // but the policy internal state also resets.
         assert_eq!(policy.messages_since_over, 0);
@@ -258,7 +258,7 @@ mod tests {
             messages_since_over: 0,
             last_over_seen_at: None,
         };
-        
+
         let capacity = 1000;
         let small_msg = 50;
 

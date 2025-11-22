@@ -1,5 +1,7 @@
 use flatbuffers::FlatBufferBuilder;
-use flatstream::policy::{AdaptiveWatermarkPolicy, MemoryPolicy, ReclamationInfo, ReclamationReason, NoOpPolicy};
+use flatstream::policy::{
+    AdaptiveWatermarkPolicy, MemoryPolicy, NoOpPolicy, ReclamationInfo, ReclamationReason,
+};
 use flatstream::{DefaultFramer, StreamSerialize, StreamWriter};
 use std::io::Cursor;
 use std::sync::{
@@ -19,8 +21,7 @@ impl<P: MemoryPolicy> MemoryPolicy for ObservingPolicy<P> {
         last_message_size: usize,
         current_capacity: usize,
     ) -> Option<ReclamationReason> {
-        self.inner
-            .should_reset(last_message_size, current_capacity)
+        self.inner.should_reset(last_message_size, current_capacity)
     }
 
     fn on_reclaim(&mut self, info: &ReclamationInfo) {
@@ -45,13 +46,13 @@ impl StreamSerialize for TestData {
 
 #[test]
 fn test_adaptive_policy_resets_builder() {
-    // Setup: 
+    // Setup:
     // 1. Create a writer with an AdaptiveWatermarkPolicy wrapped in an observer.
     // 2. Policy configured to shrink if capacity > 2 * message_size, after 3 messages.
-    
+
     let reset_count = Arc::new(AtomicUsize::new(0));
     let last_capacity = Arc::new(AtomicUsize::new(0));
-    
+
     let r_count = reset_count.clone();
     let r_cap = last_capacity.clone();
 
@@ -82,10 +83,10 @@ fn test_adaptive_policy_resets_builder() {
     assert_eq!(reset_count.load(Ordering::Relaxed), 0);
 
     // 2. Write SMALL messages to trigger hysteresis count.
-    // 100B message. 
+    // 100B message.
     // Capacity (~10KB) > 100 * 2 (200). Overprovision condition met.
     // messages_to_wait is 3.
-    
+
     let small_data = TestData(vec![2u8; 100]);
 
     // Write 1 (count=1)
@@ -98,23 +99,24 @@ fn test_adaptive_policy_resets_builder() {
 
     // Write 3 (count=3) -> RESET TRIGGER!
     writer.write(&small_data).unwrap();
-    
+
     // 3. Assert reset occurred
     assert_eq!(reset_count.load(Ordering::Relaxed), 1);
-    
+
     // The capacity before reset should have been large (>= 10KB)
     let cap_before = last_capacity.load(Ordering::Relaxed);
     assert!(cap_before >= 10 * 1024);
 
     // 4. Verify data integrity
     // Read back all messages and verify contents
-    let mut reader = flatstream::StreamReader::new(Cursor::new(buffer), flatstream::DefaultDeframer);
+    let mut reader =
+        flatstream::StreamReader::new(Cursor::new(buffer), flatstream::DefaultDeframer);
     let mut messages = reader.messages();
 
     // Msg 1: Large
     let m1 = messages.next().unwrap().unwrap();
     // Verify content (skip flatbuffer overhead validation for now, just size check approx)
-    // FlatBuffers adds minimal overhead (vector size + header). 
+    // FlatBuffers adds minimal overhead (vector size + header).
     assert!(m1.len() >= 10 * 1024);
 
     // Msg 2, 3, 4: Small
@@ -149,4 +151,3 @@ fn test_noop_policy_never_resets() {
 
     assert_eq!(reset_count.load(Ordering::Relaxed), 0);
 }
-
