@@ -33,7 +33,8 @@ fn main() -> Result<()> {
     let framer = DefaultFramer;
 
     // Provide the builder with explicit allocator to the writer (expert mode)
-    let mut sw = StreamWriter::with_builder_alloc(writer, framer, builder);
+    let mut sw: StreamWriter<_, _, flatstream::NoOpPolicy, _> =
+        StreamWriter::with_builder_alloc(writer, framer, builder);
 
     // Build and write a couple of messages
     let mut b = FlatBufferBuilder::new();

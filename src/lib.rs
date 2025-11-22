@@ -90,6 +90,7 @@
 //!
 //! ```rust
 //! # use flatstream::*;
+//! # use flatstream::framing::DeframerExt;
 //! # use std::io::Cursor;
 //! // Read with structural validation (type-agnostic)
 //! let data: Vec<u8> = vec![]; // framed bytes
@@ -105,6 +106,7 @@
 pub mod checksum;
 pub mod error;
 pub mod framing;
+pub mod policy;
 pub mod reader;
 pub mod traits;
 pub mod validation;
@@ -118,7 +120,14 @@ pub use framing::{
     BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
     SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
 };
-pub use reader::{Messages, StreamReader, TypedMessages};
+pub use reader::StreamReader;
+// Backward-compatible type aliases (fix arity after adding policy generic)
+pub type Messages<'a, R, D> = reader::Messages<'a, R, D, NoOpPolicy>;
+pub type TypedMessages<'a, R, D, T> = reader::TypedMessages<'a, R, D, NoOpPolicy, T>;
+pub use policy::{
+    AdaptiveWatermarkPolicy, MemoryPolicy, NoOpPolicy, ReclamationInfo, ReclamationReason,
+    SizeThresholdPolicy,
+};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{
