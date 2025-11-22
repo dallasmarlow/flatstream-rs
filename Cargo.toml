@@ -110,6 +110,10 @@ harness = false
 name = "validation_benchmarks"
 harness = false
 
+[[bench]]
+name = "memory_policy_benchmarks"
+harness = false
+
 [[example]]
 name = "typed_reading_flatc_example"
 required-features = ["flatc_example"]
