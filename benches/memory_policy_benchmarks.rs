@@ -59,7 +59,7 @@ fn benchmark_oscillation(c: &mut Criterion) {
     let small_data = BenchData(vec![0u8; 1024]); // 1KB
 
     // Scenario: Mixed workload with rare large messages.
-    // 
+    //
     // Workload per iteration (Repeated 10 times):
     // 1. Write 1 Large Message (1 MB)
     // 2. Write 1,100 Small Messages (1 KB)
@@ -69,7 +69,7 @@ fn benchmark_oscillation(c: &mut Criterion) {
     // - Unbounded (NoOp): The buffer grows to 1MB and stays there. Fast CPU, high RAM.
     // - Adaptive: The buffer shrinks back to default (16KB) after a burst of small messages.
     //   This trades a small amount of CPU (re-allocation) for significant memory savings.
-    
+
     // Enough small messages to trigger the reset (1000) plus a few more (100) to use the reclaimed buffer
     let small_msg_count = 1_100;
     let cycles_per_iter = 10;
@@ -81,7 +81,7 @@ fn benchmark_oscillation(c: &mut Criterion) {
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
             .with_policy(NoOpPolicy)
             .build();
-            
+
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();
@@ -110,7 +110,7 @@ fn benchmark_oscillation(c: &mut Criterion) {
         let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
             .with_policy(policy)
             .build();
-            
+
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();
