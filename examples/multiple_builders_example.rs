@@ -87,7 +87,7 @@ fn main() -> Result<()> {
     let mut file_builder = FlatBufferBuilder::new();
 
     // Simulate a mixed workload
-    let messages = vec![
+    let messages = [
         // Small control messages
         Message::Control(ControlMessage {
             command: "START".to_string(),

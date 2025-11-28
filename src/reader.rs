@@ -2,6 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Deframer;
+use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationInfo};
 use crate::traits::StreamDeserialize;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -64,13 +65,22 @@ use std::marker::PhantomData;
 ///
 /// * **`UnsafeDeframer` (Expert)**: The highest-performance option, intended for scenarios where you have a trusted data source (e.g., reading a file you just wrote). It avoids initializing the buffer by using `unsafe` code, which can provide a speed boost by eliminating writes to memory. **Only use this if you have benchmarked it and understand the risks.**
 ///
-pub struct StreamReader<R: Read, D: Deframer> {
+pub struct StreamReader<R: Read, D: Deframer, P = NoOpPolicy>
+where
+    P: MemoryPolicy,
+{
     reader: R,
     deframer: D,
     // The reader owns its buffer, resizing as needed.
     // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
+    // Optional capacity-aware policy
+    policy: P,
+    default_buffer_capacity: usize,
+    pending_shrink: bool,
 }
+
+const DEFAULT_READ_BUFFER_CAPACITY: usize = 16 * 1024;
 
 impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// Creates a new `StreamReader` with the given reader and deframing strategy.
@@ -79,6 +89,9 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             reader,
             deframer,
             buffer: Vec::new(),
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
+            pending_shrink: false,
         }
     }
 
@@ -88,18 +101,56 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             reader,
             deframer,
             buffer: Vec::with_capacity(capacity),
+            policy: NoOpPolicy,
+            default_buffer_capacity: capacity,
+            pending_shrink: false,
         }
     }
 
+    /// Starts a fluent builder for configuring an optional memory policy.
+    pub fn builder(reader: R, deframer: D) -> StreamReaderBuilder<R, D, NoOpPolicy> {
+        StreamReaderBuilder {
+            reader,
+            deframer,
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
+        }
+    }
+}
+
+impl<R: Read, D: Deframer, P> StreamReader<R, D, P>
+where
+    P: MemoryPolicy,
+{
     /// Reads the next message into the internal buffer. This is the low-level
     /// alternative to using the processor or expert APIs.
     /// Returns Ok(Some(payload)) on success, Ok(None) on clean EOF.
     pub fn read_message(&mut self) -> Result<Option<&[u8]>> {
+        // If a shrink was scheduled on a previous frame, perform it now
+        if self.pending_shrink {
+            self.buffer = Vec::with_capacity(self.default_buffer_capacity);
+            self.pending_shrink = false;
+        }
         match self
             .deframer
             .read_and_deframe(&mut self.reader, &mut self.buffer)?
         {
-            Some(_) => Ok(Some(&self.buffer)),
+            Some(_) => {
+                if let Some(reason) = self
+                    .policy
+                    .should_reset(self.buffer.len(), self.buffer.capacity())
+                {
+                    // Schedule shrink before next read to avoid invalidating current payload
+                    self.pending_shrink = true;
+                    self.policy.on_reclaim(&ReclamationInfo {
+                        reason,
+                        last_message_size: self.buffer.len(),
+                        capacity_before: self.buffer.capacity(),
+                        capacity_after: self.default_buffer_capacity,
+                    });
+                }
+                Ok(Some(&self.buffer))
+            }
             None => Ok(None),
         }
     }
@@ -134,7 +185,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// to the message payload, providing zero-copy access.
     ///
     /// Lifetimes: Each returned payload `&[u8]` is valid only until the next successful read.
-    pub fn messages(&mut self) -> Messages<'_, R, D> {
+    pub fn messages(&mut self) -> Messages<'_, R, D, P> {
         Messages { reader: self }
     }
 
@@ -142,7 +193,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     ///
     /// This yields verified FlatBuffer roots using the `StreamDeserialize` trait
     /// while preserving zero-copy lifetimes tied to the reader.
-    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, T>
+    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, P, T>
     where
         for<'p> T: StreamDeserialize<'p>,
     {
@@ -278,11 +329,11 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
 /// This struct provides the "expert path" for users who need more control over
 /// the iteration process. It borrows the `StreamReader` mutably, ensuring
 /// proper lifetime management.
-pub struct Messages<'a, R: Read, D: Deframer> {
-    reader: &'a mut StreamReader<R, D>,
+pub struct Messages<'a, R: Read, D: Deframer, P: MemoryPolicy> {
+    reader: &'a mut StreamReader<R, D, P>,
 }
 
-impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
+impl<'a, R: Read, D: Deframer, P: MemoryPolicy> Messages<'a, R, D, P> {
     /// Returns the next message in the stream.
     ///
     /// # Returns
@@ -300,15 +351,15 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
 }
 
 /// Typed iterator-like object yielding verified FlatBuffer roots.
-pub struct TypedMessages<'a, R: Read, D: Deframer, T>
+pub struct TypedMessages<'a, R: Read, D: Deframer, P: MemoryPolicy, T>
 where
     for<'p> T: StreamDeserialize<'p>,
 {
-    reader: &'a mut StreamReader<R, D>,
+    reader: &'a mut StreamReader<R, D, P>,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, R: Read, D: Deframer, T> TypedMessages<'a, R, D, T>
+impl<'a, R: Read, D: Deframer, P: MemoryPolicy, T> TypedMessages<'a, R, D, P, T>
 where
     for<'p> T: StreamDeserialize<'p>,
 {
@@ -352,6 +403,51 @@ where
     #[allow(clippy::should_implement_trait)]
     pub fn next<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
         self.next_typed()
+    }
+}
+
+/// Fluent builder for `StreamReader` configuration (capacity-aware policy).
+pub struct StreamReaderBuilder<R, D, P = NoOpPolicy>
+where
+    R: Read,
+    D: Deframer,
+    P: MemoryPolicy,
+{
+    reader: R,
+    deframer: D,
+    policy: P,
+    default_buffer_capacity: usize,
+}
+
+impl<R, D, P> StreamReaderBuilder<R, D, P>
+where
+    R: Read,
+    D: Deframer,
+    P: MemoryPolicy + 'static,
+{
+    pub fn with_memory_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamReaderBuilder<R, D, P2> {
+        StreamReaderBuilder {
+            reader: self.reader,
+            deframer: self.deframer,
+            policy,
+            default_buffer_capacity: self.default_buffer_capacity,
+        }
+    }
+
+    pub fn with_default_capacity(mut self, capacity: usize) -> Self {
+        self.default_buffer_capacity = capacity;
+        self
+    }
+
+    pub fn build(self) -> StreamReader<R, D, P> {
+        StreamReader {
+            reader: self.reader,
+            deframer: self.deframer,
+            buffer: Vec::with_capacity(self.default_buffer_capacity),
+            policy: self.policy,
+            default_buffer_capacity: self.default_buffer_capacity,
+            pending_shrink: false,
+        }
     }
 }
 

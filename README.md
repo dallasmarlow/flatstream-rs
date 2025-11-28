@@ -155,7 +155,7 @@ FlatStream includes an optional, composable validation layer that operates on bo
 - `TableRootValidator`: Uses FlatBuffers’ built-in verifier to check that a buffer is a valid table root and to enforce verifier limits (e.g., depth, table count). It does not validate schema-specific fields.
 - `SizeValidator`: Size sanity checks (min/max bytes).
 - `CompositeValidator`: Compose multiple validators (AND semantics) in order.
-- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., your `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
+- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
 
 ### Fluent API examples
 
@@ -592,7 +592,9 @@ while let Some(payload) = messages.next()? {
 }
 ```
 
-## Advanced Usage: Data Integrity (Checksums)
+## Advanced Usage
+
+### Data Integrity (Checksums)
 
 To protect against data corruption, use the `ChecksumFramer` and `ChecksumDeframer`. This requires enabling a checksum feature (e.g., `xxhash`).
 
@@ -639,6 +641,22 @@ The library supports checksums of different sizes to optimize for different use 
 - **XXHash64 (8 bytes)**: Best for large, critical messages (maximum integrity)
 
 All checksums are pluggable and composable, allowing you to choose the optimal size for your specific use case.
+
+### Adaptive Memory Management
+
+For long-running applications handling mixed message sizes, `StreamWriter` supports configurable memory reclamation via the `MemoryPolicy` trait.
+
+By default, the writer retains the largest buffer capacity seen (`NoOpPolicy`). To prevent memory bloat after large message bursts, you can configure an `AdaptiveWatermarkPolicy` to reset the internal builder when high capacity is no longer needed.
+
+```rust
+use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
+
+let policy = AdaptiveWatermarkPolicy::default();
+let mut writer = StreamWriter::builder(file, DefaultFramer)
+    .with_memory_policy(policy)
+    .with_default_capacity(16 * 1024) // 16KB baseline after reset
+    .build();
+```
 
 ## Wire Format Specification
 

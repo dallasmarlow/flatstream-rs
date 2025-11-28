@@ -2,8 +2,9 @@
 
 use crate::error::Result;
 use crate::framing::Framer;
+use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationInfo};
 use crate::traits::StreamSerialize;
-use flatbuffers::FlatBufferBuilder;
+use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
 
 /// A writer for streaming FlatBuffer messages.
@@ -37,14 +38,19 @@ use std::io::Write;
 ///
 /// The `with_builder()` constructor exists primarily for future extensibility. For
 /// maximum performance today, use `write_finished()` with external builder management.
-pub struct StreamWriter<'a, W: Write, F: Framer, A = flatbuffers::DefaultAllocator>
+pub struct StreamWriter<'a, W: Write, F: Framer, P = NoOpPolicy, A = DefaultAllocator>
 where
+    P: MemoryPolicy,
     A: flatbuffers::Allocator,
 {
     writer: W,
     framer: F,
     builder: FlatBufferBuilder<'a, A>,
+    policy: P,
+    default_buffer_capacity: usize,
 }
+
+const DEFAULT_BUILDER_CAPACITY: usize = 16 * 1024;
 
 impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// Creates a new `StreamWriter` with a default `FlatBufferBuilder`.
@@ -60,6 +66,8 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer,
             framer,
             builder: FlatBufferBuilder::new(),
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
         }
     }
 
@@ -70,6 +78,8 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer,
             framer,
             builder,
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
         }
     }
 
@@ -81,70 +91,29 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer,
             framer,
             builder: FlatBufferBuilder::with_capacity(capacity),
+            policy: NoOpPolicy,
+            default_buffer_capacity: capacity,
+        }
+    }
+
+    /// Starts a fluent builder for configuring an optional memory policy.
+    pub fn builder(writer: W, framer: F) -> StreamWriterBuilder<'a, W, F, NoOpPolicy> {
+        StreamWriterBuilder {
+            writer,
+            framer,
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
+            _phantom: core::marker::PhantomData,
         }
     }
 }
 
-impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
+impl<'a, W: Write, F: Framer, P, A> StreamWriter<'a, W, F, P, A>
 where
+    P: MemoryPolicy,
     A: flatbuffers::Allocator,
 {
-    /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
-    ///
-    /// This enables **expert mode** with custom allocation strategies like arena allocation.
-    /// Use this when you need the absolute maximum performance or zero-allocation guarantees.
-    ///
-    /// Note: Even with the standard `new()` constructor, you can achieve expert-level
-    /// performance by using `write_finished()` with an external builder. This constructor
-    /// is only needed when you require a custom allocator.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // With a hypothetical custom allocator
-    /// let allocator = MyCustomAllocator::new();
-    /// let builder = FlatBufferBuilder::new_with_allocator(allocator);
-    /// let writer = StreamWriter::with_builder_alloc(file, framer, builder);
-    /// ```
-    pub fn with_builder_alloc(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
-        Self {
-            writer,
-            framer,
-            builder,
-        }
-    }
-
-    /// Writes a serializable item to the stream using the internally managed builder.
-    /// The builder is reset before serialization.
-    ///
-    /// This is the **simple mode** API - convenient for uniform message sizes.
-    ///
-    /// # Performance
-    /// # Pitfalls
-    /// - The internal builder can grow to the largest message and stay that size; for mixed sizes,
-    ///   consider expert mode with multiple builders to avoid bloat.
-    /// - Excellent for uniform, small-to-medium messages
-    /// - Builder grows to accommodate largest message and stays that size
-    /// - For mixed sizes or large messages, use `write_finished()` instead
-    ///
-    /// # Example
-    /// ```ignore
-    /// writer.write(&"Hello, world!")?;
-    /// writer.write(&my_telemetry_event)?;
-    /// ```
-    #[inline]
-    pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
-        // Reset the internal builder for reuse
-        self.builder.reset();
-
-        // Direct serialization to the builder - no temporary allocations or copying
-        item.serialize(&mut self.builder)?;
-
-        // Get the finished payload from the builder
-        let payload = self.builder.finished_data();
-
-        // Delegate framing and writing to the strategy
-        self.framer.frame_and_write(&mut self.writer, payload)
-    }
+    // write() is only available when using the default allocator internally.
 
     /// Writes a finished FlatBuffer message to the stream.
     /// This is the **expert mode** API - optimal for high-frequency production use.
@@ -207,6 +176,142 @@ where
     /// Returns a reference to the framer strategy.
     pub fn framer(&self) -> &F {
         &self.framer
+    }
+}
+
+impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, NoOpPolicy, A>
+where
+    A: flatbuffers::Allocator,
+{
+    /// Creates a new `StreamWriter` with a user-provided `FlatBufferBuilder`.
+    ///
+    /// This enables **expert mode** with custom allocation strategies like arena allocation.
+    /// Use this when you need the absolute maximum performance or zero-allocation guarantees.
+    ///
+    /// Note: Even with the standard `new()` constructor, you can achieve expert-level
+    /// performance by using `write_finished()` with an external builder. This constructor
+    /// is only needed when you require a custom allocator.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // With a hypothetical custom allocator
+    /// let allocator = MyCustomAllocator::new();
+    /// let builder = FlatBufferBuilder::new_with_allocator(allocator);
+    /// let writer = StreamWriter::with_builder_alloc(file, framer, builder);
+    /// ```
+    pub fn with_builder_alloc(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
+        Self {
+            writer,
+            framer,
+            builder,
+            policy: NoOpPolicy,
+            default_buffer_capacity: DEFAULT_BUILDER_CAPACITY,
+        }
+    }
+}
+
+impl<'a, W: Write, F: Framer, P> StreamWriter<'a, W, F, P, DefaultAllocator>
+where
+    P: MemoryPolicy,
+{
+    /// Writes a serializable item to the stream using the internally managed builder.
+    /// The builder is reset before serialization.
+    ///
+    /// This is the **simple mode** API - convenient for uniform message sizes.
+    #[inline]
+    pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
+        // Reset the internal builder for reuse
+        self.builder.reset();
+
+        // Direct serialization to the builder - no temporary allocations or copying
+        item.serialize(&mut self.builder)?;
+
+        // Get the finished payload from the builder
+        let payload = self.builder.finished_data();
+
+        // Delegate framing and writing to the strategy
+        self.framer.frame_and_write(&mut self.writer, payload)?;
+
+        // Evaluate policy after a successful write
+        let last_message_size = payload.len();
+        // Capacity read:
+        // - The FlatBufferBuilder API does not expose a direct capacity() getter.
+        // - mut_finished_buffer() returns (&mut [u8], start_index) for the finished buffer.
+        // - The slice length corresponds to the backing buffer size (our effective "capacity").
+        // - This is O(1), no allocations/copies; we do not mutate the slice.
+        // - Safe here because the buffer is finished and framing/write have completed.
+        let (buf, _start_idx) = self.builder.mut_finished_buffer();
+        let current_capacity = buf.len();
+
+        // Evaluate policy after a successful write.
+        //
+        // We check the policy *after* writing to avoid invalidating the buffer we just
+        // finished using. If the policy triggers:
+        // 1. We drop the current `builder` (freeing the potentially large backing buffer).
+        // 2. We create a new `builder` with `default_buffer_capacity` (allocating a small baseline).
+        //
+        // This effectively "resets the high-water mark" of the stream.
+        if let Some(reason) = self
+            .policy
+            .should_reset(last_message_size, current_capacity)
+        {
+            // Recreate the builder with a configured default capacity
+            self.builder = FlatBufferBuilder::with_capacity(self.default_buffer_capacity);
+            self.policy.on_reclaim(&ReclamationInfo {
+                reason,
+                last_message_size,
+                capacity_before: current_capacity,
+                capacity_after: self.default_buffer_capacity,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// Fluent builder for `StreamWriter` configuration (default allocator only).
+pub struct StreamWriterBuilder<'a, W, F, P = NoOpPolicy>
+where
+    W: Write,
+    F: Framer,
+    P: MemoryPolicy,
+{
+    writer: W,
+    framer: F,
+    policy: P,
+    default_buffer_capacity: usize,
+    _phantom: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a, W, F, P> StreamWriterBuilder<'a, W, F, P>
+where
+    W: Write,
+    F: Framer,
+    P: MemoryPolicy + 'a,
+{
+    pub fn with_memory_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamWriterBuilder<'a, W, F, P2> {
+        StreamWriterBuilder {
+            writer: self.writer,
+            framer: self.framer,
+            policy,
+            default_buffer_capacity: self.default_buffer_capacity,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+
+    pub fn with_default_capacity(mut self, capacity: usize) -> Self {
+        self.default_buffer_capacity = capacity;
+        self
+    }
+
+    pub fn build(self) -> StreamWriter<'a, W, F, P, DefaultAllocator> {
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: FlatBufferBuilder::with_capacity(self.default_buffer_capacity),
+            policy: self.policy,
+            default_buffer_capacity: self.default_buffer_capacity,
+        }
     }
 }
 
