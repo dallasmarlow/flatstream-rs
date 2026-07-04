@@ -66,31 +66,33 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum = self.checksum_alg.calculate(payload);
         let checksum_size = self.checksum_alg.size();
 
-        writer.write_all(&payload_len.to_le_bytes())?;
-
-        // Write only the required number of bytes for the checksum
-        match checksum_size {
-            0 => {
-                // No checksum bytes to write
-            }
+        // Assemble the full header ([4-byte length | checksum bytes]) in one
+        // stack buffer and issue a single write_all — halves the call count on
+        // this path versus writing length and checksum separately. The bytes
+        // on the wire are identical (verified by the wire-format corpus tests).
+        let mut header = [0u8; 12];
+        header[..4].copy_from_slice(&payload_len.to_le_bytes());
+        let header_len = match checksum_size {
+            0 => 4,
             2 => {
-                // Write 2 bytes for CRC16
-                writer.write_all(&(checksum as u16).to_le_bytes())?;
+                // 2 bytes for CRC16
+                header[4..6].copy_from_slice(&(checksum as u16).to_le_bytes());
+                6
             }
             4 => {
-                // Write 4 bytes for CRC32
-                writer.write_all(&(checksum as u32).to_le_bytes())?;
-            }
-            8 => {
-                // Write 8 bytes for XXHash64
-                writer.write_all(&checksum.to_le_bytes())?;
+                // 4 bytes for CRC32
+                header[4..8].copy_from_slice(&(checksum as u32).to_le_bytes());
+                8
             }
             _ => {
-                // For any other size, write the full u64 and truncate if needed
-                writer.write_all(&checksum.to_le_bytes())?;
+                // 8 bytes for XXHash64; any other size also writes the full
+                // u64 (matching the previous behavior)
+                header[4..12].copy_from_slice(&checksum.to_le_bytes());
+                12
             }
-        }
+        };
 
+        writer.write_all(&header[..header_len])?;
         writer.write_all(payload)?;
         Ok(())
     }
@@ -481,11 +483,6 @@ impl<D: Deframer> Deframer for BoundedDeframer<D> {
         self.inner.read_after_length(reader, buffer, payload_len)
     }
 }
-
-/// Backward compatibility alias
-#[doc(hidden)]
-#[deprecated(since = "0.2.7", note = "Please use `BoundedDeframer` instead")]
-pub type MaxFrameLen<D> = BoundedDeframer<D>;
 
 /// A composable adapter that enforces a maximum payload length for any framer.
 ///

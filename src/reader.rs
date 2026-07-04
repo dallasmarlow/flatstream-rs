@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Deframer;
-use crate::policy::{MemoryPolicy, NoOpPolicy, ReclamationInfo};
+use crate::policy::{MemoryPolicy, ReclamationInfo, DEFAULT_RECLAIM_CAPACITY};
 use crate::traits::StreamDeserialize;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -65,22 +65,26 @@ use std::marker::PhantomData;
 ///
 /// * **`UnsafeDeframer` (Expert)**: The highest-performance option, intended for scenarios where you have a trusted data source (e.g., reading a file you just wrote). It avoids initializing the buffer by using `unsafe` code, which can provide a speed boost by eliminating writes to memory. **Only use this if you have benchmarked it and understand the risks.**
 ///
-pub struct StreamReader<R: Read, D: Deframer, P = NoOpPolicy>
-where
-    P: MemoryPolicy,
-{
+/// ## Memory Reclamation
+///
+/// The internal buffer grows to the largest message seen and keeps that
+/// capacity. For long-running processes with bursty workloads, an optional
+/// [`MemoryPolicy`] can be installed with
+/// [`with_memory_policy`](Self::with_memory_policy) to shrink the buffer back
+/// to a baseline ([`with_reclaim_capacity`](Self::with_reclaim_capacity),
+/// default 16 KiB). The shrink is deferred to the start of the next read, so a
+/// payload already returned is never invalidated.
+pub struct StreamReader<R: Read, D: Deframer> {
     reader: R,
     deframer: D,
     // The reader owns its buffer, resizing as needed.
     // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
-    // Optional capacity-aware policy
-    policy: P,
-    default_buffer_capacity: usize,
+    // Optional capacity-aware policy; one predictable branch per read when absent.
+    policy: Option<Box<dyn MemoryPolicy>>,
+    reclaim_capacity: usize,
     pending_shrink: bool,
 }
-
-const DEFAULT_READ_BUFFER_CAPACITY: usize = 16 * 1024;
 
 impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// Creates a new `StreamReader` with the given reader and deframing strategy.
@@ -89,69 +93,107 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             reader,
             deframer,
             buffer: Vec::new(),
-            policy: NoOpPolicy,
-            default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
+            policy: None,
+            reclaim_capacity: DEFAULT_RECLAIM_CAPACITY,
             pending_shrink: false,
         }
     }
 
     /// Creates a new `StreamReader` with a pre-allocated buffer capacity.
+    ///
+    /// The given capacity also becomes the reclaim baseline if a memory policy
+    /// is installed later.
     pub fn with_capacity(reader: R, deframer: D, capacity: usize) -> Self {
         Self {
             reader,
             deframer,
             buffer: Vec::with_capacity(capacity),
-            policy: NoOpPolicy,
-            default_buffer_capacity: capacity,
+            policy: None,
+            reclaim_capacity: capacity,
             pending_shrink: false,
         }
     }
 
-    /// Starts a fluent builder for configuring an optional memory policy.
-    pub fn builder(reader: R, deframer: D) -> StreamReaderBuilder<R, D, NoOpPolicy> {
-        StreamReaderBuilder {
-            reader,
-            deframer,
-            policy: NoOpPolicy,
-            default_buffer_capacity: DEFAULT_READ_BUFFER_CAPACITY,
-        }
+    /// Installs a memory reclamation policy on this reader.
+    ///
+    /// After each successful read, the policy observes the payload size and the
+    /// internal buffer's capacity; when it fires, the buffer is replaced with a
+    /// fresh one at the reclaim baseline capacity — deferred to the start of the
+    /// *next* read so the payload just returned is never invalidated. The policy
+    /// is consulted only while the buffer's capacity exceeds the baseline — at
+    /// or below it there is nothing to reclaim.
+    pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
+        self.policy = Some(Box::new(policy));
+        self
     }
-}
 
-impl<R: Read, D: Deframer, P> StreamReader<R, D, P>
-where
-    P: MemoryPolicy,
-{
+    /// Sets the baseline capacity restored when a memory policy reclaims the
+    /// internal buffer. Defaults to 16 KiB (or the capacity given to
+    /// `with_capacity`). Order-independent with respect to policy installation.
+    pub fn with_reclaim_capacity(mut self, capacity: usize) -> Self {
+        self.reclaim_capacity = capacity;
+        self
+    }
+
     /// Reads the next message into the internal buffer. This is the low-level
     /// alternative to using the processor or expert APIs.
     /// Returns Ok(Some(payload)) on success, Ok(None) on clean EOF.
+    ///
+    /// The policy machinery is outlined into cold/uninlined helpers so this
+    /// hot path stays small enough to inline; without a policy installed the
+    /// per-read cost is two predictable, never-taken branches.
+    #[inline]
     pub fn read_message(&mut self) -> Result<Option<&[u8]>> {
         // If a shrink was scheduled on a previous frame, perform it now
         if self.pending_shrink {
-            self.buffer = Vec::with_capacity(self.default_buffer_capacity);
-            self.pending_shrink = false;
+            self.apply_pending_shrink();
         }
         match self
             .deframer
             .read_and_deframe(&mut self.reader, &mut self.buffer)?
         {
             Some(_) => {
-                if let Some(reason) = self
-                    .policy
-                    .should_reset(self.buffer.len(), self.buffer.capacity())
-                {
-                    // Schedule shrink before next read to avoid invalidating current payload
-                    self.pending_shrink = true;
-                    self.policy.on_reclaim(&ReclamationInfo {
-                        reason,
-                        last_message_size: self.buffer.len(),
-                        capacity_before: self.buffer.capacity(),
-                        capacity_after: self.default_buffer_capacity,
-                    });
+                if self.policy.is_some() {
+                    self.evaluate_memory_policy();
                 }
                 Ok(Some(&self.buffer))
             }
             None => Ok(None),
+        }
+    }
+
+    /// Applies a reclaim scheduled by the previous read. Cold: runs at most
+    /// once per reclamation event, never on the steady-state path.
+    #[cold]
+    #[inline(never)]
+    fn apply_pending_shrink(&mut self) {
+        self.buffer = Vec::with_capacity(self.reclaim_capacity);
+        self.pending_shrink = false;
+    }
+
+    /// Consults the installed policy after a successful read. Outlined
+    /// (`inline(never)`) to keep `read_message`'s inlinable body minimal for
+    /// readers without a policy.
+    #[inline(never)]
+    fn evaluate_memory_policy(&mut self) {
+        let Some(policy) = self.policy.as_mut() else {
+            return;
+        };
+        let capacity = self.buffer.capacity();
+        // At or below the reclaim baseline there is nothing to reclaim —
+        // skip the policy so its state cannot churn.
+        if capacity > self.reclaim_capacity {
+            if let Some(reason) = policy.should_reset(self.buffer.len(), capacity) {
+                // Schedule the shrink for the start of the *next* read so the
+                // payload about to be returned is never invalidated.
+                self.pending_shrink = true;
+                policy.on_reclaim(&ReclamationInfo {
+                    reason,
+                    last_message_size: self.buffer.len(),
+                    capacity_before: capacity,
+                    capacity_after: self.reclaim_capacity,
+                });
+            }
         }
     }
 
@@ -185,7 +227,7 @@ where
     /// to the message payload, providing zero-copy access.
     ///
     /// Lifetimes: Each returned payload `&[u8]` is valid only until the next successful read.
-    pub fn messages(&mut self) -> Messages<'_, R, D, P> {
+    pub fn messages(&mut self) -> Messages<'_, R, D> {
         Messages { reader: self }
     }
 
@@ -193,7 +235,7 @@ where
     ///
     /// This yields verified FlatBuffer roots using the `StreamDeserialize` trait
     /// while preserving zero-copy lifetimes tied to the reader.
-    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, P, T>
+    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, T>
     where
         for<'p> T: StreamDeserialize<'p>,
     {
@@ -329,11 +371,11 @@ where
 /// This struct provides the "expert path" for users who need more control over
 /// the iteration process. It borrows the `StreamReader` mutably, ensuring
 /// proper lifetime management.
-pub struct Messages<'a, R: Read, D: Deframer, P: MemoryPolicy> {
-    reader: &'a mut StreamReader<R, D, P>,
+pub struct Messages<'a, R: Read, D: Deframer> {
+    reader: &'a mut StreamReader<R, D>,
 }
 
-impl<'a, R: Read, D: Deframer, P: MemoryPolicy> Messages<'a, R, D, P> {
+impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
     /// Returns the next message in the stream.
     ///
     /// # Returns
@@ -351,15 +393,15 @@ impl<'a, R: Read, D: Deframer, P: MemoryPolicy> Messages<'a, R, D, P> {
 }
 
 /// Typed iterator-like object yielding verified FlatBuffer roots.
-pub struct TypedMessages<'a, R: Read, D: Deframer, P: MemoryPolicy, T>
+pub struct TypedMessages<'a, R: Read, D: Deframer, T>
 where
     for<'p> T: StreamDeserialize<'p>,
 {
-    reader: &'a mut StreamReader<R, D, P>,
+    reader: &'a mut StreamReader<R, D>,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, R: Read, D: Deframer, P: MemoryPolicy, T> TypedMessages<'a, R, D, P, T>
+impl<'a, R: Read, D: Deframer, T> TypedMessages<'a, R, D, T>
 where
     for<'p> T: StreamDeserialize<'p>,
 {
@@ -403,51 +445,6 @@ where
     #[allow(clippy::should_implement_trait)]
     pub fn next<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
         self.next_typed()
-    }
-}
-
-/// Fluent builder for `StreamReader` configuration (capacity-aware policy).
-pub struct StreamReaderBuilder<R, D, P = NoOpPolicy>
-where
-    R: Read,
-    D: Deframer,
-    P: MemoryPolicy,
-{
-    reader: R,
-    deframer: D,
-    policy: P,
-    default_buffer_capacity: usize,
-}
-
-impl<R, D, P> StreamReaderBuilder<R, D, P>
-where
-    R: Read,
-    D: Deframer,
-    P: MemoryPolicy + 'static,
-{
-    pub fn with_memory_policy<P2: MemoryPolicy>(self, policy: P2) -> StreamReaderBuilder<R, D, P2> {
-        StreamReaderBuilder {
-            reader: self.reader,
-            deframer: self.deframer,
-            policy,
-            default_buffer_capacity: self.default_buffer_capacity,
-        }
-    }
-
-    pub fn with_default_capacity(mut self, capacity: usize) -> Self {
-        self.default_buffer_capacity = capacity;
-        self
-    }
-
-    pub fn build(self) -> StreamReader<R, D, P> {
-        StreamReader {
-            reader: self.reader,
-            deframer: self.deframer,
-            buffer: Vec::with_capacity(self.default_buffer_capacity),
-            policy: self.policy,
-            default_buffer_capacity: self.default_buffer_capacity,
-            pending_shrink: false,
-        }
     }
 }
 

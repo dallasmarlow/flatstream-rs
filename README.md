@@ -138,6 +138,7 @@ sequenceDiagram
 | `Bounded*` adapters | Enforce max payload size on read/write |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
+| `MemoryPolicy` | Opt-in buffer reclamation for long-running processes (`with_memory_policy`) |
 
 ## Payload Validation
 
@@ -644,19 +645,30 @@ All checksums are pluggable and composable, allowing you to choose the optimal s
 
 ### Adaptive Memory Management
 
-For long-running applications handling mixed message sizes, `StreamWriter` supports configurable memory reclamation via the `MemoryPolicy` trait.
+For long-running applications handling mixed message sizes, `StreamWriter` and `StreamReader` support configurable memory reclamation via the `MemoryPolicy` trait.
 
-By default, the writer retains the largest buffer capacity seen (`NoOpPolicy`). To prevent memory bloat after large message bursts, you can configure an `AdaptiveWatermarkPolicy` to reset the internal builder when high capacity is no longer needed.
+By default, no policy is installed and the writer retains the largest buffer capacity seen. To prevent memory bloat after large message bursts, install an `AdaptiveWatermarkPolicy` to reset the internal builder once high capacity is no longer needed. The policy is consulted once per message, and only while capacity exceeds the reclaim baseline; the machinery is outlined off the hot paths, so without a policy the residual cost is a predictable, never-taken branch.
 
 ```rust
 use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
 
 let policy = AdaptiveWatermarkPolicy::default();
-let mut writer = StreamWriter::builder(file, DefaultFramer)
+let mut writer = StreamWriter::new(file, DefaultFramer)
     .with_memory_policy(policy)
-    .with_default_capacity(16 * 1024) // 16KB baseline after reset
-    .build();
+    .with_reclaim_capacity(16 * 1024); // 16KB baseline after reset
 ```
+
+Policies apply to buffers the library owns — the writer's simple mode (`write()`) and the reader's internal buffer. In expert mode (`write_finished()`) you own the builder, so reclamation is your call. For custom allocators, see `with_memory_policy_and_factory`.
+
+**Measured cost** (Criterion, macOS/Apple Silicon, sink writer, 100-byte messages):
+
+| Configuration | `write()` per message |
+|---|---|
+| No policy installed (default) | ~9 ns |
+| No-op policy installed (boxed-call cost) | ~10 ns |
+| `AdaptiveWatermarkPolicy` installed, not firing | ~12.7 ns |
+
+The reclaim itself trades a bounded re-growth cost for footprint: in a worst-case oscillation benchmark (a 1 MB burst followed by 1,100 small messages, forcing a reclaim every cycle), the adaptive writer runs ~2.3× the CPU of an unbounded one (~1.24 ms vs ~0.53 ms per 10-cycle iteration) in exchange for dropping the steady-state footprint from 1 MB to the 16 KB baseline. Real workloads with rare bursts pay the re-growth once per burst, not continuously — and the baseline gate guarantees a policy can never thrash at steady state.
 
 ## Wire Format Specification
 

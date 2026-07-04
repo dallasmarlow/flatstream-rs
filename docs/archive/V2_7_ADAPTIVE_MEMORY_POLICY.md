@@ -1,4 +1,50 @@
-# Design Document: An Adaptive Memory Reclamation Policy for `StreamWriter`
+# Design Document: flatstream-rs v2.7 - Adaptive Memory Policy
+
+**Version:** 1.1
+**Status:** Implemented (final API deviates from §4–§5 of the original plan; see §0)
+**Author:** Dallas Marlow
+**Date:** 2026-07-04 (archived from `docs/planning/` on implementation; the
+release-level `DESIGN_v2_7.md` will cover all changes since `v0.2.6` when the
+release is cut)
+
+## 0. As Implemented (authoritative summary)
+
+The `MemoryPolicy` trait, `AdaptiveWatermarkPolicy` (hysteresis plus optional time
+cooldown), `SizeThresholdPolicy`, and the reader-side deferred shrink shipped as
+planned. The carrier deviates from the original proposal:
+
+- **Plain field, not a generic parameter.** `StreamWriter` and `StreamReader` hold an
+  `Option<Box<dyn MemoryPolicy>>` configured via chainable methods — no
+  `StreamWriterBuilder`/`StreamReaderBuilder`, no public type-arity changes.
+  Rationale: the policy fires once per message (one predictable branch when absent,
+  one indirect call when present, against I/O measured in microseconds), so a
+  zero-cost generic bought nothing measurable while changing the arity of
+  `Messages`/`TypedMessages`, forcing compat aliases, and restricting `write()` to the
+  default allocator. The zero-cost-generic pattern remains correct for *per-byte*
+  strategies (`Checksum`, `Validator`); this feature is per-message.
+- **API surface:** `with_memory_policy(policy)` (writer: simple mode only; reader:
+  internal buffer), `with_reclaim_capacity(bytes)` (baseline restored on reclaim;
+  default 16 KiB, or the value given to `with_capacity`), and
+  `with_memory_policy_and_factory(policy, make_builder)` for custom allocators (the
+  factory rebuilds the writer's builder on reclaim). `MemoryPolicy: Send`; policies
+  are exclusively owned (`&mut self`), so `Sync` is not required.
+- **Baseline gate:** the policy is consulted only while current capacity *exceeds*
+  the reclaim baseline — at or below it there is nothing to reclaim, so policy state
+  cannot churn at steady state. (Without this gate, default settings re-fired
+  indefinitely, replacing a baseline-sized buffer with an identical one.)
+- **Semantics fixes found in implementation review:** `SizeThresholdPolicy` marks its
+  "large event" by *message size* — the planned capacity check could never fire,
+  because capacity only drops via the reset the policy itself triggers — and requires
+  strictly consecutive small messages. `AdaptiveWatermarkPolicy` clears its cooldown
+  timer on fire — a retained timestamp survived gated-out idle periods and caused
+  premature `TimeCooldown` resets on re-entry.
+- **Expert mode (`write_finished`) is untouched by policies** — the caller owns that
+  builder. The trait's `should_reset(last_message_size, current_capacity)` carries
+  two arguments; the single-argument form in §4.1 predates the capacity read via
+  `mut_finished_buffer`.
+
+The sections below are the original planning document, retained as the design
+rationale record.
 
 ## 1.0 Executive Summary: A Production-Grade Memory Management Strategy
 

@@ -1,20 +1,34 @@
-//! Memory reclamation policies for `StreamWriter`.
+//! Memory reclamation policies for `StreamWriter` and `StreamReader`.
 //!
 //! # The High-Water Mark Problem
 //!
-//! Standard `FlatBufferBuilder`s grow their internal buffer to accommodate the largest
-//! message seen so far. This capacity is retained indefinitely to avoid re-allocation
-//! overhead. In long-running services handling bursty workloads (e.g., rare large
-//! config dumps amidst small telemetry events), this can lead to "memory bloat" where
-//! a service holds onto peak memory usage long after the burst has passed.
+//! Standard `FlatBufferBuilder`s (and the reader's internal buffer) grow to
+//! accommodate the largest message seen so far. This capacity is retained
+//! indefinitely to avoid re-allocation overhead. In long-running services handling
+//! bursty workloads (e.g., rare large config dumps amidst small telemetry events),
+//! this can lead to "memory bloat" where a service holds onto peak memory usage
+//! long after the burst has passed.
 //!
 //! # The Solution: Adaptive Policies
 //!
-//! This module provides policies to detect when a builder is "over-provisioned"
-//! relative to the current workload. When a policy triggers, the `StreamWriter`
-//! resets its builder, freeing the large buffer and replacing it with a smaller
-//! baseline capacity. This trades a small amount of CPU (allocator churn) for
-//! significant memory savings.
+//! This module provides policies to detect when a buffer is "over-provisioned"
+//! relative to the current workload. When a policy triggers, the writer resets its
+//! builder (the reader its buffer), freeing the large allocation and replacing it
+//! with a smaller baseline capacity. This trades a small amount of CPU (allocator
+//! churn) for significant memory savings.
+//!
+//! Install a policy with `StreamWriter::with_memory_policy` /
+//! `StreamReader::with_memory_policy`. The policy is consulted once per message —
+//! a single predictable branch when none is installed — and only while the current
+//! capacity exceeds the configured reclaim baseline (at or below the baseline there
+//! is nothing to reclaim, so policy state does not churn at steady state). Policies
+//! apply only to buffers the library owns: the writer's simple mode (`write()`) and
+//! the reader's internal buffer, never to caller-owned builders (`write_finished()`).
+
+use std::time::{Duration, Instant};
+
+/// Default baseline capacity restored when a memory policy triggers a reclaim.
+pub(crate) const DEFAULT_RECLAIM_CAPACITY: usize = 16 * 1024;
 
 /// Reason for a reclamation (reset) action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +42,12 @@ pub enum ReclamationReason {
 }
 
 /// Information about a reclamation event.
+///
+/// `capacity_after` is the configured baseline the buffer is reclaimed *to*.
+/// On the writer the rebuild happens immediately; on the reader the shrink is
+/// scheduled and applied at the start of the next read (so the payload just
+/// returned is never invalidated) — i.e., on the reader this is the *scheduled*
+/// post-reclaim capacity.
 #[derive(Debug, Clone, Copy)]
 pub struct ReclamationInfo {
     pub reason: ReclamationReason,
@@ -36,16 +56,23 @@ pub struct ReclamationInfo {
     pub capacity_after: usize,
 }
 
-/// A trait that defines a stateful policy for when to reset the internal builder.
-pub trait MemoryPolicy {
-    /// Called after each successful write.
+/// A trait that defines a stateful policy for when to reset an internal buffer.
+///
+/// Requires `Send` so that writers and readers carrying a policy can move
+/// across threads (the common pattern: construct on the main thread, hand off
+/// to a dedicated journaling thread). Policies are exclusively owned (`&mut
+/// self`), so `Sync` is not required.
+pub trait MemoryPolicy: Send {
+    /// Called after each successful message: a `write()` on the writer, a
+    /// successful read on the reader.
     ///
     /// Arguments
-    /// - `last_message_size`: The size in bytes of the message just written.
-    /// - `current_capacity`: The current capacity of the internal builder.
+    /// - `last_message_size`: The size in bytes of the message just written/read.
+    /// - `current_capacity`: The current capacity of the owned buffer (the
+    ///   writer's internal builder, or the reader's internal buffer).
     ///
     /// Returns
-    /// - `Some(ReclamationReason)` if the builder should be reset, otherwise `None`.
+    /// - `Some(ReclamationReason)` if the buffer should be reset, otherwise `None`.
     fn should_reset(
         &mut self,
         last_message_size: usize,
@@ -58,7 +85,12 @@ pub trait MemoryPolicy {
     fn on_reclaim(&mut self, _info: &ReclamationInfo) {}
 }
 
-/// A zero-cost policy that never triggers a reset.
+/// A policy that never triggers a reset.
+///
+/// Useful as a benchmark baseline and as the inner policy for observer/wrapper
+/// compositions. Note that *not installing a policy at all* is cheaper still
+/// (no boxed call); this type exists for cases where a policy slot must be
+/// filled but should do nothing.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoOpPolicy;
 
@@ -73,8 +105,6 @@ impl MemoryPolicy for NoOpPolicy {
     }
 }
 
-use std::time::{Duration, Instant};
-
 /// An adaptive, capacity-aware policy with hysteresis to avoid thrashing.
 ///
 /// # How it works
@@ -84,8 +114,8 @@ use std::time::{Duration, Instant};
 ///
 /// 1. **Detection**: It monitors the ratio between the builder's current capacity and
 ///    the size of the messages being written.
-    /// 2. **Signal**: If `capacity > message_size * size_ratio_threshold`, the builder is
-    ///    considered "over-provisioned."
+/// 2. **Signal**: If `capacity > message_size * size_ratio_threshold`, the builder is
+///    considered "over-provisioned."
 /// 3. **Stability**: It requires this signal to persist for `messages_to_wait` consecutive
 ///    writes (or a time duration) before triggering a reset. This ensures we don't
 ///    shrink immediately after a large message, only to grow again for the next one.
@@ -102,15 +132,33 @@ pub struct AdaptiveWatermarkPolicy {
     last_over_seen_at: Option<Instant>,
 }
 
-impl Default for AdaptiveWatermarkPolicy {
-    fn default() -> Self {
+impl AdaptiveWatermarkPolicy {
+    /// Creates a policy that triggers once `messages_to_wait` consecutive
+    /// messages have each observed `capacity >= message_size * size_ratio_threshold`.
+    ///
+    /// (The state fields are private, so this constructor — or `Default` — is
+    /// the way to build one.)
+    pub fn new(size_ratio_threshold: usize, messages_to_wait: u32) -> Self {
         Self {
-            size_ratio_threshold: 4,
-            messages_to_wait: 5,
+            size_ratio_threshold,
+            messages_to_wait,
             cooldown: None,
             messages_since_over: 0,
             last_over_seen_at: None,
         }
+    }
+
+    /// Adds a time-based trigger: reset once the over-provisioned signal has
+    /// persisted for `cooldown`, even if the message count has not been reached.
+    pub fn with_cooldown(mut self, cooldown: Duration) -> Self {
+        self.cooldown = Some(cooldown);
+        self
+    }
+}
+
+impl Default for AdaptiveWatermarkPolicy {
+    fn default() -> Self {
+        Self::new(4, 5)
     }
 }
 
@@ -129,6 +177,9 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
 
         let overprovisioned =
             current_capacity >= last_message_size.saturating_mul(self.size_ratio_threshold);
+        // NOTE: direct clock read; to be routed through an injected `Clock`
+        // trait in the v0.3 hardening pass (determinism seam — see
+        // docs/planning/NEXT_STEPS.md item B8).
         let now = self.cooldown.as_ref().map(|_| Instant::now());
 
         if overprovisioned {
@@ -150,7 +201,13 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
 
         if count_ok || time_ok {
             self.messages_since_over = 0;
-            self.last_over_seen_at = now;
+            // Clear the timer entirely: after a fire the buffer is reclaimed to
+            // the baseline, and the caller's gate stops consulting this policy
+            // until capacity next exceeds it. A timestamp left here would
+            // survive that gap and trigger an immediate, premature
+            // TimeCooldown on re-entry; the window must restart at the next
+            // over-provisioned observation instead.
+            self.last_over_seen_at = None;
             return Some(if time_ok {
                 ReclamationReason::TimeCooldown
             } else {
@@ -200,21 +257,31 @@ impl MemoryPolicy for SizeThresholdPolicy {
     fn should_reset(
         &mut self,
         last_message_size: usize,
-        current_capacity: usize,
+        _current_capacity: usize,
     ) -> Option<ReclamationReason> {
-        if current_capacity > self.grow_above_bytes {
+        // A large *message* marks the event (capacity cannot be the marker: it
+        // only drops via the reset this policy triggers, so gating on capacity
+        // would make the policy unable to ever fire).
+        if last_message_size > self.grow_above_bytes {
             self.large_event_seen = true;
             self.small_since_large = 0;
             return None;
         }
 
-        if self.large_event_seen && last_message_size < self.shrink_below_bytes {
+        if !self.large_event_seen {
+            return None;
+        }
+
+        if last_message_size < self.shrink_below_bytes {
             self.small_since_large = self.small_since_large.saturating_add(1);
             if self.small_since_large >= self.messages_to_wait {
                 self.large_event_seen = false;
                 self.small_since_large = 0;
                 return Some(ReclamationReason::SizeThreshold);
             }
+        } else {
+            // A mid-sized message interrupts the consecutive-small run.
+            self.small_since_large = 0;
         }
 
         None
@@ -234,13 +301,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_hysteresis() {
-        let mut policy = AdaptiveWatermarkPolicy {
-            size_ratio_threshold: 10,
-            messages_to_wait: 3,
-            cooldown: None,
-            messages_since_over: 0,
-            last_over_seen_at: None,
-        };
+        let mut policy = AdaptiveWatermarkPolicy::new(10, 3);
 
         let capacity = 1000;
 
@@ -275,13 +336,9 @@ mod tests {
 
     #[test]
     fn test_adaptive_cooldown() {
-        let mut policy = AdaptiveWatermarkPolicy {
-            size_ratio_threshold: 10,
-            messages_to_wait: 100, // High count, rely on time
-            cooldown: Some(Duration::from_millis(50)),
-            messages_since_over: 0,
-            last_over_seen_at: None,
-        };
+        // High count so the trigger relies on time alone
+        let mut policy =
+            AdaptiveWatermarkPolicy::new(10, 100).with_cooldown(Duration::from_millis(50));
 
         let capacity = 1000;
         let small_msg = 50;
@@ -302,5 +359,80 @@ mod tests {
             Some(ReclamationReason::TimeCooldown)
         );
         assert_eq!(policy.messages_since_over, 0);
+    }
+
+    #[test]
+    fn test_adaptive_cooldown_timer_resets_after_fire() {
+        // Regression: after the policy fires, its cooldown timer must be
+        // cleared. A stale timestamp would otherwise survive periods where the
+        // caller does not consult the policy at all (capacity at the reclaim
+        // baseline) and cause an immediate, premature TimeCooldown on the next
+        // over-provisioned observation.
+        let mut policy =
+            AdaptiveWatermarkPolicy::new(10, 100).with_cooldown(Duration::from_millis(50));
+        let capacity = 1000;
+        let small_msg = 50;
+
+        // Arm and fire once via time.
+        assert_eq!(policy.should_reset(small_msg, capacity), None);
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(
+            policy.should_reset(small_msg, capacity),
+            Some(ReclamationReason::TimeCooldown)
+        );
+
+        // Simulate an idle / gated-out period longer than the cooldown.
+        std::thread::sleep(Duration::from_millis(60));
+
+        // The next over-provisioned observation must START a fresh window,
+        // not fire against the stale timestamp.
+        assert_eq!(policy.should_reset(small_msg, capacity), None);
+
+        // ...and fires again only after the cooldown elapses from that restart.
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(
+            policy.should_reset(small_msg, capacity),
+            Some(ReclamationReason::TimeCooldown)
+        );
+    }
+
+    #[test]
+    fn test_size_threshold_policy() {
+        // Large above 1000 bytes, small below 200 bytes, wait for 2 small messages.
+        let mut policy = SizeThresholdPolicy::new(1000, 200, 2);
+        let capacity = 8192; // capacity is irrelevant to this policy
+
+        // Small messages before any large event: no signal, ever.
+        assert_eq!(policy.should_reset(100, capacity), None);
+        assert_eq!(policy.should_reset(100, capacity), None);
+        assert_eq!(policy.should_reset(100, capacity), None);
+
+        // A large message marks the event.
+        assert_eq!(policy.should_reset(5000, capacity), None);
+
+        // A mid-sized message interrupts the consecutive-small run
+        // (resets the counter) but does not clear the large event.
+        assert_eq!(policy.should_reset(100, capacity), None); // small: 1
+        assert_eq!(policy.should_reset(500, capacity), None); // mid: run resets
+        assert_eq!(policy.should_reset(100, capacity), None); // small: 1 again
+
+        // The second consecutive small message triggers the reset.
+        assert_eq!(
+            policy.should_reset(100, capacity),
+            Some(ReclamationReason::SizeThreshold)
+        ); // 2 -> reset
+
+        // State is cleared: small messages alone do not re-trigger.
+        assert_eq!(policy.should_reset(100, capacity), None);
+        assert_eq!(policy.should_reset(100, capacity), None);
+        assert_eq!(policy.should_reset(100, capacity), None);
+
+        // A new large event re-arms the policy.
+        assert_eq!(policy.should_reset(5000, capacity), None);
+        assert_eq!(policy.should_reset(100, capacity), None); // 1
+        assert_eq!(
+            policy.should_reset(100, capacity),
+            Some(ReclamationReason::SizeThreshold)
+        ); // 2 -> reset
     }
 }

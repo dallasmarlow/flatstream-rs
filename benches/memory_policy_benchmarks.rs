@@ -23,11 +23,26 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements(1));
 
-    // Baseline: NoOpPolicy (Zero cost)
+    // Baseline: no policy installed (the default). Measures the cost of the
+    // single not-taken branch in write().
+    group.bench_function("no_policy", |b| {
+        let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer);
+
+        b.iter(|| {
+            writer.write(&small_data).unwrap();
+        });
+    });
+
+    // Comparison: NoOpPolicy installed. Measures the boxed-policy dispatch cost
+    // on top of the baseline (one indirect call per message).
+    //
+    // reclaim_capacity(1): the writer only consults the policy while builder
+    // capacity exceeds the reclaim baseline; a tiny baseline keeps that gate
+    // open so this bench measures the dispatch, not the gate.
     group.bench_function("noop_policy", |b| {
-        let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
+        let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer)
             .with_memory_policy(NoOpPolicy)
-            .build();
+            .with_reclaim_capacity(1);
 
         b.iter(|| {
             writer.write(&small_data).unwrap();
@@ -43,12 +58,13 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
     // (tracking sizes, checking thresholds) to prove it is negligible when
     // not actively reclaiming memory.
     group.bench_function("adaptive_policy_inactive", |b| {
-        let mut policy = AdaptiveWatermarkPolicy::default();
-        policy.size_ratio_threshold = 1000; // Unreachable by design
+        // Ratio of 1000 is unreachable by design: measures pure bookkeeping.
+        // reclaim_capacity(1) keeps the baseline gate open (see above).
+        let policy = AdaptiveWatermarkPolicy::new(1000, 5);
 
-        let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
+        let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer)
             .with_memory_policy(policy)
-            .build();
+            .with_reclaim_capacity(1);
 
         b.iter(|| {
             writer.write(&small_data).unwrap();
@@ -84,10 +100,9 @@ fn benchmark_oscillation(c: &mut Criterion) {
     // Result: Maximum performance. The 1MB buffer is reused for everything.
     // Trade-off: The application holds 1MB of memory indefinitely, even if 99% of traffic is small.
     group.bench_function("oscillation_noop_unbounded", |b| {
-        let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_memory_policy(NoOpPolicy)
-            .build();
-            
+        let mut writer =
+            StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(NoOpPolicy);
+
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();
@@ -109,14 +124,12 @@ fn benchmark_oscillation(c: &mut Criterion) {
     //
     // This accurately measures the cost of 10 full grow-shrink cycles.
     group.bench_function("oscillation_adaptive_reclaim", |b| {
-        let mut policy = AdaptiveWatermarkPolicy::default();
-        policy.size_ratio_threshold = 4;
-        policy.messages_to_wait = 1000; // Reclaim after 1000 small messages
+        // Reclaim after 1000 consecutive small messages
+        let policy = AdaptiveWatermarkPolicy::new(4, 1000);
 
-        let mut writer = StreamWriter::builder(std::io::sink(), DefaultFramer)
-            .with_memory_policy(policy)
-            .build();
-            
+        let mut writer =
+            StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(policy);
+
         b.iter(|| {
             for _ in 0..cycles_per_iter {
                 writer.write(&large_data).unwrap();
