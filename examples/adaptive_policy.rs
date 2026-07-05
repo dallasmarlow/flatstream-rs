@@ -43,6 +43,10 @@ impl<P: MemoryPolicy> MemoryPolicy for LoggingPolicy<P> {
         );
         self.0.on_reclaim(info);
     }
+
+    fn baseline_capacity(&self) -> usize {
+        self.0.baseline_capacity()
+    }
 }
 
 fn main() -> flatstream::Result<()> {
@@ -53,7 +57,7 @@ fn main() -> flatstream::Result<()> {
     // - Reset if capacity is >= 4x the current message size
     // - Wait for 10 consecutive small messages before resetting
     // (no time-based cooldown, keeping this demo deterministic)
-    let base_policy = AdaptiveWatermarkPolicy::new(4, 10);
+    let base_policy = AdaptiveWatermarkPolicy::new(4, 10).with_baseline(16 * 1024);
 
     // Wrap it to add logging
     let policy = LoggingPolicy(base_policy);
@@ -61,9 +65,7 @@ fn main() -> flatstream::Result<()> {
     println!("=== Adaptive Memory Policy Example ===");
     println!("1. Initializing writer with default capacity (16KB)...");
 
-    let mut writer = StreamWriter::new(sink, DefaultFramer)
-        .with_memory_policy(policy)
-        .with_reclaim_capacity(16 * 1024);
+    let mut writer = StreamWriter::new(sink, DefaultFramer).with_memory_policy(policy);
 
     // 1. Write a burst of LARGE messages (1 MB)
     println!("2. Writing large message (1MB) to force buffer growth...");

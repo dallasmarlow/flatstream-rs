@@ -20,7 +20,7 @@
 //! Install a policy with `StreamWriter::with_memory_policy` /
 //! `StreamReader::with_memory_policy`. The policy is consulted once per message —
 //! a single predictable branch when none is installed — and only while the current
-//! capacity exceeds the configured reclaim baseline (at or below the baseline there
+//! capacity exceeds the policy's baseline capacity (at or below the baseline there
 //! is nothing to reclaim, so policy state does not churn at steady state). Policies
 //! apply only to buffers the library owns: the writer's simple mode (`write()`) and
 //! the reader's internal buffer, never to caller-owned builders (`write_finished()`).
@@ -28,7 +28,7 @@
 use std::time::{Duration, Instant};
 
 /// Default baseline capacity restored when a memory policy triggers a reclaim.
-pub(crate) const DEFAULT_RECLAIM_CAPACITY: usize = 16 * 1024;
+pub(crate) const DEFAULT_BASELINE_CAPACITY: usize = 16 * 1024;
 
 /// Reason for a reclamation (reset) action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +83,20 @@ pub trait MemoryPolicy: Send {
     /// Useful for logging or metrics without overhead when unused.
     #[inline(always)]
     fn on_reclaim(&mut self, _info: &ReclamationInfo) {}
+
+    /// The capacity the buffer is reclaimed *to* when this policy fires.
+    ///
+    /// The baseline is policy configuration: a policy decides both *when* to
+    /// reclaim and *what* to shrink back to. Defaults to 16 KiB. The writer and
+    /// reader read this once at installation and cache it — the steady-state
+    /// gate ("consult the policy only while capacity exceeds the baseline")
+    /// therefore costs a plain integer compare, never a virtual call.
+    ///
+    /// Wrapper/observer policies that delegate to an inner policy must forward
+    /// this method, or the inner policy's configured baseline is lost.
+    fn baseline_capacity(&self) -> usize {
+        DEFAULT_BASELINE_CAPACITY
+    }
 }
 
 /// A policy that never triggers a reset.
@@ -127,6 +141,8 @@ pub struct AdaptiveWatermarkPolicy {
     pub messages_to_wait: u32,
     /// Optional cooldown; if elapsed since the last overprovision event, triggers reset.
     pub cooldown: Option<Duration>,
+    /// The capacity the buffer is reclaimed to when this policy fires.
+    pub baseline_capacity: usize,
     // Internal state
     messages_since_over: u32,
     last_over_seen_at: Option<Instant>,
@@ -143,6 +159,7 @@ impl AdaptiveWatermarkPolicy {
             size_ratio_threshold,
             messages_to_wait,
             cooldown: None,
+            baseline_capacity: DEFAULT_BASELINE_CAPACITY,
             messages_since_over: 0,
             last_over_seen_at: None,
         }
@@ -152,6 +169,13 @@ impl AdaptiveWatermarkPolicy {
     /// persisted for `cooldown`, even if the message count has not been reached.
     pub fn with_cooldown(mut self, cooldown: Duration) -> Self {
         self.cooldown = Some(cooldown);
+        self
+    }
+
+    /// Sets the capacity the buffer is reclaimed to when this policy fires
+    /// (default 16 KiB).
+    pub fn with_baseline(mut self, bytes: usize) -> Self {
+        self.baseline_capacity = bytes;
         self
     }
 }
@@ -217,6 +241,10 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
 
         None
     }
+
+    fn baseline_capacity(&self) -> usize {
+        self.baseline_capacity
+    }
 }
 
 /// A simple threshold policy that resets after a sustained period of
@@ -230,6 +258,8 @@ pub struct SizeThresholdPolicy {
     pub shrink_below_bytes: usize,
     /// How many consecutive small messages to observe before resetting.
     pub messages_to_wait: u32,
+    /// The capacity the buffer is reclaimed to when this policy fires.
+    pub baseline_capacity: usize,
     // Internal state
     large_event_seen: bool,
     small_since_large: u32,
@@ -241,9 +271,17 @@ impl SizeThresholdPolicy {
             grow_above_bytes,
             shrink_below_bytes,
             messages_to_wait,
+            baseline_capacity: DEFAULT_BASELINE_CAPACITY,
             large_event_seen: false,
             small_since_large: 0,
         }
+    }
+
+    /// Sets the capacity the buffer is reclaimed to when this policy fires
+    /// (default 16 KiB).
+    pub fn with_baseline(mut self, bytes: usize) -> Self {
+        self.baseline_capacity = bytes;
+        self
     }
 }
 
@@ -285,6 +323,10 @@ impl MemoryPolicy for SizeThresholdPolicy {
         }
 
         None
+    }
+
+    fn baseline_capacity(&self) -> usize {
+        self.baseline_capacity
     }
 }
 

@@ -28,6 +28,10 @@ impl<P: MemoryPolicy> MemoryPolicy for ObservingPolicy<P> {
         (self.callback)(info);
         self.inner.on_reclaim(info);
     }
+
+    fn baseline_capacity(&self) -> usize {
+        self.inner.baseline_capacity()
+    }
 }
 
 #[derive(Clone)]
@@ -57,7 +61,7 @@ fn test_adaptive_policy_resets_builder() {
     let r_cap = last_capacity.clone();
 
     let policy = ObservingPolicy {
-        inner: AdaptiveWatermarkPolicy::new(2, 3),
+        inner: AdaptiveWatermarkPolicy::new(2, 3).with_baseline(1024),
         callback: Box::new(move |info| {
             r_count.fetch_add(1, Ordering::Relaxed);
             r_cap.store(info.capacity_before, Ordering::Relaxed);
@@ -65,9 +69,8 @@ fn test_adaptive_policy_resets_builder() {
     };
 
     let mut buffer = Vec::new();
-    let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer)
-        .with_memory_policy(policy)
-        .with_reclaim_capacity(1024);
+    let mut writer =
+        StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer).with_memory_policy(policy);
 
     // 1. Write a LARGE message to force buffer growth.
     // 10KB message. Builder grows to >= 10KB.
@@ -160,7 +163,7 @@ fn test_reader_policy_reclaims_buffer_without_corrupting_stream() {
     let r_before = last_info.clone();
 
     let policy = ObservingPolicy {
-        inner: AdaptiveWatermarkPolicy::new(2, 3),
+        inner: AdaptiveWatermarkPolicy::new(2, 3).with_baseline(1024),
         callback: Box::new(move |info| {
             r_count.fetch_add(1, Ordering::Relaxed);
             r_before.store(info.capacity_before, Ordering::Relaxed);
@@ -169,8 +172,7 @@ fn test_reader_policy_reclaims_buffer_without_corrupting_stream() {
 
     let mut reader =
         flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer)
-            .with_memory_policy(policy)
-            .with_reclaim_capacity(1024);
+            .with_memory_policy(policy);
 
     let mut seen = Vec::new();
     let mut messages = reader.messages();
@@ -205,11 +207,13 @@ fn test_writer_policy_with_custom_builder_factory() {
     let mut buffer = Vec::new();
     {
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer)
-            .with_memory_policy_and_factory(AdaptiveWatermarkPolicy::new(2, 3), move |cap| {
-                f_calls.fetch_add(1, Ordering::Relaxed);
-                FlatBufferBuilder::with_capacity(cap)
-            })
-            .with_reclaim_capacity(1024);
+            .with_memory_policy_and_factory(
+                AdaptiveWatermarkPolicy::new(2, 3).with_baseline(1024),
+                move |cap| {
+                    f_calls.fetch_add(1, Ordering::Relaxed);
+                    FlatBufferBuilder::with_capacity(cap)
+                },
+            );
 
         writer.write(&TestData(vec![1u8; 10 * 1024])).unwrap();
         for _ in 0..3 {
@@ -260,6 +264,10 @@ fn test_write_finished_ignores_installed_policy() {
         fn on_reclaim(&mut self, _: &ReclamationInfo) {
             self.reclaims.fetch_add(1, Ordering::Relaxed);
         }
+
+        fn baseline_capacity(&self) -> usize {
+            1 // keep the gate open for any capacity — still must not be consulted
+        }
     }
 
     let consults = Arc::new(AtomicUsize::new(0));
@@ -271,9 +279,8 @@ fn test_write_finished_ignores_installed_policy() {
 
     let mut buffer = Vec::new();
     {
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer)
-            .with_memory_policy(policy)
-            .with_reclaim_capacity(1); // gate open for any capacity — still must not consult
+        let mut writer =
+            StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer).with_memory_policy(policy);
 
         let mut b = FlatBufferBuilder::new();
         for i in 0..5 {

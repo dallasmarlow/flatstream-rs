@@ -1,8 +1,25 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
+use flatstream::policy::ReclamationReason;
 use flatstream::{
-    AdaptiveWatermarkPolicy, DefaultFramer, NoOpPolicy, StreamSerialize, StreamWriter,
+    AdaptiveWatermarkPolicy, DefaultFramer, MemoryPolicy, NoOpPolicy, StreamSerialize, StreamWriter,
 };
+
+/// A never-firing policy with a baseline of 1 byte: keeps the writer's
+/// steady-state gate open so the bench measures the boxed dispatch itself,
+/// not the gate. (`NoOpPolicy`'s default 16 KiB baseline would close the gate
+/// for small builders and skip the call entirely.)
+struct GateOpenNoOp;
+
+impl MemoryPolicy for GateOpenNoOp {
+    fn should_reset(&mut self, _: usize, _: usize) -> Option<ReclamationReason> {
+        None
+    }
+
+    fn baseline_capacity(&self) -> usize {
+        1
+    }
+}
 
 struct BenchData(Vec<u8>);
 
@@ -33,16 +50,12 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
         });
     });
 
-    // Comparison: NoOpPolicy installed. Measures the boxed-policy dispatch cost
-    // on top of the baseline (one indirect call per message).
-    //
-    // reclaim_capacity(1): the writer only consults the policy while builder
-    // capacity exceeds the reclaim baseline; a tiny baseline keeps that gate
-    // open so this bench measures the dispatch, not the gate.
+    // Comparison: a no-op policy installed. Measures the boxed-policy dispatch
+    // cost on top of the baseline (one indirect call per message); GateOpenNoOp's
+    // 1-byte baseline keeps the gate open so the call actually happens.
     group.bench_function("noop_policy", |b| {
-        let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer)
-            .with_memory_policy(NoOpPolicy)
-            .with_reclaim_capacity(1);
+        let mut writer =
+            StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(GateOpenNoOp);
 
         b.iter(|| {
             writer.write(&small_data).unwrap();
@@ -59,12 +72,11 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
     // not actively reclaiming memory.
     group.bench_function("adaptive_policy_inactive", |b| {
         // Ratio of 1000 is unreachable by design: measures pure bookkeeping.
-        // reclaim_capacity(1) keeps the baseline gate open (see above).
-        let policy = AdaptiveWatermarkPolicy::new(1000, 5);
+        // with_baseline(1) keeps the steady-state gate open (see above).
+        let policy = AdaptiveWatermarkPolicy::new(1000, 5).with_baseline(1);
 
-        let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer)
-            .with_memory_policy(policy)
-            .with_reclaim_capacity(1);
+        let mut writer =
+            StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(policy);
 
         b.iter(|| {
             writer.write(&small_data).unwrap();

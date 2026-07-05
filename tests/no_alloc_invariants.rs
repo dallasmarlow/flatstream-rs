@@ -130,9 +130,9 @@ fn zero_alloc_steady_state_with_policy_installed() {
     // consulted on every message — the strongest version of the claim.
 
     // Writer: warm the builder to steady state, then measure.
-    let mut w = StreamWriter::new(std::io::sink(), DefaultFramer)
-        .with_memory_policy(policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX))
-        .with_reclaim_capacity(1);
+    let mut w = StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(
+        policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX).with_baseline(1),
+    );
     w.write(&"warmup message").unwrap();
     let n = count_allocs(|| {
         for _ in 0..100 {
@@ -152,9 +152,9 @@ fn zero_alloc_steady_state_with_policy_installed() {
             sw.write(&"payload").unwrap();
         }
     }
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer)
-        .with_memory_policy(policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX))
-        .with_reclaim_capacity(1);
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer).with_memory_policy(
+        policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX).with_baseline(1),
+    );
     r.process_all(|_| Ok(())).unwrap();
     r.get_mut().set_position(0);
     let n = count_allocs(|| r.process_all(|_| Ok(())).unwrap());

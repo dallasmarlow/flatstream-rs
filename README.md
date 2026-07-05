@@ -647,15 +647,13 @@ All checksums are pluggable and composable, allowing you to choose the optimal s
 
 For long-running applications handling mixed message sizes, `StreamWriter` and `StreamReader` support configurable memory reclamation via the `MemoryPolicy` trait.
 
-By default, no policy is installed and the writer retains the largest buffer capacity seen. To prevent memory bloat after large message bursts, install an `AdaptiveWatermarkPolicy` to reset the internal builder once high capacity is no longer needed. The policy is consulted once per message, and only while capacity exceeds the reclaim baseline; the machinery is outlined off the hot paths, so without a policy the residual cost is a predictable, never-taken branch.
+By default, no policy is installed and the writer retains the largest buffer capacity seen. To prevent memory bloat after large message bursts, install an `AdaptiveWatermarkPolicy` to reset the internal builder once high capacity is no longer needed. The baseline capacity is policy configuration — a policy decides both *when* to reclaim and *what* to shrink back to. The policy is consulted once per message, and only while capacity exceeds its baseline; the machinery is outlined off the hot paths, so without a policy the residual cost is a predictable, never-taken branch.
 
 ```rust
 use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
 
-let policy = AdaptiveWatermarkPolicy::default();
-let mut writer = StreamWriter::new(file, DefaultFramer)
-    .with_memory_policy(policy)
-    .with_reclaim_capacity(16 * 1024); // 16KB baseline after reset
+let policy = AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024);
+let mut writer = StreamWriter::new(file, DefaultFramer).with_memory_policy(policy);
 ```
 
 Policies apply to buffers the library owns — the writer's simple mode (`write()`) and the reader's internal buffer. In expert mode (`write_finished()`) you own the builder, so reclamation is your call. For custom allocators, see `with_memory_policy_and_factory`.

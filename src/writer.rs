@@ -2,18 +2,21 @@
 
 use crate::error::Result;
 use crate::framing::Framer;
-use crate::policy::{MemoryPolicy, ReclamationInfo, DEFAULT_RECLAIM_CAPACITY};
+use crate::policy::{MemoryPolicy, ReclamationInfo};
 use crate::traits::StreamSerialize;
 use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
 
-/// Memory-policy state: the policy plus the means to rebuild the internal builder.
+/// Installed-policy state: the policy, its baseline (cached from
+/// `MemoryPolicy::baseline_capacity()` at installation so the steady-state gate
+/// is a plain integer compare), and the means to rebuild the internal builder.
 ///
 /// The factory closure exists because a reclaim must construct a *fresh*
 /// `FlatBufferBuilder`, and only the caller knows how to do that for a custom
 /// allocator. For the default allocator it is simply `FlatBufferBuilder::with_capacity`.
 struct PolicySlot<'a, A: flatbuffers::Allocator> {
     policy: Box<dyn MemoryPolicy>,
+    baseline_capacity: usize,
     make_builder: Box<dyn FnMut(usize) -> FlatBufferBuilder<'a, A> + Send + 'a>,
 }
 
@@ -41,14 +44,13 @@ struct PolicySlot<'a, A: flatbuffers::Allocator> {
 /// The internal builder grows to the largest message seen and keeps that
 /// capacity. For long-running processes with bursty workloads, an optional
 /// [`MemoryPolicy`] can be installed with [`with_memory_policy`](Self::with_memory_policy)
-/// to shrink the builder back to a baseline capacity
-/// ([`with_reclaim_capacity`](Self::with_reclaim_capacity), default 16 KiB)
-/// once it is over-provisioned:
+/// to shrink the builder back to the policy's baseline capacity once it is
+/// over-provisioned. The baseline is policy configuration
+/// (`MemoryPolicy::baseline_capacity`, default 16 KiB):
 ///
 /// ```ignore
 /// let mut writer = StreamWriter::new(file, DefaultFramer)
-///     .with_memory_policy(AdaptiveWatermarkPolicy::default())
-///     .with_reclaim_capacity(16 * 1024);
+///     .with_memory_policy(AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024));
 /// ```
 ///
 /// The policy is consulted once per `write()` — a single predictable branch
@@ -76,8 +78,7 @@ where
     writer: W,
     framer: F,
     builder: FlatBufferBuilder<'a, A>,
-    memory: Option<PolicySlot<'a, A>>,
-    reclaim_capacity: usize,
+    policy: Option<PolicySlot<'a, A>>,
 }
 
 impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
@@ -94,8 +95,7 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer,
             framer,
             builder: FlatBufferBuilder::new(),
-            memory: None,
-            reclaim_capacity: DEFAULT_RECLAIM_CAPACITY,
+            policy: None,
         }
     }
 
@@ -106,24 +106,19 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer,
             framer,
             builder,
-            memory: None,
-            reclaim_capacity: DEFAULT_RECLAIM_CAPACITY,
+            policy: None,
         }
     }
 
     /// Creates a new `StreamWriter` with an internal builder pre-allocated to `capacity` bytes.
     /// Mirrors `StreamReader::with_capacity` for API symmetry.
     /// Useful when you know typical payload sizes and want to avoid early growth.
-    ///
-    /// The given capacity also becomes the reclaim baseline if a memory policy
-    /// is installed later.
     pub fn with_capacity(writer: W, framer: F, capacity: usize) -> Self {
         Self {
             writer,
             framer,
             builder: FlatBufferBuilder::with_capacity(capacity),
-            memory: None,
-            reclaim_capacity: capacity,
+            policy: None,
         }
     }
 
@@ -131,14 +126,15 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     ///
     /// After each successful `write()`, the policy observes the message size and
     /// current builder capacity; when it fires, the internal builder is replaced
-    /// with a fresh one at the reclaim baseline capacity (see
-    /// [`with_reclaim_capacity`](Self::with_reclaim_capacity)). The policy is
-    /// consulted only while the builder's capacity exceeds that baseline — at or
-    /// below it there is nothing to reclaim.
+    /// with a fresh one at the policy's baseline capacity
+    /// (`MemoryPolicy::baseline_capacity`, cached here at installation). The
+    /// policy is consulted only while the builder's capacity exceeds that
+    /// baseline — at or below it there is nothing to reclaim.
     ///
     /// Has no effect on `write_finished()`, where the caller owns the builder.
     pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
-        self.memory = Some(PolicySlot {
+        self.policy = Some(PolicySlot {
+            baseline_capacity: policy.baseline_capacity(),
             policy: Box::new(policy),
             make_builder: Box::new(FlatBufferBuilder::with_capacity),
         });
@@ -171,8 +167,7 @@ where
             writer,
             framer,
             builder,
-            memory: None,
-            reclaim_capacity: DEFAULT_RECLAIM_CAPACITY,
+            policy: None,
         }
     }
 
@@ -180,25 +175,18 @@ where
     ///
     /// This is the custom-allocator variant of
     /// [`with_memory_policy`](Self::with_memory_policy): a reclaim replaces the
-    /// internal builder with `make_builder(reclaim_capacity)`, so the factory
-    /// decides how a fresh builder (and its allocator) is constructed.
+    /// internal builder with `make_builder(policy.baseline_capacity())`, so the
+    /// factory decides how a fresh builder (and its allocator) is constructed.
     pub fn with_memory_policy_and_factory<P, M>(mut self, policy: P, make_builder: M) -> Self
     where
         P: MemoryPolicy + 'static,
         M: FnMut(usize) -> FlatBufferBuilder<'a, A> + Send + 'a,
     {
-        self.memory = Some(PolicySlot {
+        self.policy = Some(PolicySlot {
+            baseline_capacity: policy.baseline_capacity(),
             policy: Box::new(policy),
             make_builder: Box::new(make_builder),
         });
-        self
-    }
-
-    /// Sets the baseline capacity restored when a memory policy reclaims the
-    /// internal builder. Defaults to 16 KiB (or the capacity given to
-    /// `with_capacity`). Order-independent with respect to policy installation.
-    pub fn with_reclaim_capacity(mut self, capacity: usize) -> Self {
-        self.reclaim_capacity = capacity;
         self
     }
 
@@ -237,7 +225,7 @@ where
         // just framed is never invalidated. One predictable branch when no
         // policy is installed; the machinery is outlined to keep this hot path
         // small.
-        if self.memory.is_some() {
+        if self.policy.is_some() {
             self.evaluate_memory_policy(last_message_size);
         }
 
@@ -249,7 +237,7 @@ where
     /// writers without a policy.
     #[inline(never)]
     fn evaluate_memory_policy(&mut self, last_message_size: usize) {
-        let Some(slot) = self.memory.as_mut() else {
+        let Some(slot) = self.policy.as_mut() else {
             return;
         };
         // Capacity read: `FlatBufferBuilder` exposes no capacity() getter.
@@ -260,23 +248,23 @@ where
         let (buf, _start_idx) = self.builder.mut_finished_buffer();
         let current_capacity = buf.len();
 
-        // At or below the reclaim baseline there is nothing to reclaim —
+        // At or below the policy's baseline there is nothing to reclaim —
         // skip the policy entirely so its hysteresis state cannot churn
         // (rebuilding a baseline-sized builder into an identical one would
         // be pure allocator noise).
-        if current_capacity > self.reclaim_capacity {
+        if current_capacity > slot.baseline_capacity {
             if let Some(reason) = slot
                 .policy
                 .should_reset(last_message_size, current_capacity)
             {
                 // Drop the over-provisioned builder and rebuild at the
                 // baseline capacity — resets the stream's high-water mark.
-                self.builder = (slot.make_builder)(self.reclaim_capacity);
+                self.builder = (slot.make_builder)(slot.baseline_capacity);
                 slot.policy.on_reclaim(&ReclamationInfo {
                     reason,
                     last_message_size,
                     capacity_before: current_capacity,
-                    capacity_after: self.reclaim_capacity,
+                    capacity_after: slot.baseline_capacity,
                 });
             }
         }
@@ -499,8 +487,7 @@ mod tests {
 
         let mut buffer = Vec::new();
         let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer)
-            .with_memory_policy(NoOpPolicy)
-            .with_reclaim_capacity(4 * 1024);
+            .with_memory_policy(NoOpPolicy);
 
         assert!(writer.write(&"policy message 1").is_ok());
         assert!(writer.write(&"policy message 2").is_ok());

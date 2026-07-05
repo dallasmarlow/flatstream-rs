@@ -23,10 +23,13 @@ planned. The carrier deviates from the original proposal:
   default allocator. The zero-cost-generic pattern remains correct for *per-byte*
   strategies (`Checksum`, `Validator`); this feature is per-message.
 - **API surface:** `with_memory_policy(policy)` (writer: simple mode only; reader:
-  internal buffer), `with_reclaim_capacity(bytes)` (baseline restored on reclaim;
-  default 16 KiB, or the value given to `with_capacity`), and
-  `with_memory_policy_and_factory(policy, make_builder)` for custom allocators (the
-  factory rebuilds the writer's builder on reclaim). `MemoryPolicy: Send`; policies
+  internal buffer) and `with_memory_policy_and_factory(policy, make_builder)` for
+  custom allocators (the factory rebuilds the writer's builder on reclaim). The
+  baseline capacity is *policy configuration* (`MemoryPolicy::baseline_capacity`,
+  default 16 KiB; set via `with_baseline(bytes)` on the built-in policies) — the
+  final review moved it into the policy, matching the original design intent of
+  self-contained policy objects; hosts cache the value at installation so the gate
+  costs a plain integer compare. `MemoryPolicy: Send`; policies
   are exclusively owned (`&mut self`), so `Sync` is not required.
 - **Baseline gate:** the policy is consulted only while current capacity *exceeds*
   the reclaim baseline — at or below it there is nothing to reclaim, so policy state

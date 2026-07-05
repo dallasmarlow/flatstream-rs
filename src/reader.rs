@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::framing::Deframer;
-use crate::policy::{MemoryPolicy, ReclamationInfo, DEFAULT_RECLAIM_CAPACITY};
+use crate::policy::{MemoryPolicy, ReclamationInfo};
 use crate::traits::StreamDeserialize;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -71,7 +71,7 @@ use std::marker::PhantomData;
 /// capacity. For long-running processes with bursty workloads, an optional
 /// [`MemoryPolicy`] can be installed with
 /// [`with_memory_policy`](Self::with_memory_policy) to shrink the buffer back
-/// to a baseline ([`with_reclaim_capacity`](Self::with_reclaim_capacity),
+/// to the policy's baseline capacity (`MemoryPolicy::baseline_capacity`,
 /// default 16 KiB). The shrink is deferred to the start of the next read, so a
 /// payload already returned is never invalidated.
 pub struct StreamReader<R: Read, D: Deframer> {
@@ -81,9 +81,16 @@ pub struct StreamReader<R: Read, D: Deframer> {
     // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
     // Optional capacity-aware policy; one predictable branch per read when absent.
-    policy: Option<Box<dyn MemoryPolicy>>,
-    reclaim_capacity: usize,
+    policy: Option<PolicySlot>,
     pending_shrink: bool,
+}
+
+/// Installed-policy state: the policy plus its baseline (cached from
+/// `MemoryPolicy::baseline_capacity()` at installation so the steady-state gate
+/// is a plain integer compare).
+struct PolicySlot {
+    policy: Box<dyn MemoryPolicy>,
+    baseline_capacity: usize,
 }
 
 impl<R: Read, D: Deframer> StreamReader<R, D> {
@@ -94,22 +101,17 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             deframer,
             buffer: Vec::new(),
             policy: None,
-            reclaim_capacity: DEFAULT_RECLAIM_CAPACITY,
             pending_shrink: false,
         }
     }
 
     /// Creates a new `StreamReader` with a pre-allocated buffer capacity.
-    ///
-    /// The given capacity also becomes the reclaim baseline if a memory policy
-    /// is installed later.
     pub fn with_capacity(reader: R, deframer: D, capacity: usize) -> Self {
         Self {
             reader,
             deframer,
             buffer: Vec::with_capacity(capacity),
             policy: None,
-            reclaim_capacity: capacity,
             pending_shrink: false,
         }
     }
@@ -118,20 +120,17 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     ///
     /// After each successful read, the policy observes the payload size and the
     /// internal buffer's capacity; when it fires, the buffer is replaced with a
-    /// fresh one at the reclaim baseline capacity — deferred to the start of the
-    /// *next* read so the payload just returned is never invalidated. The policy
-    /// is consulted only while the buffer's capacity exceeds the baseline — at
-    /// or below it there is nothing to reclaim.
+    /// fresh one at the policy's baseline capacity
+    /// (`MemoryPolicy::baseline_capacity`, cached here at installation) —
+    /// deferred to the start of the *next* read so the payload just returned is
+    /// never invalidated. The policy is consulted only while the buffer's
+    /// capacity exceeds that baseline — at or below it there is nothing to
+    /// reclaim.
     pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
-        self.policy = Some(Box::new(policy));
-        self
-    }
-
-    /// Sets the baseline capacity restored when a memory policy reclaims the
-    /// internal buffer. Defaults to 16 KiB (or the capacity given to
-    /// `with_capacity`). Order-independent with respect to policy installation.
-    pub fn with_reclaim_capacity(mut self, capacity: usize) -> Self {
-        self.reclaim_capacity = capacity;
+        self.policy = Some(PolicySlot {
+            baseline_capacity: policy.baseline_capacity(),
+            policy: Box::new(policy),
+        });
         self
     }
 
@@ -167,7 +166,10 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     #[cold]
     #[inline(never)]
     fn apply_pending_shrink(&mut self) {
-        self.buffer = Vec::with_capacity(self.reclaim_capacity);
+        // `pending_shrink` is only ever set by an installed policy.
+        if let Some(slot) = self.policy.as_ref() {
+            self.buffer = Vec::with_capacity(slot.baseline_capacity);
+        }
         self.pending_shrink = false;
     }
 
@@ -176,22 +178,22 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// readers without a policy.
     #[inline(never)]
     fn evaluate_memory_policy(&mut self) {
-        let Some(policy) = self.policy.as_mut() else {
+        let Some(slot) = self.policy.as_mut() else {
             return;
         };
         let capacity = self.buffer.capacity();
-        // At or below the reclaim baseline there is nothing to reclaim —
+        // At or below the policy's baseline there is nothing to reclaim —
         // skip the policy so its state cannot churn.
-        if capacity > self.reclaim_capacity {
-            if let Some(reason) = policy.should_reset(self.buffer.len(), capacity) {
+        if capacity > slot.baseline_capacity {
+            if let Some(reason) = slot.policy.should_reset(self.buffer.len(), capacity) {
                 // Schedule the shrink for the start of the *next* read so the
                 // payload about to be returned is never invalidated.
                 self.pending_shrink = true;
-                policy.on_reclaim(&ReclamationInfo {
+                slot.policy.on_reclaim(&ReclamationInfo {
                     reason,
                     last_message_size: self.buffer.len(),
                     capacity_before: capacity,
-                    capacity_after: self.reclaim_capacity,
+                    capacity_after: slot.baseline_capacity,
                 });
             }
         }
