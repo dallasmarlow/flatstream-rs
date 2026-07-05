@@ -105,6 +105,7 @@
 pub mod checksum;
 pub mod error;
 pub mod framing;
+pub mod policy;
 pub mod reader;
 pub mod traits;
 pub mod validation;
@@ -113,10 +114,13 @@ pub mod writer;
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
 pub use error::{Error, Result};
-#[allow(deprecated)]
 pub use framing::{
-    BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, Framer, MaxFrameLen,
-    SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
+    BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer,
+    FramerExt, SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
+};
+pub use policy::{
+    AdaptiveWatermarkPolicy, MemoryPolicy, NoOpPolicy, ReclamationInfo, ReclamationReason,
+    SizeThresholdPolicy,
 };
 pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;

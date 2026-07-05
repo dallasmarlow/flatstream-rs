@@ -32,17 +32,18 @@ fn main() -> Result<()> {
     let writer = Cursor::new(&mut out);
     let framer = DefaultFramer;
 
-    // Provide the builder with explicit allocator to the writer (expert mode)
+    // Provide the builder with explicit allocator to the writer.
     let mut sw = StreamWriter::with_builder_alloc(writer, framer, builder);
 
-    // Build and write a couple of messages
-    let mut b = FlatBufferBuilder::new();
+    // Simple mode works with any allocator: this write serializes through the
+    // internal, explicit-allocator builder provided above.
     let e1 = Event("hello alloc".into());
-    b.reset();
-    e1.serialize(&mut b)?;
-    sw.write_finished(&mut b)?;
+    sw.write(&e1)?;
 
-    let mut b2 = FlatBufferBuilder::new();
+    // Expert mode also composes: bring an external builder (with its own
+    // explicit allocator) and hand over finished messages.
+    let alloc2 = flatbuffers::DefaultAllocator::default();
+    let mut b2 = FlatBufferBuilder::new_in(alloc2);
     let e2 = Event("goodbye alloc".into());
     b2.reset();
     e2.serialize(&mut b2)?;

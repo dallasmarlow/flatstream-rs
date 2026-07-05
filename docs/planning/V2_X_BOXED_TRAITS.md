@@ -158,21 +158,55 @@ pub struct ObserverDeframerBoxed<C: Fn(&[u8]) + Send + Sync + 'static> {
 
 These keep callback and bound logic while enabling an entirely boxed composition stack when desired.
 
+## MemoryPolicy Support
+
+The `MemoryPolicy` trait (added in v2.7) is natively object-safe because it does not use generic I/O methods. Unlike `Framer`/`Deframer`, it does not require a `*Dyn` mirror trait.
+
+To support runtime configuration of memory strategies, we will:
+
+1.  Provide a blanket implementation for boxed policies (likely behind `feature = "boxed"`):
+    ```rust
+    // In src/policy.rs
+    impl MemoryPolicy for Box<dyn MemoryPolicy + Send + Sync> {
+        fn should_reset(&mut self, l: usize, c: usize) -> Option<ReclamationReason> {
+            (**self).should_reset(l, c)
+        }
+        fn on_reclaim(&mut self, info: &ReclamationInfo) {
+            (**self).on_reclaim(info)
+        }
+    }
+    ```
+2.  Add a type alias for convenience:
+    ```rust
+    pub type BoxMemoryPolicy = Box<dyn MemoryPolicy + Send + Sync + 'static>;
+    ```
+
+This allows `StreamWriter` to be instantiated with a dynamic policy via the standard builder:
+
+```rust
+// P becomes BoxMemoryPolicy
+let writer = StreamWriter::builder(w, framer)
+    .with_memory_policy(my_boxed_policy)
+    .build();
+```
+
 ## StreamReader/StreamWriter API
 
 This proposal is additive. We can:
 
-- Keep `StreamReader<R, D: Deframer>` and `StreamWriter<'a, W, F: Framer, A>` unchanged.
+- Keep `StreamReader<R, D: Deframer, P>` and `StreamWriter<'a, W, F: Framer, P, A>` generics intact (using defaults for `P`).
 - Optionally expose convenience constructors:
 
 ```rust
 impl<R: std::io::Read> StreamReader<R, BoxedDeframerAdapter> {
+    // Uses default P = NoOpPolicy
     pub fn new_boxed(reader: R, deframer: BoxDeframer) -> Self {
         Self::new(reader, BoxedDeframerAdapter(deframer))
     }
 }
 
 impl<'a, W: std::io::Write> StreamWriter<'a, W, BoxedFramerAdapter> {
+    // Uses default P = NoOpPolicy
     pub fn new_boxed(writer: W, framer: BoxFramer) -> Self {
         Self::new(writer, BoxedFramerAdapter(framer))
     }
@@ -225,11 +259,12 @@ let mut reader = StreamReader::new(io_reader, deframer);
 ## Implementation Plan (Incremental)
 
 1. Add `FramerDyn`/`DeframerDyn` traits and blanket impls.
-2. Add type aliases `BoxFramer`/`BoxDeframer` and `Arc*` variants.
-3. Add `FramerBoxExt`/`DeframerBoxExt` with `.boxed()`/`.shared()` helpers.
-4. Add `BoxedFramerAdapter`/`BoxedDeframerAdapter` and optional `StreamReader::new_boxed`/`StreamWriter::new_boxed`.
-5. Provide boxed variants of key adapters as convenience (optional).
-6. Add examples and microbenchmarks comparing generic vs boxed throughput.
+2. Add type aliases `BoxFramer`/`BoxDeframer`/`BoxMemoryPolicy`.
+3. Add `FramerBoxExt`/`DeframerBoxExt` helpers.
+4. Re-introduce `impl MemoryPolicy for Box<dyn MemoryPolicy>` (feature-gated).
+5. Add `BoxedFramerAdapter`/`BoxedDeframerAdapter` and optional convenience constructors.
+6. Provide boxed variants of key adapters (bounds/observers) as convenience.
+7. Add examples and microbenchmarks comparing generic vs boxed throughput.
 
 ## Testing and Verification
 
