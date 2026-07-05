@@ -27,8 +27,10 @@
 
 use std::time::{Duration, Instant};
 
-/// Default baseline capacity restored when a memory policy triggers a reclaim.
-pub(crate) const DEFAULT_BASELINE_CAPACITY: usize = 16 * 1024;
+/// Default baseline capacity restored when a memory policy triggers a reclaim:
+/// 16 KiB — large enough that typical telemetry-sized messages never regrow the
+/// buffer after a reclaim, small enough to matter against megabyte high-water marks.
+pub const DEFAULT_BASELINE_CAPACITY: usize = 16 * 1024;
 
 /// Reason for a reclamation (reset) action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,10 +89,11 @@ pub trait MemoryPolicy: Send {
     /// The capacity the buffer is reclaimed *to* when this policy fires.
     ///
     /// The baseline is policy configuration: a policy decides both *when* to
-    /// reclaim and *what* to shrink back to. Defaults to 16 KiB. The writer and
-    /// reader read this once at installation and cache it — the steady-state
-    /// gate ("consult the policy only while capacity exceeds the baseline")
-    /// therefore costs a plain integer compare, never a virtual call.
+    /// reclaim and *what* to shrink back to. Defaults to
+    /// [`DEFAULT_BASELINE_CAPACITY`] (16 KiB). The writer and reader read this
+    /// once at installation and cache it — the steady-state gate ("consult the
+    /// policy only while capacity exceeds the baseline") therefore costs a
+    /// plain integer compare, never a virtual call.
     ///
     /// Wrapper/observer policies that delegate to an inner policy must forward
     /// this method, or the inner policy's configured baseline is lost.
@@ -149,6 +152,17 @@ pub struct AdaptiveWatermarkPolicy {
 }
 
 impl AdaptiveWatermarkPolicy {
+    /// Default over-provisioning ratio: the buffer counts as over-provisioned
+    /// while `capacity >= message_size * 4`. A factor of 4 tolerates the slack
+    /// a doubling-growth builder normally carries, so only genuinely stale
+    /// burst capacity registers as reclaimable.
+    pub const DEFAULT_SIZE_RATIO_THRESHOLD: usize = 4;
+
+    /// Default hysteresis length: 5 consecutive over-provisioned messages must
+    /// be observed before firing, so a lone small message after a burst cannot
+    /// trigger a shrink that the next large message would immediately undo.
+    pub const DEFAULT_MESSAGES_TO_WAIT: u32 = 5;
+
     /// Creates a policy that triggers once `messages_to_wait` consecutive
     /// messages have each observed `capacity >= message_size * size_ratio_threshold`.
     ///
@@ -182,7 +196,10 @@ impl AdaptiveWatermarkPolicy {
 
 impl Default for AdaptiveWatermarkPolicy {
     fn default() -> Self {
-        Self::new(4, 5)
+        Self::new(
+            Self::DEFAULT_SIZE_RATIO_THRESHOLD,
+            Self::DEFAULT_MESSAGES_TO_WAIT,
+        )
     }
 }
 
@@ -266,6 +283,16 @@ pub struct SizeThresholdPolicy {
 }
 
 impl SizeThresholdPolicy {
+    /// Default "large event" threshold: a message above 1 MiB arms the policy.
+    pub const DEFAULT_GROW_ABOVE_BYTES: usize = 1 << 20;
+
+    /// Default "small message" threshold: messages below 1 KiB count toward
+    /// the consecutive-small run once the policy is armed.
+    pub const DEFAULT_SHRINK_BELOW_BYTES: usize = 1 << 10;
+
+    /// Default consecutive-small count before firing.
+    pub const DEFAULT_MESSAGES_TO_WAIT: u32 = 8;
+
     pub fn new(grow_above_bytes: usize, shrink_below_bytes: usize, messages_to_wait: u32) -> Self {
         Self {
             grow_above_bytes,
@@ -287,7 +314,11 @@ impl SizeThresholdPolicy {
 
 impl Default for SizeThresholdPolicy {
     fn default() -> Self {
-        Self::new(1 << 20, 1 << 10, 8) // 1 MiB grow threshold, 1 KiB shrink threshold, 8 messages
+        Self::new(
+            Self::DEFAULT_GROW_ABOVE_BYTES,
+            Self::DEFAULT_SHRINK_BELOW_BYTES,
+            Self::DEFAULT_MESSAGES_TO_WAIT,
+        )
     }
 }
 

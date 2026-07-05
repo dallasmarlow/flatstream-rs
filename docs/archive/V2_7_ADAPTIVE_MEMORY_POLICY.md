@@ -3,9 +3,10 @@
 **Version:** 1.1
 **Status:** Implemented (final API deviates from §4–§5 of the original plan; see §0)
 **Author:** Dallas Marlow
-**Date:** 2026-07-04 (archived from `docs/planning/` on implementation; the
-release-level `DESIGN_v2_7.md` will cover all changes since `v0.2.6` when the
-release is cut)
+**Date:** 2025-10-26
+**Updated:** 2026-07-04 — implemented and archived from `docs/planning/` per
+convention; §0 added documenting the as-shipped deviations. The release-level
+`DESIGN_v2_7.md` will cover all changes since `v0.2.6` when the release is cut.
 
 ## 0. As Implemented (authoritative summary)
 

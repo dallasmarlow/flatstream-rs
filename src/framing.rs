@@ -66,10 +66,18 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum = self.checksum_alg.calculate(payload);
         let checksum_size = self.checksum_alg.size();
 
-        // Assemble the full header ([4-byte length | checksum bytes]) in one
-        // stack buffer and issue a single write_all — halves the call count on
-        // this path versus writing length and checksum separately. The bytes
-        // on the wire are identical (verified by the wire-format corpus tests).
+        // Assemble the full header ([4-byte length | checksum bytes]) in a
+        // 12-byte stack scratch and issue a single write_all — halves the call
+        // count on this path versus writing length and checksum separately.
+        // The bytes on the wire are identical (wire-format corpus tests).
+        //
+        // On "copying" here: only header *metadata* is materialized — integers
+        // must become little-endian bytes somewhere, and previously each
+        // `to_le_bytes()` produced the same stack bytes before its own
+        // write_all. At these fixed sizes `copy_from_slice` compiles to plain
+        // register stores (no memcpy call). Payload bytes are never copied;
+        // the zero-copy guarantee concerns the payload, not the 4–12 header
+        // bytes.
         let mut header = [0u8; 12];
         header[..4].copy_from_slice(&payload_len.to_le_bytes());
         let header_len = match checksum_size {
