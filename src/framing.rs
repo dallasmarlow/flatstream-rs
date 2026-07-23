@@ -5,14 +5,19 @@ use crate::error::{Error, Result};
 use crate::validation::Validator;
 use std::io::{Read, Write};
 
-/// Default maximum accepted payload length for the core deframers: 16 MiB.
+/// Default maximum accepted payload length for the core deframers: the full
+/// range a 32-bit length header can address (`u32::MAX`, ~4 GiB).
 ///
-/// A length header is attacker-controlled input (a torn or corrupt frame is the
-/// *expected* input for a journal after a crash), so the deframers refuse to
-/// allocate for frames above this bound unless explicitly raised. 16 MiB
-/// comfortably covers telemetry payloads and occasional large dumps while
-/// capping what a corrupt 4-byte header can demand.
-pub const DEFAULT_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
+/// The wire format's `u32` length prefix caps every frame at this size, so the
+/// default reads any valid frame out of the box (comfortably above FlatBuffers'
+/// own 2 GiB buffer ceiling). A length header is nonetheless
+/// attacker-controlled input (a torn or corrupt frame is the *expected* input
+/// for a journal after a crash), so when reading from an untrusted source,
+/// tighten the accepted length with
+/// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len): a single integer
+/// compare then rejects an oversized declared length before any allocation is
+/// sized from it.
+pub const DEFAULT_MAX_FRAME_LEN: usize = u32::MAX as usize;
 
 //--- Framer Trait and Implementations ---
 
@@ -213,12 +218,12 @@ pub trait Deframer {
 
 /// The default deframing strategy for `[4-byte length | payload]` streams.
 ///
-/// When to use: Safe, allocation-bounded parser for almost all cases. Frames
-/// declaring more than `max_frame_len` bytes (default
-/// [`DEFAULT_MAX_FRAME_LEN`], 16 MiB) are rejected *before* any allocation;
-/// raise the bound with [`with_max_frame_len`](Self::with_max_frame_len), or
-/// opt out entirely with [`unbounded`](Self::unbounded) for fully trusted
-/// streams.
+/// When to use: The general-purpose parser for almost all cases. By default it
+/// accepts any length a 32-bit header can declare ([`DEFAULT_MAX_FRAME_LEN`],
+/// ~4 GiB) — the wire format's own ceiling. When reading from an untrusted
+/// source, tighten the accepted length with
+/// [`with_max_frame_len`](Self::with_max_frame_len) so a corrupt header can't
+/// demand a huge allocation.
 #[derive(Clone, Copy)]
 pub struct DefaultDeframer {
     max_frame_len: usize,
@@ -235,15 +240,6 @@ impl DefaultDeframer {
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
-    }
-
-    /// Accepts any length a 32-bit header can declare. This is the explicit
-    /// opt-out of hostile-input protection: a corrupt header can demand a
-    /// ~4 GiB allocation, so reserve it for streams you fully trust.
-    pub fn unbounded() -> Self {
-        Self {
-            max_frame_len: u32::MAX as usize,
-        }
     }
 }
 
@@ -270,8 +266,9 @@ impl Deframer for DefaultDeframer {
 /// A deframing strategy that verifies a checksum.
 ///
 /// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
-/// Applies the same `max_frame_len` bound as [`DefaultDeframer`] (default
-/// [`DEFAULT_MAX_FRAME_LEN`]).
+/// Applies the same length policy as [`DefaultDeframer`]: the wire format's
+/// ~4 GiB ceiling by default ([`DEFAULT_MAX_FRAME_LEN`]), tightened for
+/// untrusted input with [`with_max_frame_len`](Self::with_max_frame_len).
 #[derive(Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
@@ -296,16 +293,6 @@ impl<C: Checksum> ChecksumDeframer<C> {
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
-    }
-
-    /// Accepts any length a 32-bit header can declare. This is the explicit
-    /// opt-out of hostile-input protection: a corrupt header can demand a
-    /// ~4 GiB allocation, so reserve it for streams you fully trust.
-    pub fn unbounded(checksum_alg: C) -> Self {
-        Self {
-            checksum_alg,
-            max_frame_len: u32::MAX as usize,
-        }
     }
 }
 

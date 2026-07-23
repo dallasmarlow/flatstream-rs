@@ -14,7 +14,7 @@ use tempfile::NamedTempFile;
 //
 // This file measures the overhead and behavior of adapter layers:
 // - BoundedFramer (write) and the deframers' max_frame_len bound (read):
-//   payload/frame size limits (under/over limit, default vs unbounded)
+//   payload/frame size limits (under/over limit, default vs explicit bound)
 // - ObserverFramer/ObserverDeframer: attach non-mutating hooks for metrics/logging
 // - Reader capacity and size sweeps: effects of buffer capacity on reallocations/zeroing
 // - File I/O adapter usage: measuring with buffered file handles and realistic durations
@@ -92,19 +92,6 @@ fn bench_bounded_read(c: &mut Criterion) {
     group.bench_function("bounded_under_limit_explicit", |b| {
         b.iter(|| {
             let deframer = DefaultDeframer::new().with_max_frame_len(1 << 20);
-            let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
-            reader
-                .process_all(|p| {
-                    black_box(p);
-                    Ok(())
-                })
-                .unwrap()
-        })
-    });
-
-    group.bench_function("unbounded", |b| {
-        b.iter(|| {
-            let deframer = DefaultDeframer::unbounded();
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
             reader
                 .process_all(|p| {

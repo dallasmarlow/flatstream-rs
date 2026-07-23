@@ -62,11 +62,12 @@ use std::marker::PhantomData;
 ///
 /// The internal buffer is a high-water mark: it grows to the largest payload
 /// seen (zero-initializing only the growth) and is then reused in place, so
-/// steady-state reads perform no allocation and no per-frame zeroing. The
-/// deframers bound each frame's declared length (default
-/// [`DEFAULT_MAX_FRAME_LEN`](crate::framing::DEFAULT_MAX_FRAME_LEN), 16 MiB)
-/// *before* sizing any allocation from it; unbounded reading is an explicit
-/// opt-in (e.g. `DefaultDeframer::unbounded()`) for fully trusted streams.
+/// steady-state reads perform no allocation and no per-frame zeroing. By
+/// default the deframers accept any declared length a 32-bit header can hold
+/// ([`DEFAULT_MAX_FRAME_LEN`](crate::framing::DEFAULT_MAX_FRAME_LEN), ~4 GiB —
+/// the full wire-format range); when reading from an untrusted source, tighten
+/// this with `DefaultDeframer::new().with_max_frame_len(max)` so a corrupt
+/// header is rejected *before* any allocation is sized from it.
 ///
 /// ## Memory Reclamation
 ///

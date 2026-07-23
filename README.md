@@ -4,7 +4,7 @@ A lightweight, zero-copy oriented, high-performance Rust library for encoding an
 
 FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on maintaining zero-copy behavior. It originated from a high-frequency telemetry capture agent and has evolved into a general-purpose library for high-throughput, low-latency applications that persist and replay streams with predictable performance characteristics.
 
-FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), bounded-by-default reads, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
+FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), configurable frame-length bounds, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
 
     Note on Performance: The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
 
@@ -130,7 +130,7 @@ sequenceDiagram
 | `Framer` | Defines how to encode `[len][opt checksum][payload]` |
 | `Deframer` | Defines how to decode `[len][opt checksum][payload]` |
 | `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
-| `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read bound is built into the deframers, default 16 MiB) |
+| `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read defaults to the wire format's ~4 GiB ceiling; tighten with `with_max_frame_len`) |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
 | `MemoryPolicy` | Opt-in buffer reclamation for long-running processes (`with_memory_policy`) |
@@ -371,10 +371,11 @@ what it checks and why:
 ```bash
 scripts/gate.sh                  # fmt, clippy -D warnings, feature test matrix
                                  # (incl. unsafe_typed), rustdoc, bench/fuzz
-                                 # compile checks, MSRV
-                                 # (if the 1.87 toolchain is installed)
+                                 # compile checks, and an MSRV check against the
+                                 # active toolchain (rust-version in Cargo.toml)
 scripts/fuzz.sh [secs/target]    # manual local cargo-fuzz of the deframers
-                                 # (needs Rust nightly; no CI/scheduler)
+                                 # (rustup nightly if present, else a Docker
+                                 # nightly container; no CI/scheduler)
 scripts/instruction_counts.sh    # pinned-environment instruction counts
                                  # via Gungraun/Callgrind (valgrind/Linux; falls
                                  # back to a Docker container on macOS)
@@ -399,6 +400,36 @@ Counts from different environments are not comparable. For wall-clock comparison
 (`cargo bench --locked -- --save-baseline <name>`, later
 `cargo bench --locked -- --baseline <name>`);
 baselines live in `target/criterion` and are machine-local.
+
+### Running the gate in a clean container
+
+`gate.sh` uses whatever `rustc` is on `PATH`. To run it against a pinned Linux
+toolchain at the exact MSRV — handy from a macOS workstation, and the closest
+thing to a from-scratch CI run without adopting CI — use the official Rust image
+whose tag matches `rust-version` in `Cargo.toml`. From the repo root:
+
+```bash
+docker run --rm \
+  -v "$PWD":/opt -w /opt \
+  -e CARGO_TARGET_DIR=/tmp/target \
+  rust:1.97.1-bookworm \
+  bash -c 'rustup component add rustfmt clippy >/dev/null 2>&1 || true; bash scripts/gate.sh'
+```
+
+Two details matter:
+
+- **Pin the tag to `rust-version`** (`rust:1.97.1-bookworm`). The container's
+  `rustc` then equals the declared MSRV, so every step runs on exactly the floor
+  and the MSRV check reports `verified` instead of the "newer — floor not proven"
+  note it prints on a newer toolchain.
+- **Redirect `CARGO_TARGET_DIR` off the bind mount** (`/tmp/target`). The mount
+  shares your working tree with the container; without the redirect, the
+  container's Linux artifacts collide with the host's macOS `target/` (forcing a
+  full rebuild in each direction) and drop root-owned files into the repo.
+
+The `rustup component add` is a no-op on the full `-bookworm` image (it already
+carries `rustfmt` and `clippy`); it keeps the command working on slimmer image
+variants too.
 
 The Docker fallback for instruction counts runs the trusted, short-lived
 benchmark container with `seccomp=unconfined`, because Gungraun disables ASLR
@@ -620,16 +651,15 @@ fn read_structurally_valid(data: Vec<u8>) -> Result<()> {
 }
 ```
 
-### Hardening against malicious data (built in)
+### Hardening against malicious data
 
 A frame's length prefix is attacker-controlled input: a corrupt or malicious header can declare an extremely large payload (e.g., 2 GB) and, without protection, the reader would try to allocate it — an Out-Of-Memory crash on demand.
 
-The deframers are bounded by default: frames declaring more than `DEFAULT_MAX_FRAME_LEN` (16 MiB) are rejected with `ErrorKind::InvalidFrame` *before* any allocation is sized from the header. The check is a single integer compare. Tune the bound with `with_max_frame_len`; unbounded reading is an explicit opt-in for fully trusted streams.
+By default the deframers accept any length a 32-bit header can declare (`DEFAULT_MAX_FRAME_LEN`, ~4 GiB — the full wire-format range), so FlatBuffers' maximum frame works out of the box. When reading from an untrusted source, set an explicit ceiling with `with_max_frame_len`: frames declaring more than the configured limit are then rejected with `ErrorKind::InvalidFrame` *before* any allocation is sized from the header. The check is a single integer compare.
 
 The default framers enforce only the wire format's `u32` length ceiling, so
-they can write a valid frame larger than 16 MiB. If your application writes
-larger payloads, configure the corresponding reader limit explicitly; the
-default writer/reader pair intentionally has asymmetric trust policies.
+they write any valid frame up to ~4 GiB. Tightening is a read-side, application-layer
+decision: pick the limit that matches the payloads you actually expect.
 
 ```rust
 use flatstream::{StreamReader, DefaultDeframer, Result};
@@ -639,7 +669,7 @@ fn read_safely(data: Vec<u8>) -> Result<()> {
     const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MiB
 
     let reader_backend = Cursor::new(data);
-    let deframer = DefaultDeframer::new().with_max_frame_len(MAX_MESSAGE_SIZE); // Tighten the default
+    let deframer = DefaultDeframer::new().with_max_frame_len(MAX_MESSAGE_SIZE); // Bound untrusted input
     let mut reader = StreamReader::new(reader_backend, deframer);
 
     reader.process_all(|payload: &[u8]| {
@@ -649,9 +679,6 @@ fn read_safely(data: Vec<u8>) -> Result<()> {
 
     Ok(())
 }
-
-// Only for streams you fully trust (e.g., files you just wrote):
-// let deframer = DefaultDeframer::unbounded();
 ```
 
 ### Advanced: Manual Iteration Control
@@ -883,28 +910,28 @@ writer.write_finished(&mut builder)?;
 
 ## Comparative benchmarks (current snapshot: 2026/07/23)
 
-The following performance figures come from the Criterion comparative benchmarks in this repo (feature `comparative_bench`), run on an ARM-based MacBook Pro with Rust 1.97.1. They reflect medians for the named groups. Results vary by hardware, toolchain, and workload.
+The following performance figures come from the Criterion comparative benchmarks in this repo (features `comparative_bench,all_checksums`; the latter enables the checksum variants), run on an ARM-based MacBook Pro with Rust 1.97.1. They reflect medians for the named groups. Results vary by hardware, toolchain, and workload.
 
 ### Simulated Telemetry Streams
 
 Test description (for the info below):
 
 - Data: a simple telemetry event consisting of three logical fields (`u64 device_id`, `u64 timestamp`, `f64 value`; 24 logical bytes). FlatStream stores those bytes inside a FlatBuffer vector, so the serialized payload is larger than 24 bytes.
-- Stream format: `DefaultFramer` adds a 4-byte little-endian length prefix. Variants shown are default read and `xxhash64` checksum. (Earlier runs also measured an unsafe-read deframer variant; the alternate deframers were removed in the v0.2.7 hardening pass — the single read path is now bounded by default and hits the same steady state without `unsafe`.)
+- Stream format: `DefaultFramer` adds a 4-byte little-endian length prefix. Variants shown are default read and `xxhash64` checksum. (Earlier runs also measured an unsafe-read deframer variant; the alternate deframers were removed in the v0.2.7 hardening pass — the single safe read path hits the same steady state without `unsafe`.)
 - Execution: in-memory buffers (`Vec<u8>`/`Cursor`), Criterion medians. Small dataset = 100 events; large dataset ≈ 100,000 events (~2.4 MiB of logical field data before FlatBuffer overhead).
 
 - Small dataset (100 events):
-  - flatstream_default: 3.6594 µs (~27.3M msgs/s)
-  - flatstream_xxhash64: 3.9821 µs (~25.1M msgs/s)
-  - bincode: 4.4659 µs (~22.4M msgs/s)
-  - serde_json: 14.738 µs (~6.8M msgs/s)
-  - Interpretation: these are different consumption models, not an equal-work speed ranking. Bincode/serde_json deserialize owned structs, while this FlatStream case stops after borrowed frame access without decoding fields. A generated-schema, fields-consumed variant is required before making application-level speed comparisons. Within FlatStream, the default bounded path was slightly faster than explicit `unbounded()` (3.6594 µs vs 3.6798 µs); at this scale, layout and workstation variance dominate the cost of one integer comparison.
+  - flatstream_default: 3.0809 µs (~32.5M msgs/s)
+  - flatstream_xxhash64: 3.3141 µs (~30.2M msgs/s)
+  - bincode: 3.1772 µs (~31.5M msgs/s)
+  - serde_json: 14.550 µs (~6.9M msgs/s)
+  - Interpretation: these are different consumption models, not an equal-work speed ranking. Bincode/serde_json deserialize owned structs, while this FlatStream case stops after borrowed frame access without decoding fields. A generated-schema, fields-consumed variant is required before making application-level speed comparisons. Within FlatStream, the configured frame-length limit does not affect read throughput: the check is the same single integer compare on every frame regardless of the limit's value.
 
  - Large dataset (~2.4 MiB):
-  - flatstream_default: 3.2494 ms (~30.8M msgs/s)
-  - flatstream_xxhash64: 3.5773 ms (~28.0M msgs/s)
-  - bincode: 3.6742 ms (~27.2M msgs/s)
-  - serde_json: 14.610 ms (~6.8M msgs/s)
+  - flatstream_default: 2.8732 ms (~34.8M msgs/s)
+  - flatstream_xxhash64: 3.1146 ms (~32.1M msgs/s)
+  - bincode: 2.8460 ms (~35.1M msgs/s)
+  - serde_json: 13.645 ms (~7.3M msgs/s)
   - Interpretation: the same unequal-work caveat applies; these medians describe borrowed frame access versus owned deserialization and are not application-level speedups.
 
 Test notes:
@@ -915,9 +942,9 @@ Test notes:
 
 Checksum configurations add predictable overhead relative to the default framer in these tests (small/large dataset):
 
-- XXHash64: ~9–10%
-- CRC32: ~17–22%
-- CRC16: ~145–152%
+- XXHash64: ~8%
+- CRC32: ~19–20%
+- CRC16: ~150–154%
 
 Read path:
 
@@ -933,18 +960,18 @@ Brief test description:
 - Comparators: FlatStream borrowed frame access versus bincode/serde_json owned deserialization; all use a 4-byte length prefix, but the consumption work differs. Treat these as workflow medians, not equal-work rankings.
 
 - Simple Streams (Numeric)/write_read_cycle_100 (messages/sec, median time):
-  - flatstream_default: ~29.2M (3.4270 µs)
-  - bincode: ~23.0M (4.3417 µs)
-  - serde_json: ~9.8M (10.195 µs)
+  - flatstream_default: ~31.2M (3.2010 µs)
+  - bincode: ~30.7M (3.2540 µs)
+  - serde_json: ~10.2M (9.7996 µs)
 
 - Simple Streams (String16)/write_read_cycle_100 (messages/sec, median time):
-  - flatstream_default: ~47.2M (2.1178 µs)
-  - bincode: ~14.8M (6.7670 µs)
-  - serde_json: ~10.8M (9.2909 µs)
+  - flatstream_default: ~45.9M (2.1778 µs)
+  - bincode: ~20.0M (5.0011 µs)
+  - serde_json: ~12.9M (7.7608 µs)
 
 - Read-only deframer isolation (100 prewritten messages, messages/sec; median time):
-  - Numeric: default ~208M (480.12 ns)
-  - String16: default ~202M (494.14 ns)
+  - Numeric: default ~202M (493.89 ns)
+  - String16: default ~199M (502.50 ns)
   - Note: attribute changes only with a saved Criterion baseline from the same machine, toolchain, and dependency set; cross-snapshot wall-clock differences are not causal evidence.
 
 
@@ -963,8 +990,9 @@ Commands (write outputs to files):
 # 1) Core suite (flatstream-only benches)
 cargo bench --locked --bench benchmarks | tee bench_results.txt
 
-# 2) Comparative suite (flatstream vs bincode/serde_json)
-cargo bench --locked --features comparative_bench --bench comparative_benchmarks | tee bench_results.comparative.txt
+# 2) Comparative suite (flatstream vs bincode/serde_json; all_checksums enables
+#    the xxhash64/crc32/crc16 variants recorded in the results file)
+cargo bench --locked --features comparative_bench,all_checksums --bench comparative_benchmarks | tee bench_results.comparative.txt
 
 # 3) Simple streams suite (primitive types, plus read-only deframer isolation)
 cargo bench --locked --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt

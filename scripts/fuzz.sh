@@ -9,8 +9,13 @@
 # matching ChecksumFramer/Deframer with byte-identical recovery.
 #
 # Manually invoked locally; there is no CI schedule.
-# Requires the Rust nightly toolchain + cargo-fuzz (one-time):
-#   rustup toolchain install nightly && cargo install cargo-fuzz
+# cargo-fuzz requires a nightly toolchain. When rustup with a nightly is
+# present, it is used directly (with cargo-fuzz: `cargo install cargo-fuzz`).
+# Otherwise — e.g. this Homebrew-rust, no-rustup workstation — the run falls
+# back to the official nightly Linux container (same pattern as
+# instruction_counts.sh; nightly floats by design here, which is what fuzzing
+# wants). Build artifacts go to a named volume; the corpus lives in the
+# bind-mounted repo, so coverage still compounds across runs.
 #
 # Usage: scripts/fuzz.sh [seconds-per-target]      (default 300)
 # Corpus accumulates in fuzz/corpus/ across runs — keep it; coverage compounds.
@@ -20,7 +25,21 @@ cd "$(dirname "$0")/.."
 
 SECONDS_PER_TARGET="${1:-300}"
 
-cargo +nightly fuzz run deframe_fuzzer -- \
-    -max_total_time="$SECONDS_PER_TARGET" -timeout=10
-cargo +nightly fuzz run deframe_checksum_fuzzer -- \
-    -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+if command -v rustup >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q nightly; then
+    cargo +nightly fuzz run deframe_fuzzer -- \
+        -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+    cargo +nightly fuzz run deframe_checksum_fuzzer -- \
+        -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+else
+    echo "no rustup nightly on this machine — running inside the nightly Linux container"
+    docker run --rm \
+        -v "$PWD":/work -v flatstream-fuzz-target:/work/fuzz/target \
+        -w /work rustlang/rust:nightly bash -c "
+        set -euo pipefail
+        cargo install -q --locked cargo-fuzz
+        cargo fuzz run deframe_fuzzer -- \
+            -max_total_time=$SECONDS_PER_TARGET -timeout=10
+        cargo fuzz run deframe_checksum_fuzzer -- \
+            -max_total_time=$SECONDS_PER_TARGET -timeout=10
+    "
+fi

@@ -30,9 +30,12 @@ fn main() -> Result<()> {
 
     // Read back using typed API
     let mut reader = StreamReader::new(Cursor::new(&storage), DefaultDeframer::new());
+    let mut messages = Vec::new();
     reader.process_typed::<StrRoot, _>(|root| {
-        println!("{root}");
+        messages.push(root.to_string());
         Ok(())
     })?;
+    assert_eq!(messages, ["msg-0", "msg-1", "msg-2"]);
+    println!("typed_reading_example: read back {messages:?}");
     Ok(())
 }

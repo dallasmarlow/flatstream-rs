@@ -1432,5 +1432,5 @@ Design rationale:
 
 Migration and usage:
 - Backward compatible: existing pipelines work unchanged; validation is opt-in.
-- Recommended read path from untrusted sources: `DefaultDeframer::new().with_max_frame_len(max).with_validator(TableRootValidator::new())` (deframers are bounded by default; the explicit bound tightens it).
+- Recommended read path from untrusted sources: `DefaultDeframer::new().with_max_frame_len(max).with_validator(TableRootValidator::new())` (the deframers default to the wire format's ~4 GiB ceiling; the explicit bound is the untrusted-input limit).
 - Benchmarks added to demonstrate near-zero cost for `NoValidator` and small, predictable overhead for structural checks.

@@ -13,10 +13,11 @@ crate", #13) and the v0.2.7 release cut. The work landed in two waves:
 - **Phase A (merged to `main` via #14–#30):** custom framers, reader ergonomics,
   LOBSTER corpus integration, the validation layer, and adaptive memory policies —
   the library grew its remaining composable strategy surfaces.
-- **Phase B (the hardening branch):** a deliberate hardening pass — one
-  bounded-by-default read path, a wire-format conformance fix, compile-time checksum
-  widths, a pointer-sized error type, manifest hygiene, a scripted local verification
-  gate with instruction-count and fuzz coverage, and a determinism seam for time.
+- **Phase B (the hardening branch):** a deliberate hardening pass — a single read
+  path with a configurable frame bound, a wire-format conformance fix, compile-time
+  checksum widths, a pointer-sized error type, manifest hygiene, a scripted local
+  verification gate with instruction-count and fuzz coverage, and a determinism
+  seam for time.
 
 The organizing principle for both waves is unchanged from v2.6: zero-copy and
 zero-allocation invariants held at all three layers — dispatch (static generics on
@@ -106,12 +107,15 @@ instead of multiplying implementations:
   `&buffer[..n]`. Steady state performs no per-frame zeroing in fully safe code —
   `UnsafeDeframer`, `SafeTakeDeframer`, and their equivalence/edge-case test files
   are deleted, and `BoundedDeframer` with them.
-- **Bounded by default.** `DefaultDeframer::new()` / `ChecksumDeframer::new(alg)`
-  reject frames declaring more than `DEFAULT_MAX_FRAME_LEN` (16 MiB) with
-  `ErrorKind::InvalidFrame` carrying `declared_len` and `limit` — before any
-  allocation is sized from attacker-controlled input. The check is one integer
-  compare. `with_max_frame_len(..)` tunes it; `unbounded()` is the explicit opt-in
-  for trusted streams. (Write-side `BoundedFramer` remains an adapter.)
+- **Bounded by the wire format; tighten at the reader.** `DefaultDeframer::new()` /
+  `ChecksumDeframer::new(alg)` accept any length a 32-bit header can declare
+  (`DEFAULT_MAX_FRAME_LEN` = `u32::MAX`, ~4 GiB — the wire format's own ceiling,
+  comfortably above FlatBuffers' 2 GiB buffer cap), so every valid frame reads
+  out of the box.
+  `with_max_frame_len(..)` sets the untrusted-input ceiling: a declared length
+  over the limit is rejected with `ErrorKind::InvalidFrame` carrying
+  `declared_len` and `limit` — before any allocation is sized from it, in one
+  integer compare. (Write-side `BoundedFramer` remains an adapter.)
 - **Torn-header conformance with static-size reads.** The spec fix (§2) requires
   distinguishing "zero bytes at a boundary" from "partial header". The obvious
   implementation — one dynamic-length `read()` loop — compiles to a real `memcpy`
@@ -201,20 +205,27 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
 ## 8. Phase B: Manifest and the Local Verification Gate (B6, B7)
 
 - **Manifest (B6):** unused `tokio` removed (Cargo.lock −192 lines);
-  `rust-version = "1.87"` (`is_multiple_of` needs 1.87, inline-const asserts 1.79);
-  author email fixed; flatbuffers lock bump to 25.12.19 folded in.
+  `rust-version = "1.97.1"` set to match the production toolchain (the library's
+  own feature floor is lower — `is_multiple_of` needs 1.87, inline-const asserts
+  1.79 — but the declared MSRV tracks where it is deployed); author email fixed;
+  flatbuffers lock bump to 25.12.19 folded in.
 - **Verification gate (B7):** all verification runs locally by deliberate choice —
   no CI spend for a project developed and deployed from owned machines. Four
   scripts under `scripts/` (documented in the README "Verification" section):
   - `gate.sh` — fmt, clippy `--all-targets -D warnings`, the three-combo test
     matrix (all_checksums / no-features / crc16-only), rustdoc `-D warnings`,
     the opt-in `unsafe_typed` integration test, bench and fuzz-target
-    compile-checks, and the
-    MSRV check when the 1.87 toolchain is installed. Run before every review or tag.
-  - `fuzz.sh` — a manually invoked, time-bounded local cargo-fuzz run using the
-    Rust nightly toolchain (no CI or scheduler) over the root `fuzz/` workspace:
+    compile-checks, and an MSRV check of the active toolchain against the
+    `rust-version` floor in Cargo.toml (verified exactly when they match — the
+    README's Docker recipe runs the whole gate on a pinned `rust:1.97.1-bookworm`
+    container for that purpose). Run before every review or tag.
+  - `fuzz.sh` — a manually invoked, time-bounded local cargo-fuzz run (no CI or
+    scheduler) over the root `fuzz/` workspace, on a rustup nightly when one is
+    installed and otherwise inside the official nightly Linux container (this
+    workstation is Homebrew-rust, no rustup):
     `deframe_fuzzer` (arbitrary bytes must never panic or allocate past the bound;
-    asserts every yielded payload ≤ `DEFAULT_MAX_FRAME_LEN`) and
+    reads through an explicitly tightened `with_max_frame_len` and asserts every
+    yielded payload ≤ that bound) and
     `deframe_checksum_fuzzer` (raw-bytes robustness plus a write→read roundtrip
     asserting byte-identical recovery). The corpus accumulates under `fuzz/corpus/`
     across runs.
@@ -260,12 +271,12 @@ the roadmap's future milestones:
 | Change | Break |
 |---|---|
 | `Deframer` trait signature (`Result<Option<usize>>`, `read_after_length`) | custom deframers must be ported |
-| `UnsafeDeframer`, `SafeTakeDeframer`, `BoundedDeframer`, `DeframerExt::bounded` deleted | callers move to `new()`/`with_max_frame_len`/`unbounded()` |
-| Deframers bounded by default (16 MiB) | oversized-frame workflows must opt in |
+| `UnsafeDeframer`, `SafeTakeDeframer`, `BoundedDeframer`, `DeframerExt::bounded` deleted | callers move to `new()`/`with_max_frame_len` |
+| Deframer default accepts the wire format's full range (~4 GiB) | untrusted readers must set `with_max_frame_len` |
 | Torn length header now errors instead of clean EOF | spec conformance; recovery loops see `UnexpectedEof` |
 | `Error` → `Error(Box<ErrorKind>)`, variants matched via `kind()` | every `match err { Error::X .. }` site |
 | `Checksum::size()` → associated `const SIZE` + `write_bytes`/`read_bytes` | custom checksums |
-| `rust-version = 1.87` | older toolchains |
+| `rust-version = 1.97.1` | older toolchains |
 
 ## 11. Verification Summary
 
@@ -287,6 +298,8 @@ the roadmap's future milestones:
 - Criterion baselines: `pre-b` saved before Phase B began; every hot-path change
   measured against it (numbers inline above; logs preserved with the session
   records). Fuzzing and instruction counts run locally via `scripts/` from this
-  release on. Not yet verified anywhere: the MSRV 1.87 claim (needs
-  `rustup toolchain install 1.87` once) and the Windows build (verify on the next
-  Windows machine that builds this).
+  release on. The MSRV 1.97.1 claim is verified whenever the gate runs on a
+  toolchain equal to the floor — true of this workstation's Homebrew rustc, and
+  of the pinned `rust:1.97.1-bookworm` container recipe in the README; re-run
+  either before tagging. Not yet verified anywhere: the Windows build (verify on
+  the next Windows machine that builds this).

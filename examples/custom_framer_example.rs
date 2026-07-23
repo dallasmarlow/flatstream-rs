@@ -1,7 +1,10 @@
-use flatstream::{
-    Deframer, Error, Framer, Result, StreamReader, StreamWriter, DEFAULT_MAX_FRAME_LEN,
-};
+use flatstream::{Deframer, Error, Framer, Result, StreamReader, StreamWriter};
 use std::io::{Cursor, Read, Write};
+
+/// A custom deframer must pick its own allocation bound: the core deframers
+/// default to the wire format's ~4 GiB ceiling, and this one bypasses them
+/// entirely. 16 MiB is a sensible ceiling for this example's payloads.
+const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
 /// A custom framer that adds a 2-byte magic number `0xABBA` before each message.
 /// Wire format: [2-byte magic | 4-byte length | payload]
@@ -79,14 +82,14 @@ impl Deframer for MagicHeaderDeframer {
         payload_len: usize,
     ) -> Result<Option<usize>> {
         // Bound before allocating: a custom deframer bypasses the core
-        // deframers' built-in limit, so it must enforce its own — never size
-        // an allocation from an unvalidated length field.
-        if payload_len > DEFAULT_MAX_FRAME_LEN {
+        // deframers' built-in check entirely, so it must enforce its own limit
+        // — never size an allocation from an unvalidated length field.
+        if payload_len > MAX_FRAME_LEN {
             return Err(Error::invalid_frame_with(
                 "frame length exceeds configured limit",
                 Some(payload_len),
                 None,
-                Some(DEFAULT_MAX_FRAME_LEN),
+                Some(MAX_FRAME_LEN),
             ));
         }
         // High-water-mark buffer: grow (zeroing only the growth) and read the
@@ -117,13 +120,16 @@ fn main() -> Result<()> {
     // 2. Read messages using the custom MagicHeaderDeframer
     println!("Reading with MagicHeaderDeframer...");
     let mut reader = StreamReader::new(Cursor::new(&buffer), MagicHeaderDeframer);
+    let mut messages = Vec::new();
     reader.process_all(|payload| {
         // The payload is a FlatBuffer, not raw text — decode the string root
         // instead of printing the serialized bytes.
         let message = flatbuffers::root::<&str>(payload).map_err(Error::from)?;
-        println!("Successfully read: '{message}'");
+        messages.push(message.to_string());
         Ok(())
     })?;
+    assert_eq!(messages, ["message with magic header"]);
+    println!("Successfully read back: {messages:?}");
 
     println!("\nCustom framer worked correctly!");
     Ok(())

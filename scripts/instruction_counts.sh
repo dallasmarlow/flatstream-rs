@@ -45,7 +45,7 @@ else
     # short-lived benchmark container therefore runs with seccomp unconfined.
     docker run --rm --security-opt seccomp=unconfined \
         -v "$PWD":/work -v flatstream-gungraun-target:/work/target \
-        -w /work rust:1.87-bookworm bash -c "
+        -w /work rust:1.97.1-bookworm bash -c "
         set -euo pipefail
         apt-get update -qq && apt-get install -y -qq valgrind >/dev/null
         cargo install -q --locked gungraun-runner --version $GUNGRAUN_VERSION

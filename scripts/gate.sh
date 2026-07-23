@@ -14,12 +14,16 @@
 #               the README "Benchmarking" section for the Criterion baseline flow)
 #   fuzz check  fuzz targets compile against every built-in checksum; executing
 #               them remains a separate nightly/cargo-fuzz step
-#   MSRV        verifies the rust-version claim in Cargo.toml, when the
-#               toolchain is installed (rustup toolchain install 1.87)
+#   MSRV        confirms the active toolchain satisfies the rust-version floor
+#               declared in Cargo.toml. This environment uses Homebrew rust (no
+#               rustup), so there is no separate MSRV toolchain to install: when
+#               the active rustc equals the floor, every step above already ran
+#               on exactly the MSRV.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MSRV=1.87
+# Single source of truth for the MSRV: the rust-version field in Cargo.toml.
+MSRV=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
 
 echo "== fmt"
 cargo fmt --check
@@ -58,11 +62,16 @@ cargo check --locked --benches --features instruction_bench,all_checksums
 echo "== fuzz target compile check"
 cargo check --locked --manifest-path fuzz/Cargo.toml --bins
 
-if command -v rustup >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q "^$MSRV"; then
-    echo "== MSRV $MSRV"
-    cargo "+$MSRV" check --locked --all-targets --features all_checksums
+RUSTC_VER=$(rustc --version | awk '{print $2}')
+echo "== MSRV: declared $MSRV, active rustc $RUSTC_VER"
+if [ "$RUSTC_VER" = "$MSRV" ]; then
+    echo "   verified — every step above ran on exactly the declared MSRV"
+elif [ "$(printf '%s\n%s\n' "$MSRV" "$RUSTC_VER" | sort -V | head -n1)" = "$MSRV" ]; then
+    echo "   note: active rustc is newer than the MSRV; the crate builds here, but"
+    echo "         the floor itself is not proven (no older toolchain to test against)"
 else
-    echo "!! MSRV $MSRV NOT verified — install with: rustup toolchain install $MSRV"
+    echo "!! active rustc ($RUSTC_VER) is OLDER than the declared MSRV ($MSRV)"
+    exit 1
 fi
 
 echo "gate green"

@@ -93,10 +93,11 @@ fn process_typed_unchecked_skips_verification() {
 }
 
 #[test]
-fn typed_read_unbounded_deframer() {
-    // Purpose: Typed reading works equivalently with the explicit unbounded opt-in.
+fn typed_read_bounded_deframer() {
+    // Purpose: Typed reading works equivalently through a tightened max_frame_len.
     let data = build_string_messages(3);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::unbounded());
+    let deframer = DefaultDeframer::new().with_max_frame_len(1 << 20);
+    let mut reader = StreamReader::new(Cursor::new(&data), deframer);
     let mut count = 0;
     reader
         .process_typed::<StrRoot, _>(|_| {

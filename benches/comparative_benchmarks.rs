@@ -128,32 +128,6 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 1b: flatstream-rs default framer with unbounded read path
-    // Isolates the default max-frame-length comparison. Both paths use the same
-    // high-water-mark buffer behavior and neither performs payload validation.
-    group.bench_function("flatstream_default_unbounded_read", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            // Write phase
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            for event in &events {
-                writer.write(event).unwrap();
-            }
-            black_box(&buffer);
-
-            // Read phase (unbounded deframer)
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box(count);
-        });
-    });
-
     // Benchmark 2: flatstream-rs with XXHash64 checksum
     // Measures the cost of computing and verifying a high-speed checksum per message.
     #[cfg(feature = "xxhash")]
@@ -361,32 +335,6 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
 
             // Read phase
             let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box(count);
-        });
-    });
-
-    // Benchmark 1b: flatstream-rs default framer with unbounded read path
-    // Isolates the default max-frame-length comparison. Both paths use the same
-    // high-water-mark buffer behavior and neither performs payload validation.
-    group.bench_function("flatstream_default_unbounded_read", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            // Write phase
-            let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-            for event in &events {
-                writer.write(event).unwrap();
-            }
-            black_box(&buffer);
-
-            // Read phase (unbounded deframer)
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {

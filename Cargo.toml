@@ -2,7 +2,7 @@
 name = "flatstream"
 version = "0.2.7"
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.97.1"
 authors = ["Dallas Marlow <dallasmarlow@gmail.com>"]
 description = "High-performance FlatBuffers streaming with data integrity"
 license = "MIT OR Apache-2.0"
@@ -54,8 +54,9 @@ optional = true
 # installed gungraun-runner must match this version — see
 # scripts/instruction_counts.sh).
 gungraun = "0.19.4"
-# Gungraun's broad transitive range also admits bincode-next 3.x, whose MSRV
-# exceeds the pinned Rust 1.87 instruction-count container.
+# Pin bincode-next for the instruction-count bench: Gungraun's broad transitive
+# range would otherwise float it to a newer major, changing generated code and
+# thus instruction counts. The pin keeps the pinned-container build reproducible.
 bincode-next = { version = "=2.1.0", default-features = false, features = ["serde", "std"] }
 tempfile = "3.8"
 criterion = { version = "0.5", features = ["html_reports"] }

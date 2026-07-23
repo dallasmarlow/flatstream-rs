@@ -2,8 +2,8 @@
 // adapter on the write path, the deframers' built-in `max_frame_len` on the read
 // path — and what errors to expect when limits are exceeded (InvalidFrame with context).
 //! Demonstrates enforcing maximum payload sizes on both write and read paths.
-//! Reading is bounded by default (16 MiB); `with_max_frame_len` tightens the
-//! bound and `DefaultDeframer::unbounded()` is the explicit opt-out.
+//! Reading defaults to the wire format's ~4 GiB ceiling (the full u32 range);
+//! `with_max_frame_len` tightens the bound for untrusted input.
 
 use flatstream::framing::{BoundedFramer, FramerExt};
 use flatstream::{DefaultDeframer, DefaultFramer, ErrorKind, Result, StreamReader, StreamWriter};

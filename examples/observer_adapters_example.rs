@@ -32,17 +32,24 @@ fn main() -> Result<()> {
 
     // Observe payloads as they are read
     let read_msgs = Cell::new(0usize);
-    let deframer = ObserverDeframer::new(DefaultDeframer::new(), |_p: &[u8]| {
+    let read_bytes = Cell::new(0usize);
+    let deframer = ObserverDeframer::new(DefaultDeframer::new(), |p: &[u8]| {
         read_msgs.set(read_msgs.get() + 1);
+        read_bytes.set(read_bytes.get() + p.len());
     });
     let mut stream_reader = StreamReader::new(Cursor::new(&bytes), deframer);
     println!(
         "[reader] Reading messages with an observer deframer to count messages without copying"
     );
     stream_reader.process_all(|_payload| Ok(()))?;
+    // Both observers saw borrowed slices of the same frames: two messages, and
+    // byte-for-byte the same cumulative payload size on each side of the stream.
+    assert_eq!(read_msgs.get(), 2);
+    assert_eq!(read_bytes.get(), write_seen.get());
     println!(
-        "[reader] ObserverDeframer observed a total of {} message(s)",
-        read_msgs.get()
+        "[reader] ObserverDeframer observed {} message(s), {} payload byte(s) — matching the writer",
+        read_msgs.get(),
+        read_bytes.get()
     );
 
     // Feature-gated checksum observer variants
@@ -70,6 +77,8 @@ fn main() -> Result<()> {
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
         println!("[xxhash] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
+        assert_eq!(seen.get(), b"xxhash payload".len());
+        assert_eq!(count.get(), 1);
         println!(
             "[xxhash] Observer summary: observed_bytes={}, observed_messages={}",
             seen.get(),
@@ -99,6 +108,8 @@ fn main() -> Result<()> {
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
         println!("[crc32] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
+        assert_eq!(seen.get(), b"crc32 payload".len());
+        assert_eq!(count.get(), 1);
         println!(
             "[crc32] Observer summary: observed_bytes={}, observed_messages={}",
             seen.get(),
@@ -128,6 +139,8 @@ fn main() -> Result<()> {
         let mut stream_reader = StreamReader::new(Cursor::new(framed_bytes), deframer);
         println!("[crc16] Reading back with a checksum-deframer while observing received slices");
         stream_reader.process_all(|_| Ok(()))?;
+        assert_eq!(seen.get(), b"crc16 payload".len());
+        assert_eq!(count.get(), 1);
         println!(
             "[crc16] Observer summary: observed_bytes={}, observed_messages={}",
             seen.get(),

@@ -1,6 +1,6 @@
 // benches/simple_benchmarks.rs
 // Simple, high-throughput micro-benchmarks on primitive-type payloads.
-// Compares flatstream (default/bounded/unbounded read) with bincode and serde_json.
+// Compares flatstream (default and explicitly bounded read) with bincode and serde_json.
 // ---
 // Purpose: Provide an easy-to-interpret baseline on tiny numeric and small string
 // shapes, including write+read cycles and read-only deframer isolation. All paths
@@ -139,30 +139,6 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flatstream_default_unbounded_read", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            {
-                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-                let mut builder = FlatBufferBuilder::new();
-                for e in &events {
-                    builder.reset();
-                    flatstream::StreamSerialize::serialize(e, &mut builder).unwrap();
-                    writer.write_finished(&mut builder).unwrap();
-                }
-            }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box((buffer, count));
-        });
-    });
-
     group.bench_function("bincode", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -271,30 +247,6 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flatstream_default_unbounded_read", |b| {
-        b.iter(|| {
-            let mut buffer = Vec::new();
-            {
-                let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer);
-                let mut builder = FlatBufferBuilder::new();
-                for e in &events {
-                    builder.reset();
-                    flatstream::StreamSerialize::serialize(e, &mut builder).unwrap();
-                    writer.write_finished(&mut builder).unwrap();
-                }
-            }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box((buffer, count));
-        });
-    });
-
     group.bench_function("bincode", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -392,20 +344,6 @@ fn bench_simple_numeric_read_only(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("unbounded_deframer", |b| {
-        b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box(count);
-        });
-    });
-
     group.finish();
 }
 
@@ -444,20 +382,6 @@ fn bench_simple_string_read_only(c: &mut Criterion) {
                 Cursor::new(&buffer),
                 DefaultDeframer::new().with_max_frame_len(1 << 30),
             );
-            let mut count = 0;
-            reader
-                .process_all(|_payload| {
-                    count += 1;
-                    Ok(())
-                })
-                .unwrap();
-            black_box(count);
-        });
-    });
-
-    group.bench_function("unbounded_deframer", |b| {
-        b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {

@@ -63,10 +63,11 @@ Notes:
 ## 6. Reader State Machine (Informative)
 
 1. Read 4 bytes → `L` (u32 LE). On clean EOF here, signal end-of-stream; on partial read, signal `UnexpectedEof`.
-2. If checksummed, read `N` checksum bytes → `C` (u16/u32/u64 LE depending on algorithm). Partial read → `UnexpectedEof`.
-3. Read `L` payload bytes into a buffer. Partial read → `UnexpectedEof`.
-4. If checksummed, compute `C' = checksum(payload)` and compare with `C` (after width truncation). Mismatch → `ChecksumMismatch`.
-5. Yield `payload` to the caller. Repeat from step 1.
+2. If `L` exceeds the reader's configured maximum payload length, signal `InvalidFrame` — before any allocation is sized from `L`.
+3. If checksummed, read `N` checksum bytes → `C` (u16/u32/u64 LE depending on algorithm). Partial read → `UnexpectedEof`.
+4. Read `L` payload bytes into a buffer. Partial read → `UnexpectedEof`.
+5. If checksummed, compute `C' = checksum(payload)` and compare with `C` (after width truncation). Mismatch → `ChecksumMismatch`.
+6. Yield `payload` to the caller. Repeat from step 1.
 
 ```mermaid
 stateDiagram-v2
@@ -108,8 +109,10 @@ stateDiagram-v2
 ## 9. Reference Reader (Go, CRC32)
 
 The following compact Go function reads a single frame from a `bufio.Reader`.
-Set `withCRC32=false` to read a stream without checksums. It applies the same
-16 MiB default bound as the Rust reader before allocating the payload buffer.
+Set `withCRC32=false` to read a stream without checksums. It applies an
+application-level 16 MiB bound before allocating the payload buffer — the Rust
+reader accepts the full `u32` range by default and expects callers to set their
+own bound the same way (§8); pick the limit that matches your payloads.
 
 ```go
 package wirefmt
