@@ -20,8 +20,8 @@ use std::io::Cursor;
 //
 // Each group includes brief commentary about the design and what to look for in results.
 // ---
-// Import checksum types when features are enabled
-#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+// The suite's additional non-parameterized checksum group is XXH3-specific.
+#[cfg(feature = "xxhash")]
 use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
 #[cfg(feature = "xxhash")]
@@ -833,30 +833,8 @@ criterion_group!(
 
 // === MAIN MACRO ===
 
-// Conditionally compile the main macro based on features
-#[cfg(all(
-    not(feature = "xxhash"),
-    not(feature = "crc32"),
-    not(feature = "crc16")
-))]
-criterion_main!(benches);
-
-#[cfg(all(feature = "xxhash", not(feature = "crc32"), not(feature = "crc16")))]
+#[cfg(feature = "xxhash")]
 criterion_main!(benches, xxhash_specific_benches);
 
-// Add more combinations if needed for crc32, crc16, etc.
-// For simplicity, this handles the two main cases: no checksums, or xxhash is present.
-// A more robust solution would handle all 2^3 combinations.
-
-// A simpler catch-all for when any checksum is enabled but we only have xxhash specific benches
-#[cfg(all(
-    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
-    feature = "xxhash"
-))]
-criterion_main!(benches, xxhash_specific_benches);
-
-#[cfg(all(
-    any(feature = "xxhash", feature = "crc32", feature = "crc16"),
-    not(feature = "xxhash")
-))]
+#[cfg(not(feature = "xxhash"))]
 criterion_main!(benches);

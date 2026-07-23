@@ -79,12 +79,16 @@ fn process_typed_unchecked_skips_verification() {
     let data = build_string_messages(2);
     let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut count = 0;
-    reader
-        .process_typed_unchecked::<StrRoot, _>(|_root| {
-            count += 1;
-            Ok(())
-        })
-        .unwrap();
+    // SAFETY: `build_string_messages` constructs every payload with a
+    // FlatBufferBuilder as the `&str` root expected by `StrRoot`.
+    unsafe {
+        reader
+            .process_typed_unchecked::<StrRoot, _>(|_root| {
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+    }
     assert_eq!(count, 2);
 }
 

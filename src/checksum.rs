@@ -31,7 +31,7 @@ pub trait Checksum {
         if calculated & mask == expected & mask {
             Ok(())
         } else {
-            Err(Error::checksum_mismatch(expected, calculated))
+            Err(Error::checksum_mismatch(expected & mask, calculated & mask))
         }
     }
 
@@ -45,6 +45,11 @@ pub trait Checksum {
 
     /// Parses the `SIZE`-byte little-endian wire field back into a `u64`.
     /// `bytes` must hold at least `SIZE` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes` contains fewer than [`SIZE`](Self::SIZE) bytes.
+    /// Deframers should first read the exact checksum width from the source.
     #[inline]
     fn read_bytes(&self, bytes: &[u8]) -> u64 {
         let mut buf = [0u8; 8];
@@ -290,5 +295,45 @@ mod tests {
         roundtrip(&Crc32::new(), probe);
         #[cfg(feature = "crc16")]
         roundtrip(&Crc16::new(), probe);
+    }
+
+    #[test]
+    fn mismatch_diagnostics_are_limited_to_wire_width() {
+        struct Sum8;
+
+        impl Checksum for Sum8 {
+            const SIZE: usize = 1;
+
+            fn calculate(&self, payload: &[u8]) -> u64 {
+                0xABCD_0000 | payload.iter().map(|&byte| byte as u64).sum::<u64>()
+            }
+        }
+
+        let err = Sum8.verify(0, b"abc").unwrap_err();
+        match err.into_kind() {
+            crate::error::ErrorKind::ChecksumMismatch {
+                expected,
+                calculated,
+            } => {
+                assert_eq!(expected, 0);
+                assert_eq!(calculated, (b'a' as u64 + b'b' as u64 + b'c' as u64) & 0xFF);
+            }
+            other => panic!("expected ChecksumMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_bytes_panics_on_short_input_as_documented() {
+        struct Sum16;
+
+        impl Checksum for Sum16 {
+            const SIZE: usize = 2;
+
+            fn calculate(&self, payload: &[u8]) -> u64 {
+                payload.iter().map(|&byte| byte as u64).sum()
+            }
+        }
+
+        assert!(std::panic::catch_unwind(|| Sum16.read_bytes(&[0])).is_err());
     }
 }

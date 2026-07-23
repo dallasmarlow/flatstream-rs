@@ -158,7 +158,7 @@ fn typed_validator_rejects_wrong_type() {
         b.finish(root, None);
     }
     let buf = b.finished_data().to_vec();
-    let validator = TypedValidator::from_verify(|opts, payload| {
+    let validator = TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
         telemetry_generated::telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
     });
     let deframer = DefaultDeframer::new().with_validator(validator);
@@ -167,7 +167,7 @@ fn typed_validator_rejects_wrong_type() {
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let err = reader.process_all(|_| Ok(())).unwrap_err();
     match err.into_kind() {
-        ErrorKind::ValidationFailed { validator, .. } => assert_eq!(validator, "TypedValidator"),
+        ErrorKind::ValidationFailed { validator, .. } => assert_eq!(validator, "TelemetryEvent"),
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
 }

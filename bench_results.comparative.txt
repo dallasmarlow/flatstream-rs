@@ -1,146 +1,259 @@
-   Compiling flatstream v0.2.6 (/Users/dallas/repos/flatstream-rs/flatstream-rs)
-    Finished `bench` profile [optimized] target(s) in 2.56s
-     Running benches/comparative_benchmarks.rs (target/release/deps/comparative_benchmarks-06db01cc925a27b7)
+   Compiling proc-macro2 v1.0.95
+   Compiling unicode-ident v1.0.18
+   Compiling cfg-if v1.0.1
+   Compiling libc v0.2.174
+   Compiling serde v1.0.219
+   Compiling semver v1.0.26
+   Compiling serde_json v1.0.141
+   Compiling getrandom v0.3.3
+   Compiling version_check v0.9.5
+   Compiling memchr v2.7.5
+   Compiling crossbeam-utils v0.8.21
+   Compiling zerocopy v0.8.26
+   Compiling typenum v1.19.0
+   Compiling bitflags v2.9.1
+   Compiling crc32fast v1.5.0
+   Compiling generic-array v0.14.9
+   Compiling autocfg v1.5.0
+   Compiling itoa v1.0.15
+   Compiling rustix v1.0.8
+   Compiling num-traits v0.2.19
+   Compiling rustversion v1.0.21
+   Compiling ryu v1.0.20
+   Compiling rustc_version v0.4.1
+   Compiling regex-syntax v0.8.5
+   Compiling crossbeam-epoch v0.9.18
+   Compiling rayon-core v1.12.1
+   Compiling quote v1.0.40
+   Compiling either v1.15.0
+   Compiling once_cell v1.21.3
+   Compiling syn v2.0.104
+   Compiling proc-macro-error-attr3 v3.0.3
+   Compiling crossbeam-deque v0.8.6
+   Compiling gungraun-macros v0.9.1
+   Compiling flatbuffers v25.12.19
+   Compiling errno v0.3.13
+   Compiling rand_core v0.9.3
+   Compiling getrandom v0.2.16
+   Compiling half v2.6.0
+   Compiling thiserror v1.0.69
+   Compiling crc16 v0.4.0
+   Compiling adler2 v2.0.1
+   Compiling thiserror v2.0.16
+   Compiling ciborium-io v0.2.2
+   Compiling anstyle v1.0.11
+   Compiling plotters-backend v0.3.7
+   Compiling bumpalo v3.19.0
+   Compiling clap_lex v0.7.5
+   Compiling bincode-next v3.1.1
+   Compiling fastrand v2.3.0
+   Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
+   Compiling clap_builder v4.5.41
+   Compiling plotters-svg v0.3.7
+   Compiling ppv-lite86 v0.2.21
+   Compiling ciborium-ll v0.2.2
+   Compiling rapidhash v4.5.1
+   Compiling proc-macro-error3 v3.0.3
+   Compiling tempfile v3.20.0
+   Compiling miniz_oxide v0.8.9
+   Compiling rand_core v0.6.4
+   Compiling wait-timeout v0.2.1
+   Compiling regex-automata v0.4.9
+   Compiling itertools v0.10.5
+   Compiling pastey v0.2.3
+   Compiling serde_derive v1.0.219
+   Compiling derive_more-impl v2.1.1
+   Compiling thiserror-impl v1.0.69
+   Compiling thiserror-impl v2.0.16
+   Compiling equivalent v1.0.2
+   Compiling zip v2.4.2
+   Compiling log v0.4.27
+   Compiling simd-adler32 v0.3.7
+   Compiling unty-next v0.1.2
+   Compiling fnv v1.0.7
+   Compiling bit-vec v0.8.0
+   Compiling hashbrown v0.15.5
+   Compiling quick-error v1.2.3
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling derive_more v2.1.1
+   Compiling gungraun v0.19.4
+   Compiling bit-set v0.8.0
+   Compiling walkdir v2.5.0
+   Compiling criterion-plot v0.5.0
+   Compiling rusty-fork v0.3.0
+   Compiling indexmap v2.11.0
+   Compiling regex v1.11.1
+   Compiling zopfli v0.8.2
+   Compiling displaydoc v0.2.5
+   Compiling clap v4.5.41
+   Compiling rayon v1.10.0
+   Compiling flate2 v1.1.2
+   Compiling rand_chacha v0.3.1
+   Compiling rand_chacha v0.9.0
+   Compiling plotters v0.3.7
+   Compiling digest v0.10.7
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.2
+   Compiling cpufeatures v0.2.17
+   Compiling is-terminal v0.4.16
+   Compiling csv-core v0.1.12
+   Compiling unarray v0.1.4
+   Compiling anes v0.1.6
+   Compiling xxhash-rust v0.8.15
+   Compiling oorandom v11.1.5
+   Compiling lazy_static v1.5.0
+   Compiling sha2 v0.10.9
+   Compiling proptest v1.7.0
+   Compiling rand v0.8.5
+   Compiling either-or-both v0.3.1
+   Compiling bincode v1.3.3
+   Compiling ciborium v0.2.2
+   Compiling csv v1.3.1
+   Compiling gungraun-runner v0.19.4
+   Compiling tinytemplate v1.2.1
+   Compiling flatstream v0.2.7 (/Users/dallas/repos/flatstream-rs)
+   Compiling criterion v0.5.1
+    Finished `bench` profile [optimized] target(s) in 9.44s
+     Running benches/comparative_benchmarks.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/da80cad82dfdd3e7225c8ddb9a9cce1c/cargo-target/release/deps/comparative_benchmarks-bb44390fd3a50b98)
 Gnuplot not found, using plotters backend
 Benchmarking Small Dataset (100 events)/flatstream_default
 Benchmarking Small Dataset (100 events)/flatstream_default: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/flatstream_default: Collecting 100 samples in estimated 5.0021 s (1.6M iterations)
+Benchmarking Small Dataset (100 events)/flatstream_default: Collecting 100 samples in estimated 5.0095 s (1.3M iterations)
 Benchmarking Small Dataset (100 events)/flatstream_default: Analyzing
 Small Dataset (100 events)/flatstream_default
-                        time:   [3.1320 µs 3.1517 µs 3.1711 µs]
-                        change: [+0.4883% +1.0535% +1.6087%] (p = 0.00 < 0.05)
-                        Change within noise threshold.
-Found 2 outliers among 100 measurements (2.00%)
-  2 (2.00%) high mild
+                        time:   [3.6536 µs 3.6594 µs 3.6653 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Small Dataset (100 events)/flatstream_default_unbounded_read
+Benchmarking Small Dataset (100 events)/flatstream_default_unbounded_read: Warming up for 3.0000 s
+Benchmarking Small Dataset (100 events)/flatstream_default_unbounded_read: Collecting 100 samples in estimated 5.0178 s (1.3M iterations)
+Benchmarking Small Dataset (100 events)/flatstream_default_unbounded_read: Analyzing
+Small Dataset (100 events)/flatstream_default_unbounded_read
+                        time:   [3.6700 µs 3.6798 µs 3.6908 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  7 (7.00%) high mild
 Benchmarking Small Dataset (100 events)/flatstream_xxhash64
 Benchmarking Small Dataset (100 events)/flatstream_xxhash64: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/flatstream_xxhash64: Collecting 100 samples in estimated 5.0048 s (1.4M iterations)
+Benchmarking Small Dataset (100 events)/flatstream_xxhash64: Collecting 100 samples in estimated 5.0167 s (1.3M iterations)
 Benchmarking Small Dataset (100 events)/flatstream_xxhash64: Analyzing
 Small Dataset (100 events)/flatstream_xxhash64
-                        time:   [3.5372 µs 3.5492 µs 3.5614 µs]
-                        change: [-2.8877% -2.1826% -1.4727%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high severe
+                        time:   [3.9691 µs 3.9821 µs 3.9954 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  2 (2.00%) high severe
 Benchmarking Small Dataset (100 events)/flatstream_crc32
 Benchmarking Small Dataset (100 events)/flatstream_crc32: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/flatstream_crc32: Collecting 100 samples in estimated 5.0183 s (1.3M iterations)
+Benchmarking Small Dataset (100 events)/flatstream_crc32: Collecting 100 samples in estimated 5.0002 s (1.2M iterations)
 Benchmarking Small Dataset (100 events)/flatstream_crc32: Analyzing
 Small Dataset (100 events)/flatstream_crc32
-                        time:   [3.8534 µs 3.8699 µs 3.8872 µs]
-                        change: [-1.0344% -0.3614% +0.3089%] (p = 0.29 > 0.05)
-                        No change in performance detected.
+                        time:   [4.2536 µs 4.2676 µs 4.2851 µs]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
 Benchmarking Small Dataset (100 events)/flatstream_crc16
 Benchmarking Small Dataset (100 events)/flatstream_crc16: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/flatstream_crc16: Collecting 100 samples in estimated 5.0234 s (651k iterations)
+Benchmarking Small Dataset (100 events)/flatstream_crc16: Collecting 100 samples in estimated 5.0009 s (556k iterations)
 Benchmarking Small Dataset (100 events)/flatstream_crc16: Analyzing
 Small Dataset (100 events)/flatstream_crc16
-                        time:   [7.6732 µs 7.6902 µs 7.7069 µs]
-                        change: [-2.1762% -1.7338% -1.2947%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 5 outliers among 100 measurements (5.00%)
-  2 (2.00%) low mild
-  1 (1.00%) high mild
-  2 (2.00%) high severe
+                        time:   [8.9638 µs 8.9778 µs 8.9914 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  1 (1.00%) high severe
 Benchmarking Small Dataset (100 events)/flatstream_builder_reuse
 Benchmarking Small Dataset (100 events)/flatstream_builder_reuse: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/flatstream_builder_reuse: Collecting 100 samples in estimated 5.0118 s (1.6M iterations)
+Benchmarking Small Dataset (100 events)/flatstream_builder_reuse: Collecting 100 samples in estimated 5.0082 s (1.3M iterations)
 Benchmarking Small Dataset (100 events)/flatstream_builder_reuse: Analyzing
 Small Dataset (100 events)/flatstream_builder_reuse
-                        time:   [3.1207 µs 3.1364 µs 3.1507 µs]
-                        change: [-3.8161% -3.1147% -2.4263%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 3 outliers among 100 measurements (3.00%)
-  2 (2.00%) low mild
-  1 (1.00%) high mild
+                        time:   [3.8033 µs 3.8598 µs 3.9195 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
 Benchmarking Small Dataset (100 events)/bincode
 Benchmarking Small Dataset (100 events)/bincode: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/bincode: Collecting 100 samples in estimated 5.0029 s (1.4M iterations)
+Benchmarking Small Dataset (100 events)/bincode: Collecting 100 samples in estimated 5.0155 s (954k iterations)
 Benchmarking Small Dataset (100 events)/bincode: Analyzing
 Small Dataset (100 events)/bincode
-                        time:   [3.4631 µs 3.4751 µs 3.4870 µs]
-                        change: [+0.0905% +0.5803% +1.1824%] (p = 0.03 < 0.05)
-                        Change within noise threshold.
-Found 5 outliers among 100 measurements (5.00%)
-  3 (3.00%) low mild
-  2 (2.00%) high severe
+                        time:   [4.4449 µs 4.4659 µs 4.4859 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
 Benchmarking Small Dataset (100 events)/serde_json
 Benchmarking Small Dataset (100 events)/serde_json: Warming up for 3.0000 s
-Benchmarking Small Dataset (100 events)/serde_json: Collecting 100 samples in estimated 5.0650 s (343k iterations)
+Benchmarking Small Dataset (100 events)/serde_json: Collecting 100 samples in estimated 5.0258 s (338k iterations)
 Benchmarking Small Dataset (100 events)/serde_json: Analyzing
 Small Dataset (100 events)/serde_json
-                        time:   [14.672 µs 14.712 µs 14.751 µs]
-                        change: [+3.2213% +3.6202% +4.0386%] (p = 0.00 < 0.05)
-                        Performance has regressed.
+                        time:   [14.708 µs 14.738 µs 14.771 µs]
 Found 6 outliers among 100 measurements (6.00%)
-  3 (3.00%) low mild
-  3 (3.00%) high mild
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  4 (4.00%) high mild
 
-Benchmarking Large Dataset (~10MB)/flatstream_default
-Benchmarking Large Dataset (~10MB)/flatstream_default: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/flatstream_default: Collecting 100 samples in estimated 5.1039 s (1600 iterations)
-Benchmarking Large Dataset (~10MB)/flatstream_default: Analyzing
-Large Dataset (~10MB)/flatstream_default
-                        time:   [3.1516 ms 3.1865 ms 3.2216 ms]
-                        change: [+5.8159% +7.4232% +9.0213%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Benchmarking Large Dataset (~10MB)/flatstream_xxhash64
-Benchmarking Large Dataset (~10MB)/flatstream_xxhash64: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/flatstream_xxhash64: Collecting 100 samples in estimated 5.1130 s (1400 iterations)
-Benchmarking Large Dataset (~10MB)/flatstream_xxhash64: Analyzing
-Large Dataset (~10MB)/flatstream_xxhash64
-                        time:   [3.5578 ms 3.6044 ms 3.6523 ms]
-                        change: [+2.6512% +4.3284% +5.9934%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Benchmarking Large Dataset (~10MB)/flatstream_crc32
-Benchmarking Large Dataset (~10MB)/flatstream_crc32: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/flatstream_crc32: Collecting 100 samples in estimated 5.1485 s (1300 iterations)
-Benchmarking Large Dataset (~10MB)/flatstream_crc32: Analyzing
-Large Dataset (~10MB)/flatstream_crc32
-                        time:   [3.9339 ms 3.9777 ms 4.0223 ms]
-                        change: [+1.3411% +2.7717% +4.2292%] (p = 0.00 < 0.05)
-                        Performance has regressed.
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default: Collecting 100 samples in estimated 5.1747 s (1600 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_default
+                        time:   [3.2421 ms 3.2494 ms 3.2579 ms]
 Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high mild
-Benchmarking Large Dataset (~10MB)/flatstream_crc16
-Benchmarking Large Dataset (~10MB)/flatstream_crc16: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/flatstream_crc16: Collecting 100 samples in estimated 5.6288 s (700 iterations)
-Benchmarking Large Dataset (~10MB)/flatstream_crc16: Analyzing
-Large Dataset (~10MB)/flatstream_crc16
-                        time:   [7.9915 ms 8.0662 ms 8.1520 ms]
-                        change: [-3.3281% -2.2662% -1.1214%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 3 outliers among 100 measurements (3.00%)
-  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default_unbounded_read
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default_unbounded_read: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default_unbounded_read: Collecting 100 samples in estimated 5.2853 s (1600 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_default_unbounded_read: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_default_unbounded_read
+                        time:   [3.2912 ms 3.2991 ms 3.3070 ms]
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_xxhash64
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_xxhash64: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_xxhash64: Collecting 100 samples in estimated 5.0165 s (1400 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_xxhash64: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_xxhash64
+                        time:   [3.5681 ms 3.5773 ms 3.5870 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc32
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc32: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc32: Collecting 100 samples in estimated 5.2034 s (1300 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc32: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_crc32
+                        time:   [3.9681 ms 3.9766 ms 3.9855 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc16
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc16: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc16: Collecting 100 samples in estimated 5.7323 s (700 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_crc16: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_crc16
+                        time:   [8.1758 ms 8.1961 ms 8.2215 ms]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
   2 (2.00%) high severe
-Benchmarking Large Dataset (~10MB)/flatstream_builder_reuse
-Benchmarking Large Dataset (~10MB)/flatstream_builder_reuse: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/flatstream_builder_reuse: Collecting 100 samples in estimated 5.0106 s (1600 iterations)
-Benchmarking Large Dataset (~10MB)/flatstream_builder_reuse: Analyzing
-Large Dataset (~10MB)/flatstream_builder_reuse
-                        time:   [3.2891 ms 3.3111 ms 3.3343 ms]
-                        change: [+5.5057% +6.7899% +8.0550%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high severe
-Benchmarking Large Dataset (~10MB)/bincode
-Benchmarking Large Dataset (~10MB)/bincode: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/bincode: Collecting 100 samples in estimated 5.1159 s (1500 iterations)
-Benchmarking Large Dataset (~10MB)/bincode: Analyzing
-Large Dataset (~10MB)/bincode
-                        time:   [3.3794 ms 3.3867 ms 3.3944 ms]
-                        change: [+3.3117% +3.9343% +4.5127%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high severe
-Benchmarking Large Dataset (~10MB)/serde_json
-Benchmarking Large Dataset (~10MB)/serde_json: Warming up for 3.0000 s
-Benchmarking Large Dataset (~10MB)/serde_json: Collecting 100 samples in estimated 6.0045 s (400 iterations)
-Benchmarking Large Dataset (~10MB)/serde_json: Analyzing
-Large Dataset (~10MB)/serde_json
-                        time:   [14.772 ms 14.819 ms 14.867 ms]
-                        change: [+3.7969% +4.4358% +5.1155%] (p = 0.00 < 0.05)
-                        Performance has regressed.
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_builder_reuse
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_builder_reuse: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_builder_reuse: Collecting 100 samples in estimated 5.2779 s (1600 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/flatstream_builder_reuse: Analyzing
+Large Dataset (~2.4 MiB)/flatstream_builder_reuse
+                        time:   [3.2438 ms 3.2505 ms 3.2572 ms]
 Found 1 outliers among 100 measurements (1.00%)
   1 (1.00%) high mild
+Benchmarking Large Dataset (~2.4 MiB)/bincode
+Benchmarking Large Dataset (~2.4 MiB)/bincode: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/bincode: Collecting 100 samples in estimated 5.1761 s (1400 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/bincode: Analyzing
+Large Dataset (~2.4 MiB)/bincode
+                        time:   [3.6645 ms 3.6742 ms 3.6841 ms]
+Benchmarking Large Dataset (~2.4 MiB)/serde_json
+Benchmarking Large Dataset (~2.4 MiB)/serde_json: Warming up for 3.0000 s
+Benchmarking Large Dataset (~2.4 MiB)/serde_json: Collecting 100 samples in estimated 5.9123 s (400 iterations)
+Benchmarking Large Dataset (~2.4 MiB)/serde_json: Analyzing
+Large Dataset (~2.4 MiB)/serde_json
+                        time:   [14.564 ms 14.610 ms 14.659 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
 

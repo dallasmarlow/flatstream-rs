@@ -3,12 +3,12 @@ use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 use flatstream::{
     DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter, XxHash64,
 };
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 use std::io::Cursor;
 
 // ---
-// # Instruction-Count Suite (iai-callgrind)
+// # Instruction-Count Suite (Gungraun)
 //
 // Callgrind instruction counts for four END-TO-END micro-workloads: default
 // write/read and checksummed write/read over 100 telemetry frames. Unlike the
@@ -23,7 +23,7 @@ use std::io::Cursor;
 // changed," and isolating *which* loop changed is a follow-up (a framing-only
 // group split is planned).
 //
-// Requires valgrind (Linux) and a matching `iai-callgrind-runner`; run via
+// Requires valgrind (Linux) and a matching `gungraun-runner`; run via
 // scripts/instruction_counts.sh. Gated behind the `instruction_bench` feature
 // so plain `cargo bench` skips it. Stream/event construction for the read
 // benches runs outside the measured section via setup functions.

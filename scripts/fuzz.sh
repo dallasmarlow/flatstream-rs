@@ -4,9 +4,9 @@
 # Why: the deframer's parsing of the length header and checksum field is the
 # library's attack surface — a corrupt or hostile stream must never panic,
 # hang, or size an allocation past the frame bound. The two targets assert
-# exactly that (`fuzz/fuzz_targets/`); the checksummed target additionally
-# roundtrips every input through ChecksumFramer/Deframer and asserts
-# byte-identical recovery.
+# exactly that (`fuzz/fuzz_targets/`); the checksummed target exercises every
+# built-in checksum width and additionally roundtrips every input through the
+# matching ChecksumFramer/Deframer with byte-identical recovery.
 #
 # Manually invoked locally; there is no CI schedule.
 # Requires the Rust nightly toolchain + cargo-fuzz (one-time):
@@ -20,5 +20,7 @@ cd "$(dirname "$0")/.."
 
 SECONDS_PER_TARGET="${1:-300}"
 
-cargo +nightly fuzz run deframe_fuzzer -- -max_total_time="$SECONDS_PER_TARGET"
-cargo +nightly fuzz run deframe_checksum_fuzzer -- -max_total_time="$SECONDS_PER_TARGET"
+cargo +nightly fuzz run deframe_fuzzer -- \
+    -max_total_time="$SECONDS_PER_TARGET" -timeout=10
+cargo +nightly fuzz run deframe_checksum_fuzzer -- \
+    -max_total_time="$SECONDS_PER_TARGET" -timeout=10

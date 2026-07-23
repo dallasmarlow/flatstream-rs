@@ -51,6 +51,25 @@ fn write_io_error_propagates_with_kind() {
 }
 
 #[test]
+fn simple_write_io_error_propagates_with_kind() {
+    // Purpose: The internally managed builder path must preserve the same
+    // underlying I/O error kind as `write_finished`.
+    let failing_writer = FailingWriter {
+        written: 0,
+        fail_after: 10,
+    };
+    let mut writer = StreamWriter::new(failing_writer, DefaultFramer);
+    match writer
+        .write(&"This message will fail to write completely")
+        .unwrap_err()
+        .into_kind()
+    {
+        ErrorKind::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe),
+        other => panic!("wrong error type: {other:?}"),
+    }
+}
+
+#[test]
 fn short_reads_are_handled() {
     // Purpose: Reader should handle an underlying reader that returns very small chunks.
     // Build a valid default-framed message

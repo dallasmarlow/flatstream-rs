@@ -129,7 +129,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
     });
 
     // Benchmark 1b: flatstream-rs default framer with unbounded read path
-    // Measures upper bound for read throughput when skipping verification/zeroing.
+    // Isolates the default max-frame-length comparison. Both paths use the same
+    // high-water-mark buffer behavior and neither performs payload validation.
     group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
@@ -372,7 +373,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
     });
 
     // Benchmark 1b: flatstream-rs default framer with unbounded read path
-    // Upper-bound read throughput by skipping verification/zeroing.
+    // Isolates the default max-frame-length comparison. Both paths use the same
+    // high-water-mark buffer behavior and neither performs payload validation.
     group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();

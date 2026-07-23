@@ -93,6 +93,42 @@ fn default_bound_rejects_hostile_length_before_allocation() {
     }
 }
 
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+#[test]
+fn checksum_default_bound_rejects_hostile_length_before_allocation() {
+    use flatstream::checksum::Checksum;
+
+    fn check<C: Checksum>(checksum: C) {
+        // The checksummed reader consumes the fixed-size checksum field as part
+        // of its merged header, then must reject the hostile payload length
+        // before sizing the payload buffer.
+        let mut data = vec![0u8; 4 + C::SIZE];
+        data[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let mut reader =
+            StreamReader::new(std::io::Cursor::new(data), ChecksumDeframer::new(checksum));
+        let err = reader.read_message().unwrap_err();
+        match err.into_kind() {
+            ErrorKind::InvalidFrame {
+                declared_len,
+                limit,
+                ..
+            } => {
+                assert_eq!(declared_len, Some(u32::MAX as usize));
+                assert_eq!(limit, Some(DEFAULT_MAX_FRAME_LEN));
+            }
+            other => panic!("expected InvalidFrame, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "xxhash")]
+    check(XxHash64::new());
+    #[cfg(feature = "crc32")]
+    check(Crc32::new());
+    #[cfg(feature = "crc16")]
+    check(Crc16::new());
+}
+
 #[test]
 fn unbounded_deframer_accepts_over_default_limit() {
     // Purpose: `unbounded()` is the explicit opt-out — a frame larger than the

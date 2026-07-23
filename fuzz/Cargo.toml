@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = { version = "0.4" }
-flatstream = { path = "..", features = ["xxhash"] }
+flatstream = { path = "..", features = ["all_checksums"] }
 
 [profile.release]
 debug = 1

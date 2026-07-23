@@ -1,0 +1,153 @@
+   Compiling flatstream v0.2.7 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 1.44s
+     Running benches/simple_benchmarks.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/da80cad82dfdd3e7225c8ddb9a9cce1c/cargo-target/release/deps/simple_benchmarks-bf2baa3f535182db)
+Gnuplot not found, using plotters backend
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default: Collecting 100 samples in estimated 5.0167 s (1.5M iterations)
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default: Analyzing
+Simple Streams (Numeric)/write_read_cycle_100/flatstream_default
+                        time:   [3.4204 µs 3.4270 µs 3.4335 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_bounded
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_bounded: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_bounded: Collecting 100 samples in estimated 5.0025 s (1.4M iterations)
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_bounded: Analyzing
+Simple Streams (Numeric)/write_read_cycle_100/flatstream_bounded
+                        time:   [3.5874 µs 3.6026 µs 3.6236 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low severe
+  3 (3.00%) low mild
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default_unbounded_read
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default_unbounded_read: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default_unbounded_read: Collecting 100 samples in estimated 5.0147 s (1.5M iterations)
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/flatstream_default_unbounded_read: Analyzing
+Simple Streams (Numeric)/write_read_cycle_100/flatstream_default_unbounded_read
+                        time:   [3.3900 µs 3.3975 µs 3.4049 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/bincode
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/bincode: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/bincode: Collecting 100 samples in estimated 5.0175 s (1.2M iterations)
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/bincode: Analyzing
+Simple Streams (Numeric)/write_read_cycle_100/bincode
+                        time:   [4.3288 µs 4.3417 µs 4.3580 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/serde_json
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/serde_json: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/serde_json: Collecting 100 samples in estimated 5.0015 s (490k iterations)
+Benchmarking Simple Streams (Numeric)/write_read_cycle_100/serde_json: Analyzing
+Simple Streams (Numeric)/write_read_cycle_100/serde_json
+                        time:   [10.136 µs 10.195 µs 10.269 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default: Collecting 100 samples in estimated 5.0099 s (2.4M iterations)
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default: Analyzing
+Simple Streams (String16)/write_read_cycle_100/flatstream_default
+                        time:   [2.1100 µs 2.1178 µs 2.1272 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_bounded
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_bounded: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_bounded: Collecting 100 samples in estimated 5.0059 s (2.2M iterations)
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_bounded: Analyzing
+Simple Streams (String16)/write_read_cycle_100/flatstream_bounded
+                        time:   [2.2308 µs 2.2370 µs 2.2430 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default_unbounded_read
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default_unbounded_read: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default_unbounded_read: Collecting 100 samples in estimated 5.0082 s (2.4M iterations)
+Benchmarking Simple Streams (String16)/write_read_cycle_100/flatstream_default_unbounded_read: Analyzing
+Simple Streams (String16)/write_read_cycle_100/flatstream_default_unbounded_read
+                        time:   [2.1018 µs 2.1054 µs 2.1091 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Benchmarking Simple Streams (String16)/write_read_cycle_100/bincode
+Benchmarking Simple Streams (String16)/write_read_cycle_100/bincode: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/write_read_cycle_100/bincode: Collecting 100 samples in estimated 5.0058 s (747k iterations)
+Benchmarking Simple Streams (String16)/write_read_cycle_100/bincode: Analyzing
+Simple Streams (String16)/write_read_cycle_100/bincode
+                        time:   [6.7355 µs 6.7670 µs 6.8041 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking Simple Streams (String16)/write_read_cycle_100/serde_json
+Benchmarking Simple Streams (String16)/write_read_cycle_100/serde_json: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/write_read_cycle_100/serde_json: Collecting 100 samples in estimated 5.0467 s (540k iterations)
+Benchmarking Simple Streams (String16)/write_read_cycle_100/serde_json: Analyzing
+Simple Streams (String16)/write_read_cycle_100/serde_json
+                        time:   [9.2622 µs 9.2909 µs 9.3237 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking Simple Streams (Numeric)/read_only_100/default_deframer
+Benchmarking Simple Streams (Numeric)/read_only_100/default_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/read_only_100/default_deframer: Collecting 100 samples in estimated 5.0022 s (11M iterations)
+Benchmarking Simple Streams (Numeric)/read_only_100/default_deframer: Analyzing
+Simple Streams (Numeric)/read_only_100/default_deframer
+                        time:   [478.71 ns 480.12 ns 481.81 ns]
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (Numeric)/read_only_100/bounded_deframer
+Benchmarking Simple Streams (Numeric)/read_only_100/bounded_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/read_only_100/bounded_deframer: Collecting 100 samples in estimated 5.0016 s (10M iterations)
+Benchmarking Simple Streams (Numeric)/read_only_100/bounded_deframer: Analyzing
+Simple Streams (Numeric)/read_only_100/bounded_deframer
+                        time:   [474.70 ns 475.39 ns 476.13 ns]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking Simple Streams (Numeric)/read_only_100/unbounded_deframer
+Benchmarking Simple Streams (Numeric)/read_only_100/unbounded_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (Numeric)/read_only_100/unbounded_deframer: Collecting 100 samples in estimated 5.0004 s (10M iterations)
+Benchmarking Simple Streams (Numeric)/read_only_100/unbounded_deframer: Analyzing
+Simple Streams (Numeric)/read_only_100/unbounded_deframer
+                        time:   [476.48 ns 477.58 ns 478.95 ns]
+Found 12 outliers among 100 measurements (12.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+
+Benchmarking Simple Streams (String16)/read_only_100/default_deframer
+Benchmarking Simple Streams (String16)/read_only_100/default_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/read_only_100/default_deframer: Collecting 100 samples in estimated 5.0018 s (10.0M iterations)
+Benchmarking Simple Streams (String16)/read_only_100/default_deframer: Analyzing
+Simple Streams (String16)/read_only_100/default_deframer
+                        time:   [492.90 ns 494.14 ns 495.82 ns]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (String16)/read_only_100/bounded_deframer
+Benchmarking Simple Streams (String16)/read_only_100/bounded_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/read_only_100/bounded_deframer: Collecting 100 samples in estimated 5.0016 s (10.0M iterations)
+Benchmarking Simple Streams (String16)/read_only_100/bounded_deframer: Analyzing
+Simple Streams (String16)/read_only_100/bounded_deframer
+                        time:   [495.48 ns 496.41 ns 497.38 ns]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking Simple Streams (String16)/read_only_100/unbounded_deframer
+Benchmarking Simple Streams (String16)/read_only_100/unbounded_deframer: Warming up for 3.0000 s
+Benchmarking Simple Streams (String16)/read_only_100/unbounded_deframer: Collecting 100 samples in estimated 5.0005 s (10.0M iterations)
+Benchmarking Simple Streams (String16)/read_only_100/unbounded_deframer: Analyzing
+Simple Streams (String16)/read_only_100/unbounded_deframer
+                        time:   [495.48 ns 496.32 ns 497.16 ns]
+

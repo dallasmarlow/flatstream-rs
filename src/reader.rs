@@ -310,10 +310,13 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
 
     /// Processes all messages using unchecked FlatBuffer root access.
     ///
-    /// Safety: Only use when the payloads are guaranteed to be valid for the
-    /// expected `T::Root`. This skips FlatBuffers verification and relies on trusted data.
+    /// # Safety
+    ///
+    /// Every payload in the stream must be a valid FlatBuffer for the expected
+    /// `T::Root`. This method skips FlatBuffers verification; invalid bytes may
+    /// cause panics or undefined behavior when followed by generated accessors.
     #[cfg(feature = "unsafe_typed")]
-    pub fn process_typed_unchecked<T, F>(&mut self, mut processor: F) -> Result<()>
+    pub unsafe fn process_typed_unchecked<T, F>(&mut self, mut processor: F) -> Result<()>
     where
         for<'p> T: StreamDeserialize<'p>,
         for<'p> F: FnMut(

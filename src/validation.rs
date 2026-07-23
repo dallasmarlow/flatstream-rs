@@ -206,7 +206,7 @@ impl Validator for CompositeValidator {
 /// A type-specific validator created for a concrete FlatBuffer root type.
 ///
 /// This validator verifies that the payload contains a valid FlatBuffer whose
-/// root type is a specific generated table `T` (e.g., `TelemetryEvent`).
+/// root type is a specific generated table (e.g., `TelemetryEvent`).
 pub struct TypedValidator {
     opts: flatbuffers::VerifierOptions,
     verify: fn(
@@ -217,37 +217,18 @@ pub struct TypedValidator {
 }
 
 impl TypedValidator {
-    /// Creates a typed validator for the given root type `T` with default limits.
-    pub fn for_type<T>() -> Self
-    where
-        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
-    {
-        Self {
-            opts: flatbuffers::VerifierOptions::default(),
-            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
-            name_static: std::any::type_name::<T>(),
-        }
-    }
-
-    /// Creates a typed validator with custom limits for root type `T`.
-    pub fn with_limits_for_type<T>(max_depth: usize, max_tables: usize) -> Self
-    where
-        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
-    {
-        let opts = flatbuffers::VerifierOptions {
-            max_depth,
-            max_tables,
-            ..Default::default()
-        };
-        Self {
-            opts,
-            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
-            name_static: std::any::type_name::<T>(),
-        }
-    }
-
     /// Creates a typed validator from a schema-specific verification function
     /// and a static name for diagnostics.
+    ///
+    /// Generated FlatBuffers table roots borrow from the payload, so pass a
+    /// non-capturing closure around the generated `root_as_*_with_opts`
+    /// function:
+    ///
+    /// ```ignore
+    /// TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
+    ///     telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
+    /// })
+    /// ```
     pub fn from_verify_named(
         name: &'static str,
         verify: fn(
@@ -318,7 +299,8 @@ impl TypedValidator {
 
 // Intentionally no Default implementation for `TypedValidator` to prevent
 // accidental construction of a no-op typed validator. Use the explicit
-// constructors: `for_type`, `with_limits_for_type`, `from_verify_named`, etc.
+// schema-verifier constructors: `from_verify_named`,
+// `with_limits_from_verify_named`, etc.
 
 impl Validator for TypedValidator {
     #[inline]

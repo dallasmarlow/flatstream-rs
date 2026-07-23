@@ -1,25 +1,29 @@
 #![no_main]
+use flatstream::checksum::Checksum;
 use flatstream::{
-    ChecksumDeframer, ChecksumFramer, Framer, StreamReader, XxHash64, DEFAULT_MAX_FRAME_LEN,
+    ChecksumDeframer, ChecksumFramer, Crc16, Crc32, Framer, StreamReader, XxHash64,
+    DEFAULT_MAX_FRAME_LEN,
 };
 use libfuzzer_sys::fuzz_target;
 use std::io::Cursor;
 
-// Two invariants per input: arbitrary bytes must never panic the checksummed
-// deframer, and any payload framed with the matching checksum must read back
-// byte-identical.
-fuzz_target!(|data: &[u8]| {
-    let deframer = ChecksumDeframer::new(XxHash64::new());
+fn exercise_checksum<C: Checksum + Copy>(data: &[u8], checksum: C) {
+    // Arbitrary bytes must never panic, and any yielded payload must respect
+    // the configured allocation bound.
+    let deframer = ChecksumDeframer::new(checksum);
     let mut reader = StreamReader::new(Cursor::new(data), deframer);
-    let _ = reader.process_all(|_| Ok(()));
+    let _ = reader.process_all(|payload| {
+        assert!(payload.len() <= DEFAULT_MAX_FRAME_LEN);
+        Ok(())
+    });
 
+    // Any payload framed with the matching algorithm must read back exactly.
     if data.len() <= DEFAULT_MAX_FRAME_LEN {
         let mut framed = Vec::new();
-        ChecksumFramer::new(XxHash64::new())
+        ChecksumFramer::new(checksum)
             .frame_and_write(&mut framed, data)
             .unwrap();
-        let mut reader =
-            StreamReader::new(Cursor::new(&framed), ChecksumDeframer::new(XxHash64::new()));
+        let mut reader = StreamReader::new(Cursor::new(&framed), ChecksumDeframer::new(checksum));
         let mut seen = false;
         reader
             .process_all(|payload| {
@@ -30,4 +34,11 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
         assert!(seen);
     }
+}
+
+// Exercise every built-in checksum width and implementation for each input.
+fuzz_target!(|data: &[u8]| {
+    exercise_checksum(data, XxHash64::new());
+    exercise_checksum(data, Crc32::new());
+    exercise_checksum(data, Crc16::new());
 });
