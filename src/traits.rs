@@ -9,8 +9,11 @@ use flatbuffers::FlatBufferBuilder;
 /// how they should be written into a FlatBuffers message. The library's
 /// `StreamWriter` will then handle the framing and I/O.
 ///
-/// The trait is generic over the allocator type to ensure zero-copy,
-/// high-performance serialization without any temporary allocations or data copying.
+/// The trait is generic over the allocator type so callers can bring their own
+/// builder/allocator strategy; the library itself adds no temporary allocation
+/// or payload copy between `finished_data()` and the `Write` target. (What the
+/// serialization logic allocates inside the builder is the implementor's
+/// domain.)
 pub trait StreamSerialize {
     /// Serializes the object using the provided FlatBuffer builder.
     ///
@@ -56,8 +59,9 @@ impl StreamSerialize for String {
 /// goal is to improve the reading path without introducing any performance
 /// overhead, fully preserving the library's zero-copy principles.
 ///
-/// Implementations of this trait are responsible for calling `flatbuffers::get_root`
-/// and handling any FlatBuffer-specific verification.
+/// Implementations of this trait are responsible for calling `flatbuffers::root`
+/// (or an unverified accessor where that trade-off is deliberate) and handling
+/// any FlatBuffer-specific verification.
 pub trait StreamDeserialize<'a>: Sized {
     /// The associated type `Root` will be the generated FlatBuffer accessor struct
     /// (e.g., `MyEvent<'a>`). This type must implement `flatbuffers::Follow<'a>`
@@ -68,13 +72,13 @@ pub trait StreamDeserialize<'a>: Sized {
     ///
     /// This method is responsible for performing the FlatBuffer verification
     /// and returning the strongly-typed root accessor object. It should leverage
-    /// `flatbuffers::get_root` internally.
+    /// `flatbuffers::root` internally.
     ///
     /// # Arguments
     /// * `payload` - A borrowed slice of bytes containing the FlatBuffer message.
     ///
     /// # Returns
     /// * `Ok(Self::Root)` - The successfully accessed FlatBuffer root object.
-    /// * `Err(flatstream::Error::FlatbuffersError)` - If the FlatBuffer is invalid.
+    /// * `Err(e)` with `ErrorKind::FlatbuffersError` - If the FlatBuffer is invalid.
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root>;
 }

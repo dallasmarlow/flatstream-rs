@@ -1,0 +1,59 @@
+   Compiling flatstream v0.2.7 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 0.77s
+     Running benches/memory_policy_benchmarks.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/da80cad82dfdd3e7225c8ddb9a9cce1c/cargo-target/release/deps/memory_policy_benchmarks-f73ce56bb1d7770b)
+Gnuplot not found, using plotters backend
+Benchmarking policy_overhead/no_policy
+Benchmarking policy_overhead/no_policy: Warming up for 3.0000 s
+Benchmarking policy_overhead/no_policy: Collecting 100 samples in estimated 5.0000 s (589M iterations)
+Benchmarking policy_overhead/no_policy: Analyzing
+policy_overhead/no_policy
+                        time:   [8.4524 ns 8.4665 ns 8.4808 ns]
+                        thrpt:  [117.91 Melem/s 118.11 Melem/s 118.31 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Benchmarking policy_overhead/noop_policy
+Benchmarking policy_overhead/noop_policy: Warming up for 3.0000 s
+Benchmarking policy_overhead/noop_policy: Collecting 100 samples in estimated 5.0000 s (533M iterations)
+Benchmarking policy_overhead/noop_policy: Analyzing
+policy_overhead/noop_policy
+                        time:   [9.4002 ns 9.4133 ns 9.4269 ns]
+                        thrpt:  [106.08 Melem/s 106.23 Melem/s 106.38 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) low mild
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking policy_overhead/adaptive_policy_inactive
+Benchmarking policy_overhead/adaptive_policy_inactive: Warming up for 3.0000 s
+Benchmarking policy_overhead/adaptive_policy_inactive: Collecting 100 samples in estimated 5.0000 s (460M iterations)
+Benchmarking policy_overhead/adaptive_policy_inactive: Analyzing
+policy_overhead/adaptive_policy_inactive
+                        time:   [10.846 ns 10.871 ns 10.904 ns]
+                        thrpt:  [91.713 Melem/s 91.990 Melem/s 92.201 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking oscillation_reclamation/oscillation_noop_unbounded
+Benchmarking oscillation_reclamation/oscillation_noop_unbounded: Warming up for 3.0000 s
+Benchmarking oscillation_reclamation/oscillation_noop_unbounded: Collecting 100 samples in estimated 6.8007 s (15k iterations)
+Benchmarking oscillation_reclamation/oscillation_noop_unbounded: Analyzing
+oscillation_reclamation/oscillation_noop_unbounded
+                        time:   [449.07 µs 450.43 µs 452.03 µs]
+Found 13 outliers among 100 measurements (13.00%)
+  7 (7.00%) high mild
+  6 (6.00%) high severe
+Benchmarking oscillation_reclamation/oscillation_adaptive_reclaim
+Benchmarking oscillation_reclamation/oscillation_adaptive_reclaim: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.0s, enable flat sampling, or reduce sample count to 60.
+Benchmarking oscillation_reclamation/oscillation_adaptive_reclaim: Collecting 100 samples in estimated 6.0034 s (5050 iterations)
+Benchmarking oscillation_reclamation/oscillation_adaptive_reclaim: Analyzing
+oscillation_reclamation/oscillation_adaptive_reclaim
+                        time:   [1.1712 ms 1.1736 ms 1.1763 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+

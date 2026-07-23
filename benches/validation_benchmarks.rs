@@ -127,7 +127,7 @@ fn bench_read_group(group_name: &str, framed: &[u8], c: &mut Criterion) {
         b.iter_batched(
             || (Cursor::new(framed.to_vec()), Vec::new()),
             |(mut r, mut buf)| {
-                let d = DefaultDeframer;
+                let d = DefaultDeframer::new();
                 black_box(&d)
                     .read_and_deframe(&mut r, black_box(&mut buf))
                     .unwrap()
@@ -138,7 +138,7 @@ fn bench_read_group(group_name: &str, framed: &[u8], c: &mut Criterion) {
     });
 
     group.bench_function("ValidatingDeframer + NoValidator", |b| {
-        let d = DefaultDeframer.with_validator(NoValidator);
+        let d = DefaultDeframer::new().with_validator(NoValidator);
         b.iter_batched(
             || (Cursor::new(framed.to_vec()), Vec::new()),
             |(mut r, mut buf)| {
@@ -152,7 +152,7 @@ fn bench_read_group(group_name: &str, framed: &[u8], c: &mut Criterion) {
     });
 
     group.bench_function("ValidatingDeframer + TableRootValidator", |b| {
-        let d = DefaultDeframer.with_validator(TableRootValidator::new());
+        let d = DefaultDeframer::new().with_validator(TableRootValidator::new());
         b.iter_batched(
             || (Cursor::new(framed.to_vec()), Vec::new()),
             |(mut r, mut buf)| {
@@ -186,7 +186,7 @@ fn bench_validation_read_path(c: &mut Criterion) {
     let strict = TableRootValidator::with_limits(2, 1);
     let mut strict_read = c.benchmark_group("Validation: Read Path (telemetry, strict limits)");
     strict_read.bench_function("ValidatingDeframer + TableRootValidator (limits)", |b| {
-        let d = DefaultDeframer.with_validator(strict);
+        let d = DefaultDeframer::new().with_validator(strict);
         b.iter_batched(
             || (Cursor::new(telemetry.clone()), Vec::new()),
             |(mut r, mut buf)| {
@@ -247,7 +247,7 @@ fn bench_typed_validation_read_path(c: &mut Criterion) {
         b.iter_batched(
             || (Cursor::new(framed.clone()), Vec::new()),
             |(mut r, mut buf)| {
-                let d = DefaultDeframer;
+                let d = DefaultDeframer::new();
                 black_box(&d)
                     .read_and_deframe(&mut r, black_box(&mut buf))
                     .unwrap()
@@ -258,7 +258,7 @@ fn bench_typed_validation_read_path(c: &mut Criterion) {
     });
 
     group.bench_function("ValidatingDeframer + TypedValidator", |b| {
-        let d = DefaultDeframer.with_validator(typed_validator());
+        let d = DefaultDeframer::new().with_validator(typed_validator());
         b.iter_batched(
             || (Cursor::new(framed.clone()), Vec::new()),
             |(mut r, mut buf)| {

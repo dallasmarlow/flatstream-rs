@@ -46,14 +46,14 @@ fn main() -> Result<()> {
 
     // 2) Read: NoValidator (zero-cost)
     process_with(
-        DefaultDeframer.with_validator(NoValidator),
+        DefaultDeframer::new().with_validator(NoValidator),
         &framed,
         "NoValidator",
     )?;
 
     // 3) Read: TableRootValidator (type-agnostic table-root verification)
     process_with(
-        DefaultDeframer.with_validator(TableRootValidator::new()),
+        DefaultDeframer::new().with_validator(TableRootValidator::new()),
         &framed,
         "TableRootValidator",
     )?;
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             .add(SizeValidator::new(1, 1024 * 1024))
             .add(TableRootValidator::new());
         process_with(
-            DefaultDeframer.with_validator(validator),
+            DefaultDeframer::new().with_validator(validator),
             &framed,
             "CompositeValidator (Size + TableRoot)",
         )?;
@@ -78,12 +78,12 @@ fn main() -> Result<()> {
 
         let err = StreamReader::new(
             BufReader::new(Cursor::new(&invalid_framed)),
-            DefaultDeframer.with_validator(TableRootValidator::new()),
+            DefaultDeframer::new().with_validator(TableRootValidator::new()),
         )
         .process_all(|_| Ok(()))
         .unwrap_err();
-        match err {
-            Error::ValidationFailed { reason, .. } => {
+        match err.into_kind() {
+            ErrorKind::ValidationFailed { reason, .. } => {
                 println!(
                     "TableRootValidator: expected failure observed: {}",
                     reason.trim()
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
     // If you have generated code, pass its root verifier function:
     // let typed = TypedValidator::from_verify(|opts, payload| my_schema::root_as_event_with_opts(opts, payload).map(|_| ()));
     // let reader = BufReader::new(Cursor::new(&framed));
-    // let mut stream = StreamReader::new(reader, DefaultDeframer.with_validator(typed));
+    // let mut stream = StreamReader::new(reader, DefaultDeframer::new().with_validator(typed));
     // stream.process_all(|_| Ok(()))?;
 
     // 7) Write path with validation: ValidatingFramer validates before write

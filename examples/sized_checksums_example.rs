@@ -1,399 +1,156 @@
-// Example purpose: How to choose CRC16/CRC32/XXHash64 based on message size and
-// integrity requirements; shows framing/deframing with each and expected header sizes.
-//! Example demonstrating sized checksums for different message types.
-//!
-//! This example shows how to use different checksum sizes based on message characteristics:
-//! - CRC16 (2 bytes) for small, high-frequency messages
-//! - CRC32 (4 bytes) for medium-sized messages
-//! - XXHash64 (8 bytes) for large, critical messages
+// Example purpose: Choosing a checksum width by payload size and integrity
+// requirements — with the wire format proven from observed bytes, not asserted
+// in prose. For each enabled algorithm this example writes frames of genuinely
+// different sizes (16 B / 1 KiB / 64 KiB), derives the per-frame overhead from
+// the actual output length, and asserts it equals `4 + Checksum::SIZE` exactly.
+// It ends by corrupting a payload byte and proving detection surfaces as
+// `ErrorKind::ChecksumMismatch`.
+//
+// Rule of thumb the numbers make concrete: overhead matters only relative to
+// payload size — and it is the whole header (length + checksum), not the
+// checksum alone. The printed percentages divide by the *measured FlatBuffers
+// payload* bytes (application blob + builder overhead: root offset + vector
+// length), not by the logical blob size — on the smallest frames the header
+// is a double-digit percentage, on 64 KiB batches it rounds to ~0%. So small,
+// lossy-tolerant frames earn narrow checksums, large or critical frames take
+// the strongest one, and the *stream* (not the frame) fixes the choice.
+// (Two earlier drafts of this comment quoted wrong percentages — checksum-only
+// first, then blob-relative; the measured output kept correcting the prose,
+// which is the point of this example.)
 
-use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
-use std::fs::File;
-#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
-use std::io::BufReader;
-use std::io::BufWriter;
+use std::io::Cursor;
 
-// Import framing types when checksum features are enabled
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+use flatstream::checksum::Checksum;
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
 
-// Define different message types for demonstration
-#[derive(Debug)]
-#[allow(dead_code)]
-struct SmallMessage {
-    sensor_id: u8,
-    value: f32,
-}
+/// Serializes a payload of exactly `bytes` length (a FlatBuffers byte vector
+/// costs a small constant on top; we assert on *deltas*, so it cancels out).
+struct Blob(Vec<u8>);
 
-#[derive(Debug)]
-#[allow(dead_code)]
-struct MediumMessage {
-    device_id: String,
-    timestamp: u64,
-    readings: Vec<f64>,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct LargeMessage {
-    batch_id: String,
-    metadata: String,
-    data_points: Vec<f64>,
-    flags: Vec<bool>,
-}
-
-impl StreamSerialize for SmallMessage {
+impl StreamSerialize for Blob {
     fn serialize<A: flatbuffers::Allocator>(
         &self,
-        builder: &mut FlatBufferBuilder<A>,
+        builder: &mut flatbuffers::FlatBufferBuilder<A>,
     ) -> Result<()> {
-        let data = format!("{}", self.sensor_id);
-        let data_str = builder.create_string(&data);
-        builder.finish(data_str, None);
+        let v = builder.create_vector(&self.0);
+        builder.finish(v, None);
         Ok(())
     }
 }
 
-impl StreamSerialize for MediumMessage {
-    fn serialize<A: flatbuffers::Allocator>(
-        &self,
-        builder: &mut FlatBufferBuilder<A>,
-    ) -> Result<()> {
-        let data = format!("{},{},{}", self.device_id, self.timestamp, self.readings[0]);
-        let data_str = builder.create_string(&data);
-        builder.finish(data_str, None);
-        Ok(())
-    }
-}
+const SIZES: &[(&str, usize)] = &[
+    ("small control frame", 16),
+    ("medium batch", 1024),
+    ("large batch", 64 * 1024),
+];
 
-impl StreamSerialize for LargeMessage {
-    fn serialize<A: flatbuffers::Allocator>(
-        &self,
-        builder: &mut FlatBufferBuilder<A>,
-    ) -> Result<()> {
-        let data = format!(
-            "{},{},{},{},{},{}",
-            self.batch_id,
-            self.metadata,
-            self.data_points[0],
-            self.flags[0],
-            self.data_points[1],
-            self.flags[1]
-        );
-        let data_str = builder.create_string(&data);
-        builder.finish(data_str, None);
-        Ok(())
+/// Writes one frame of each size with `framer`, reads them back with
+/// `deframer`, and returns the measured per-frame header overhead (identical
+/// for every frame: wire_len − payload_len).
+#[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
+fn measure_overhead<C: Checksum + Copy>(alg: C, name: &str) -> Result<usize> {
+    let mut wire = Vec::new();
+    // Exact FlatBuffers payload length per frame — note this is larger than
+    // the application blob (the builder adds a root offset + vector length),
+    // so overhead percentages below divide by *payload* bytes, not blob bytes.
+    let mut payload_lens = Vec::new();
+    {
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), ChecksumFramer::new(alg));
+        for &(_, size) in SIZES {
+            let mut b = flatbuffers::FlatBufferBuilder::new();
+            Blob(vec![0xA5; size]).serialize(&mut b)?;
+            payload_lens.push(b.finished_data().len());
+            writer.write(&Blob(vec![0xA5; size]))?;
+        }
+        writer.flush()?;
     }
+
+    // Read back and verify integrity end to end.
+    let mut reader = StreamReader::new(Cursor::new(&wire), ChecksumDeframer::new(alg));
+    let mut frames = 0;
+    reader.process_all(|_| {
+        frames += 1;
+        Ok(())
+    })?;
+    assert_eq!(frames, SIZES.len());
+
+    let payload_total: usize = payload_lens.iter().sum();
+    let overhead_per_frame = (wire.len() - payload_total) / SIZES.len();
+    let smallest = payload_lens[0] as f64;
+    let largest = payload_lens[payload_lens.len() - 1] as f64;
+    println!(
+        "{name:<10} SIZE={}  measured overhead: {overhead_per_frame} B/frame  \
+         (smallest payload, {} B: {:.1}%; largest, {} B: {:.3}%)",
+        C::SIZE,
+        payload_lens[0],
+        overhead_per_frame as f64 * 100.0 / smallest,
+        payload_lens[payload_lens.len() - 1],
+        overhead_per_frame as f64 * 100.0 / largest,
+    );
+
+    // The wire format, proven from observed bytes: [4-byte len | SIZE | payload].
+    assert_eq!(overhead_per_frame, 4 + C::SIZE);
+    Ok(overhead_per_frame)
 }
 
 fn main() -> Result<()> {
-    println!("=== Sized Checksums Example (v2.5) ===\n");
+    println!("=== Sized Checksums: overhead measured, format proven ===\n");
 
-    // Create test messages
-    let small_messages = vec![
-        SmallMessage {
-            sensor_id: 1,
-            value: 23.5,
-        },
-        SmallMessage {
-            sensor_id: 2,
-            value: 24.1,
-        },
-        SmallMessage {
-            sensor_id: 3,
-            value: 22.8,
-        },
-    ];
-
-    let medium_messages = vec![
-        MediumMessage {
-            device_id: "device-alpha".to_string(),
-            timestamp: 1234567890,
-            readings: vec![1.1, 2.2, 3.3],
-        },
-        MediumMessage {
-            device_id: "device-beta".to_string(),
-            timestamp: 1234567891,
-            readings: vec![4.4, 5.5, 6.6],
-        },
-    ];
-
-    let large_messages = vec![
-        LargeMessage {
-            batch_id: "batch-001".to_string(),
-            metadata: "High-precision sensor data".to_string(),
-            data_points: (0..1000).map(|i| i as f64 * 0.1).collect(),
-            flags: (0..100).map(|i| i % 2 == 0).collect(),
-        },
-        LargeMessage {
-            batch_id: "batch-002".to_string(),
-            metadata: "Calibration data".to_string(),
-            data_points: (0..2000).map(|i| i as f64 * 0.05).collect(),
-            flags: (0..200).map(|i| i % 3 == 0).collect(),
-        },
-    ];
-
-    // Demonstrate different checksum sizes
-    demonstrate_checksum_sizes(&small_messages, &medium_messages, &large_messages)?;
-
-    // Show performance comparison
-    demonstrate_performance_comparison()?;
-
-    println!("✅ Sized checksums example completed successfully!");
-    Ok(())
-}
-
-fn demonstrate_checksum_sizes(
-    #[allow(unused_variables)] small_messages: &[SmallMessage],
-    #[allow(unused_variables)] medium_messages: &[MediumMessage],
-    #[allow(unused_variables)] large_messages: &[LargeMessage],
-) -> Result<()> {
-    println!("1. Checksum Size Comparison...");
-
-    // Small messages with CRC16 (2 bytes)
-    #[cfg(feature = "crc16")]
+    // Baseline without a checksum: overhead is exactly the 4-byte length.
     {
-        println!("   Small messages with CRC16 (2 bytes):");
-        let file = File::create("small_messages_crc16.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = Crc16::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
-        let mut builder = FlatBufferBuilder::new();
-
-        for message in small_messages {
-            builder.reset();
-            message.serialize(&mut builder)?;
-            writer.write_finished(&mut builder)?;
+        let mut wire = Vec::new();
+        let mut payload_total = 0usize;
+        {
+            let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+            for &(_, size) in SIZES {
+                let mut b = flatbuffers::FlatBufferBuilder::new();
+                Blob(vec![0xA5; size]).serialize(&mut b)?;
+                payload_total += b.finished_data().len();
+                writer.write(&Blob(vec![0xA5; size]))?;
+            }
+            writer.flush()?;
         }
-        writer.flush()?;
-
-        let file_size = std::fs::metadata("small_messages_crc16.bin")?.len();
-        println!("     File size: {file_size} bytes");
-        println!(
-            "     Overhead: ~{} bytes per message",
-            file_size / small_messages.len() as u64
-        );
+        let overhead = (wire.len() - payload_total) / SIZES.len();
+        println!("no checksum  measured overhead: {overhead} B/frame");
+        assert_eq!(overhead, 4);
     }
-
-    // Medium messages with CRC32 (4 bytes)
-    #[cfg(feature = "crc32")]
-    {
-        println!("   Medium messages with CRC32 (4 bytes):");
-        let file = File::create("medium_messages_crc32.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = Crc32::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
-        let mut builder = FlatBufferBuilder::new();
-
-        for message in medium_messages {
-            builder.reset();
-            message.serialize(&mut builder)?;
-            writer.write_finished(&mut builder)?;
-        }
-        writer.flush()?;
-
-        let file_size = std::fs::metadata("medium_messages_crc32.bin")?.len();
-        println!("     File size: {file_size} bytes");
-        println!(
-            "     Overhead: ~{} bytes per message",
-            file_size / medium_messages.len() as u64
-        );
-    }
-
-    // Large messages with XXHash64 (8 bytes)
-    #[cfg(feature = "xxhash")]
-    {
-        println!("   Large messages with XXHash64 (8 bytes):");
-        let file = File::create("large_messages_xxhash64.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
-        let mut builder = FlatBufferBuilder::new();
-
-        for message in large_messages {
-            builder.reset();
-            message.serialize(&mut builder)?;
-            writer.write_finished(&mut builder)?;
-        }
-        writer.flush()?;
-
-        let file_size = std::fs::metadata("large_messages_xxhash64.bin")?.len();
-        println!("     File size: {file_size} bytes");
-        println!(
-            "     Overhead: ~{} bytes per message",
-            file_size / large_messages.len() as u64
-        );
-    }
-
-    // Read back using processor API
-    println!("\n   Reading messages back with processor API:");
 
     #[cfg(feature = "crc16")]
-    {
-        let file = File::open("small_messages_crc16.bin")?;
-        let reader = BufReader::new(file);
-        let checksum = Crc16::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(reader, deframer);
-
-        let mut count = 0;
-        reader.process_all(|payload| {
-            count += 1;
-            if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Small message {count}: {message}");
-            }
-            Ok(())
-        })?;
-        println!("     ✓ Read {count} small messages with CRC16 verification");
-    }
-
+    measure_overhead(Crc16::new(), "CRC16")?;
     #[cfg(feature = "crc32")]
-    {
-        let file = File::open("medium_messages_crc32.bin")?;
-        let reader = BufReader::new(file);
-        let checksum = Crc32::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(reader, deframer);
+    measure_overhead(Crc32::new(), "CRC32")?;
+    #[cfg(feature = "xxhash")]
+    measure_overhead(XxHash64::new(), "XXH3-64")?;
 
-        let mut count = 0;
-        reader.process_all(|payload| {
-            count += 1;
-            if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Medium message {count}: {message}");
-            }
-            Ok(())
-        })?;
-        println!("     ✓ Read {count} medium messages with CRC32 verification");
-    }
-
+    // Corruption detection: flip one payload byte, read must fail with
+    // ChecksumMismatch — integrity is the reason the wider field is worth it.
     #[cfg(feature = "xxhash")]
     {
-        let file = File::open("large_messages_xxhash64.bin")?;
-        let reader = BufReader::new(file);
-        let checksum = XxHash64::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(reader, deframer);
-
-        let mut count = 0;
-        reader.process_all(|payload| {
-            count += 1;
-            if let Ok(message) = std::str::from_utf8(payload) {
-                println!("     Large message {count}: {message}");
-            }
-            Ok(())
-        })?;
-        println!("     ✓ Read {count} large messages with XXHash64 verification");
-    }
-
-    println!("   ✓ Checksum size comparison completed\n");
-    Ok(())
-}
-
-fn demonstrate_performance_comparison() -> Result<()> {
-    println!("2. Performance Comparison...");
-    println!("   Note: This measures write performance including checksum computation\n");
-
-    let num_messages = 10_000;
-    let test_message = "performance-test-message";
-
-    // External builder management
-    #[allow(unused_variables)]
-    let mut builder = FlatBufferBuilder::new();
-
-    // No checksum (baseline)
-    {
-        let file = File::create("performance_no_checksum.bin")?;
-        let writer = BufWriter::new(file);
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(writer, framer);
-
-        let start = std::time::Instant::now();
-        for _ in 0..num_messages {
-            builder.reset();
-            let data = builder.create_string(test_message);
-            builder.finish(data, None);
-            writer.write_finished(&mut builder)?;
-        }
+        let mut wire = Vec::new();
+        let mut writer =
+            StreamWriter::new(Cursor::new(&mut wire), ChecksumFramer::new(XxHash64::new()));
+        writer.write(&Blob(vec![0xA5; 1024]))?;
         writer.flush()?;
-        let duration = start.elapsed();
+        drop(writer);
 
-        let file_size = std::fs::metadata("performance_no_checksum.bin")?.len();
-        println!("   No checksum: {duration:?}, {file_size} bytes");
+        let last = wire.len() - 1;
+        wire[last] ^= 0x01; // corrupt the final payload byte
+
+        let mut reader =
+            StreamReader::new(Cursor::new(&wire), ChecksumDeframer::new(XxHash64::new()));
+        let err = reader.read_message().unwrap_err();
+        assert!(matches!(err.kind(), ErrorKind::ChecksumMismatch { .. }));
+        println!("\ncorrupted one byte → {err}");
     }
 
-    // CRC16 performance
-    #[cfg(feature = "crc16")]
-    {
-        let file = File::create("performance_crc16.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = Crc16::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
+    #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
+    println!("(enable checksum features to see the per-algorithm measurements:");
+    #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
+    println!(" cargo run --example sized_checksums_example --features all_checksums)");
 
-        let start = std::time::Instant::now();
-        for _ in 0..num_messages {
-            builder.reset();
-            let data = builder.create_string(test_message);
-            builder.finish(data, None);
-            writer.write_finished(&mut builder)?;
-        }
-        writer.flush()?;
-        let duration = start.elapsed();
-
-        let file_size = std::fs::metadata("performance_crc16.bin")?.len();
-        println!("   CRC16:      {duration:?}, {file_size} bytes");
-    }
-
-    // CRC32 performance
-    #[cfg(feature = "crc32")]
-    {
-        let file = File::create("performance_crc32.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = Crc32::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
-
-        let start = std::time::Instant::now();
-        for _ in 0..num_messages {
-            builder.reset();
-            let data = builder.create_string(test_message);
-            builder.finish(data, None);
-            writer.write_finished(&mut builder)?;
-        }
-        writer.flush()?;
-        let duration = start.elapsed();
-
-        let file_size = std::fs::metadata("performance_crc32.bin")?.len();
-        println!("   CRC32:      {duration:?}, {file_size} bytes");
-    }
-
-    // XXHash64 performance
-    #[cfg(feature = "xxhash")]
-    {
-        let file = File::create("performance_xxhash64.bin")?;
-        let writer = BufWriter::new(file);
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(writer, framer);
-
-        let start = std::time::Instant::now();
-        for _ in 0..num_messages {
-            builder.reset();
-            let data = builder.create_string(test_message);
-            builder.finish(data, None);
-            writer.write_finished(&mut builder)?;
-        }
-        writer.flush()?;
-        let duration = start.elapsed();
-
-        let file_size = std::fs::metadata("performance_xxhash64.bin")?.len();
-        println!("   XXHash64:   {duration:?}, {file_size} bytes");
-    }
-
-    println!("   ✓ Performance comparison completed\n");
+    println!("\nall assertions passed — wire format proven from observed bytes ✓");
     Ok(())
 }

@@ -112,7 +112,7 @@ fn test_adaptive_policy_resets_builder() {
     // 4. Verify data integrity
     // Read back all messages and verify contents
     let mut reader =
-        flatstream::StreamReader::new(Cursor::new(buffer), flatstream::DefaultDeframer);
+        flatstream::StreamReader::new(Cursor::new(buffer), flatstream::DefaultDeframer::new());
     let mut messages = reader.messages();
 
     // Msg 1: Large
@@ -171,7 +171,7 @@ fn test_reader_policy_reclaims_buffer_without_corrupting_stream() {
     };
 
     let mut reader =
-        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer)
+        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer::new())
             .with_memory_policy(policy);
 
     let mut seen = Vec::new();
@@ -227,7 +227,7 @@ fn test_writer_policy_with_custom_builder_factory() {
 
     // All four messages survive intact.
     let mut reader =
-        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer);
+        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer::new());
     let mut count = 0;
     reader
         .process_all(|payload| {
@@ -243,7 +243,7 @@ fn test_writer_policy_with_custom_builder_factory() {
 fn test_reader_with_policy_is_send() {
     fn assert_send<T: Send>(_: &T) {}
     let reader =
-        flatstream::StreamReader::new(Cursor::new(Vec::new()), flatstream::DefaultDeframer)
+        flatstream::StreamReader::new(Cursor::new(Vec::new()), flatstream::DefaultDeframer::new())
             .with_memory_policy(AdaptiveWatermarkPolicy::default());
     assert_send(&reader);
 }
@@ -301,7 +301,7 @@ fn test_write_finished_ignores_installed_policy() {
 
     // The stream is intact.
     let mut reader =
-        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer);
+        flatstream::StreamReader::new(Cursor::new(&buffer), flatstream::DefaultDeframer::new());
     let mut count = 0;
     reader
         .process_all(|p| {

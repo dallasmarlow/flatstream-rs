@@ -19,8 +19,8 @@ fn bounded_observed_framer_works() {
 
     // Invalid payload
     let mut sink = Vec::new();
-    let result = framer.frame_and_write(&mut sink, &[0u8; 200]);
-    assert!(matches!(result, Err(Error::InvalidFrame { .. })));
+    let err = framer.frame_and_write(&mut sink, &[0u8; 200]).unwrap_err();
+    assert!(matches!(err.kind(), ErrorKind::InvalidFrame { .. }));
 }
 
 #[test]
@@ -28,10 +28,12 @@ fn bounded_observed_deframer_works() {
     // Purpose: The fluent-composed deframer (bounded + observed) should enforce the
     // max length and invoke the observer with a payload that fits the bound.
     let seen = Cell::new(false);
-    let deframer = DefaultDeframer.bounded(128).observed(|p| {
-        seen.set(true);
-        assert!(p.len() <= 128);
-    });
+    let deframer = DefaultDeframer::new()
+        .with_max_frame_len(128)
+        .observed(|p| {
+            seen.set(true);
+            assert!(p.len() <= 128);
+        });
 
     // Frame a valid payload
     let mut out = Vec::new();

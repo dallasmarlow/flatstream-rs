@@ -98,7 +98,7 @@ fn bench_stream_msgs_only(
 
     group.bench_function("read_full_stream", |b| {
         b.iter(|| {
-            let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+            let mut r = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
             r.process_all(|payload| {
                 if is_message {
                     let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
@@ -194,7 +194,7 @@ fn benchmark_lobster(c: &mut Criterion) {
         group.throughput(Throughput::Elements(msgs + obs));
         group.bench_function("read_full_stream_pair", |b| {
             b.iter(|| {
-                let mut r1 = StreamReader::new(Cursor::new(&data_m), DefaultDeframer);
+                let mut r1 = StreamReader::new(Cursor::new(&data_m), DefaultDeframer::new());
                 r1.process_all(|payload| {
                     let ev = lobster_generated::message::root_as_message_event(payload).unwrap();
                     black_box(ev);
@@ -202,7 +202,7 @@ fn benchmark_lobster(c: &mut Criterion) {
                 })
                 .unwrap();
 
-                let mut r2 = StreamReader::new(Cursor::new(&data_o), DefaultDeframer);
+                let mut r2 = StreamReader::new(Cursor::new(&data_o), DefaultDeframer::new());
                 r2.process_all(|payload| {
                     let ob =
                         lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();

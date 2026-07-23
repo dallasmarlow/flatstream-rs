@@ -1,3 +1,13 @@
+> **SUPERSEDED (2026-07-10).** This document is preserved as a historical
+> record only and MUST NOT be used as a design reference. Its body predates
+> the v0.2.7 merged-header write and contains claims that are wrong against
+> the current library: atomicity guarantees vectored I/O does not provide,
+> fabricated syscall cost figures, segmented-FlatBuffer memory assumptions,
+> nonexistent APIs, and parallel `VectoredFramer` types that will not be
+> built. The corrected design direction: two `IoSlice`s inside the existing
+> framers — a call-count/sink-staging optimization, not a copy optimization —
+> adopted only if measured neutral-or-better per sink type; no new framer types.
+
 # V3.0 "Vectored I/O" Design Document
 
 ## Executive Summary

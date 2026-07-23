@@ -1,5 +1,14 @@
 # Zero-Copy Analysis: flatstream-rs
 
+> **SUPERSEDED 2026-07-10.** Preserved as the v2.6 design argument, not as
+> current documentation. Its “perfect/fully zero-copy” language predates the
+> v0.2.7 terminology audit and conflates borrowed payload access with end-to-end
+> copy-free I/O; its dispatch discussion also predates the current measured
+> policy/validator exceptions. The authoritative current contract is the README
+> TL;DR scoping note: generic `Read` copies each frame
+> once into a reusable buffer, warmed processing adds no second payload copy or
+> allocation, and true borrowed-source reading is a planned slice/mmap path.
+
 ## Overview
 
 The entire purpose of FlatBuffers is zero-copy deserialization - once data is serialized, it can be read directly without parsing or unpacking. This document analyzes how `flatstream-rs` maintains this zero-copy principle throughout its evolution.

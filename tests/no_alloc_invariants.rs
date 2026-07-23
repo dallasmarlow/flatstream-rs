@@ -1,4 +1,7 @@
-#![cfg_attr(miri, ignore)]
+// Under Miri the custom global allocator's counting is meaningless (and slow);
+// compile the whole file out. (`#![cfg_attr(miri, ignore)]` — the previous
+// spelling — was a no-op: `ignore` is a test-fn attribute, not a crate one.)
+#![cfg(not(miri))]
 // Zero-allocation invariant tests using a counting global allocator.
 //
 // Harness note (fixed 2026-07-04): the previous version gated counting behind a
@@ -61,14 +64,14 @@ fn zero_alloc_in_process_all_and_messages() {
     }
 
     // process_all path: warm to high-water, rewind, measure a full pass.
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer);
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
     r.process_all(|_| Ok(())).unwrap();
     r.get_mut().set_position(0);
     let n = count_allocs(|| r.process_all(|_| Ok(())).unwrap());
     assert_eq!(n, 0, "steady-state process_all should not allocate");
 
     // messages() path
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer);
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
     r.process_all(|_| Ok(())).unwrap();
     r.get_mut().set_position(0);
     let n = count_allocs(|| {
@@ -99,19 +102,19 @@ fn zero_alloc_in_typed_paths() {
     impl<'a> StreamDeserialize<'a> for StrRoot {
         type Root = &'a str;
         fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-            flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+            flatbuffers::root::<&'a str>(payload).map_err(Error::from)
         }
     }
 
     // process_typed
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer);
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
     r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap();
     r.get_mut().set_position(0);
     let n = count_allocs(|| r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap());
     assert_eq!(n, 0, "steady-state process_typed should not allocate");
 
     // typed_messages iterator
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer);
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
     r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap();
     r.get_mut().set_position(0);
     let n = count_allocs(|| {
@@ -152,7 +155,7 @@ fn zero_alloc_steady_state_with_policy_installed() {
             sw.write(&"payload").unwrap();
         }
     }
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer).with_memory_policy(
+    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new()).with_memory_policy(
         policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX).with_baseline(1),
     );
     r.process_all(|_| Ok(())).unwrap();

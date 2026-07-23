@@ -1,4 +1,4 @@
-use flatstream::framing::{DeframerExt, FramerExt};
+use flatstream::framing::FramerExt;
 use flatstream::*;
 use proptest::prelude::*;
 use std::io::Cursor;
@@ -9,7 +9,7 @@ struct StrRoot;
 impl<'a> StreamDeserialize<'a> for StrRoot {
     type Root = &'a str;
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     }
 }
 
@@ -23,8 +23,8 @@ proptest! {
         // deframe
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&out);
-        DefaultDeframer.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
-        prop_assert_eq!(&buf, data);
+        let n = DefaultDeframer::new().read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
+        prop_assert_eq!(&buf[..n], &data[..]);
     }
 }
 
@@ -33,10 +33,10 @@ const MAX_PROPTEST_PAYLOAD_SIZE: usize = 2048;
 proptest! {
     #[test]
     fn bounded_roundtrip(ref data in proptest::collection::vec(any::<u8>(), 0..MAX_PROPTEST_PAYLOAD_SIZE)) {
-        // Purpose: Under a shared bound, fluent bounded framer/deframer roundtrip arbitrary data.
+        // Purpose: Under a shared bound, bounded framer/deframer roundtrip arbitrary data.
         let limit = MAX_PROPTEST_PAYLOAD_SIZE + 1;
         let framer = DefaultFramer.bounded(limit);
-        let deframer = DefaultDeframer.bounded(limit);
+        let deframer = DefaultDeframer::new().with_max_frame_len(limit);
 
         // frame
         let mut out = Vec::new();
@@ -45,8 +45,8 @@ proptest! {
         // deframe
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&out);
-        deframer.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
-        prop_assert_eq!(&buf, data);
+        let n = deframer.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
+        prop_assert_eq!(&buf[..n], &data[..]);
     }
 
     #[cfg(feature="crc32")]
@@ -61,8 +61,8 @@ proptest! {
 
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&out);
-        deframer.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
-        prop_assert_eq!(&buf, data);
+        let n = deframer.read_and_deframe(&mut cur, &mut buf).unwrap().unwrap();
+        prop_assert_eq!(&buf[..n], &data[..]);
     }
 }
 
@@ -79,7 +79,7 @@ proptest! {
         DefaultFramer.frame_and_write(&mut out, builder.finished_data()).unwrap();
 
         // deframe and typed process
-        let mut reader = StreamReader::new(Cursor::new(&out), DefaultDeframer);
+        let mut reader = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
         let mut seen = None;
         reader.process_typed::<StrRoot, _>(|root| { seen = Some(root.to_string()); Ok(()) }).unwrap();
         prop_assert_eq!(seen.as_deref(), Some(&s[..]));

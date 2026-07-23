@@ -1,8 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::framing::{
-    BoundedDeframer, BoundedFramer, DeframerExt, FramerExt, ObserverDeframer, ObserverFramer,
-};
+use flatstream::framing::{BoundedFramer, FramerExt, ObserverDeframer, ObserverFramer};
 use flatstream::Framer;
 use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader};
 use std::cell::Cell;
@@ -15,7 +13,8 @@ use tempfile::NamedTempFile;
 // # Adapter Micro-benchmarks Overview
 //
 // This file measures the overhead and behavior of adapter layers:
-// - BoundedFramer/BoundedDeframer: enforce payload/frame size limits (under/over limit)
+// - BoundedFramer (write) and the deframers' max_frame_len bound (read):
+//   payload/frame size limits (under/over limit, default vs explicit bound)
 // - ObserverFramer/ObserverDeframer: attach non-mutating hooks for metrics/logging
 // - Reader capacity and size sweeps: effects of buffer capacity on reallocations/zeroing
 // - File I/O adapter usage: measuring with buffered file handles and realistic durations
@@ -80,7 +79,7 @@ fn bench_bounded_read(c: &mut Criterion) {
 
     group.bench_function("baseline_default", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer::new());
             reader
                 .process_all(|p| {
                     black_box(p);
@@ -92,20 +91,7 @@ fn bench_bounded_read(c: &mut Criterion) {
 
     group.bench_function("bounded_under_limit_explicit", |b| {
         b.iter(|| {
-            let deframer = BoundedDeframer::new(DefaultDeframer, 1 << 20);
-            let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
-            reader
-                .process_all(|p| {
-                    black_box(p);
-                    Ok(())
-                })
-                .unwrap()
-        })
-    });
-
-    group.bench_function("bounded_under_limit_fluent", |b| {
-        b.iter(|| {
-            let deframer = DefaultDeframer.bounded(1 << 20);
+            let deframer = DefaultDeframer::new().with_max_frame_len(1 << 20);
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
             reader
                 .process_all(|p| {
@@ -120,7 +106,7 @@ fn bench_bounded_read(c: &mut Criterion) {
     let over_bytes = bytes.clone();
     group.bench_function("bounded_over_limit_error", |b| {
         b.iter(|| {
-            let deframer = BoundedDeframer::new(DefaultDeframer, 16);
+            let deframer = DefaultDeframer::new().with_max_frame_len(16);
             let mut reader = StreamReader::new(Cursor::new(&over_bytes), deframer);
             let _ = reader.process_all(|_| Ok(()));
         })
@@ -153,7 +139,7 @@ fn bench_observer_write_read(c: &mut Criterion) {
 
     group.bench_function("read_baseline", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer::new());
             reader
                 .process_all(|p| {
                     black_box(p);
@@ -167,7 +153,7 @@ fn bench_observer_write_read(c: &mut Criterion) {
         let msgs = Cell::new(0usize);
         b.iter(|| {
             let deframer =
-                ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| msgs.set(msgs.get() + 1));
+                ObserverDeframer::new(DefaultDeframer::new(), |_p: &[u8]| msgs.set(msgs.get() + 1));
             let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
             reader
                 .process_all(|p| {
@@ -190,7 +176,7 @@ fn bench_reader_capacity(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(cap), &cap, |b, &cap| {
             b.iter(|| {
                 let mut reader =
-                    StreamReader::with_capacity(Cursor::new(&bytes), DefaultDeframer, cap);
+                    StreamReader::with_capacity(Cursor::new(&bytes), DefaultDeframer::new(), cap);
                 reader
                     .process_all(|p| {
                         black_box(p);
@@ -240,7 +226,7 @@ fn bench_bounded_read_sizes(c: &mut Criterion) {
             &bytes,
             |b, data| {
                 b.iter(|| {
-                    let mut reader = StreamReader::new(Cursor::new(data), DefaultDeframer);
+                    let mut reader = StreamReader::new(Cursor::new(data), DefaultDeframer::new());
                     reader
                         .process_all(|p| {
                             black_box(p);
@@ -256,7 +242,7 @@ fn bench_bounded_read_sizes(c: &mut Criterion) {
             &bytes,
             |b, data| {
                 b.iter(|| {
-                    let deframer = DefaultDeframer.bounded(1 << 30);
+                    let deframer = DefaultDeframer::new().with_max_frame_len(1 << 30);
                     let mut reader = StreamReader::new(Cursor::new(data), deframer);
                     reader
                         .process_all(|p| {
@@ -307,7 +293,7 @@ fn bench_file_io_adapters(c: &mut Criterion) {
             let tmp = NamedTempFile::new().unwrap();
             std::fs::write(tmp.path(), &data).unwrap();
             let file = std::fs::File::open(tmp.path()).unwrap();
-            let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
+            let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer::new());
             reader
                 .process_all(|p| {
                     black_box(p);
@@ -322,7 +308,7 @@ fn bench_file_io_adapters(c: &mut Criterion) {
             let tmp = NamedTempFile::new().unwrap();
             std::fs::write(tmp.path(), &data).unwrap();
             let file = std::fs::File::open(tmp.path()).unwrap();
-            let deframer = DefaultDeframer.bounded(1 << 30);
+            let deframer = DefaultDeframer::new().with_max_frame_len(1 << 30);
             let mut reader = StreamReader::new(BufReader::new(file), deframer);
             reader
                 .process_all(|p| {

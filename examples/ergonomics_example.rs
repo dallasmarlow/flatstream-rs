@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
     // Reader ergonomics
     let reader = Cursor::new(stream_writer.into_inner().into_inner());
-    let deframer = DefaultDeframer;
+    let deframer = DefaultDeframer::new();
     let mut stream_reader = StreamReader::with_capacity(reader, deframer, 1024);
     assert!(stream_reader.buffer_capacity() >= 1024);
 

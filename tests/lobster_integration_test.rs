@@ -80,7 +80,7 @@ fn test_lobster_message_stream_reads() -> flatstream::Result<()> {
             continue;
         }
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
-        let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
+        let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer::new());
         let mut count = 0usize;
         reader.process_all(|payload| {
             let _ev = lobster_generated::message::root_as_message_event(payload).unwrap();
@@ -115,7 +115,7 @@ fn test_lobster_orderbook_stream_reads() -> flatstream::Result<()> {
             continue;
         }
         let file = File::open(&p).unwrap_or_else(|_| panic!("missing file: {}", p.display()));
-        let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer);
+        let mut reader = StreamReader::new(BufReader::new(file), DefaultDeframer::new());
         let mut count = 0usize;
         reader.process_all(|payload| {
             let _snap = lobster_generated::orderbook::root_as_order_book_snapshot(payload).unwrap();

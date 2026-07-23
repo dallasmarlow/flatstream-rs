@@ -18,7 +18,8 @@ fn table_driven_basic_cycles() {
 
     for (_name, sizes) in cases.iter() {
         let msgs = h.gen_mixed_messages(sizes);
-        // write
+        // write, capturing the exact payload bytes each frame must reproduce
+        let mut expected: Vec<Vec<u8>> = Vec::new();
         {
             let mut w = h.writer(DefaultFramer);
             let mut b = FlatBufferBuilder::new();
@@ -26,33 +27,34 @@ fn table_driven_basic_cycles() {
                 b.reset();
                 let s = b.create_string(m);
                 b.finish(s, None);
+                expected.push(b.finished_data().to_vec());
                 w.write_finished(&mut b).unwrap();
             }
             w.flush().unwrap();
         }
         // read via process_all
         {
-            let mut r = h.reader(DefaultDeframer);
+            let mut r = h.reader(DefaultDeframer::new());
             let mut count = 0;
             r.process_all(|p| {
-                assert!(!p.is_empty() || msgs.is_empty());
+                assert_eq!(p, &expected[count][..]);
                 count += 1;
                 Ok(())
             })
             .unwrap();
-            assert_eq!(count, msgs.len());
+            assert_eq!(count, expected.len());
         }
 
         // read via messages() expert API
         {
-            let mut r = h.reader(DefaultDeframer);
+            let mut r = h.reader(DefaultDeframer::new());
             let mut count = 0usize;
             let mut it = r.messages();
             while let Some(p) = it.next().unwrap() {
-                assert!(!p.is_empty() || msgs.is_empty());
+                assert_eq!(p, &expected[count][..]);
                 count += 1;
             }
-            assert_eq!(count, msgs.len());
+            assert_eq!(count, expected.len());
         }
     }
 }

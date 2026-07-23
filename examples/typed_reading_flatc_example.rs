@@ -30,7 +30,7 @@ struct TelemetryEventRoot;
 impl<'a> StreamDeserialize<'a> for TelemetryEventRoot {
     type Root = TelemetryEvent<'a>;
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<TelemetryEvent<'a>>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<TelemetryEvent<'a>>(payload).map_err(Error::from)
     }
 }
 
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
     }
 
     // Read with typed API
-    let mut reader = StreamReader::new(Cursor::new(&storage), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&storage), DefaultDeframer::new());
     let mut seen = 0u64;
     reader.process_typed::<TelemetryEventRoot, _>(|event| {
         assert!(event.message().unwrap().starts_with("event-"));
@@ -64,5 +64,6 @@ fn main() -> Result<()> {
         Ok(())
     })?;
     assert_eq!(seen, 3);
+    println!("typed_reading_flatc_example: 3 generated-schema events round-tripped ✓");
     Ok(())
 }
