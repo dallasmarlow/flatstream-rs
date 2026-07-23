@@ -1419,11 +1419,11 @@ v2.7 introduces a first-class validation layer that complements checksums and fr
   - `NoValidator`: zero-cost, inlined
   - `SizeValidator`: fast min/max byte checks
   - `TableRootValidator`: type-agnostic FlatBuffers structural verification (`Verifier::visit_table(..)`), enforcing limits without schema knowledge
-  - `TypedValidator`: schema-aware via function pointer to generated `root_with_opts` (object-safe constructors like `for_type::<T>()` and `from_verify(..)`)
+  - `TypedValidator`: schema-aware via function pointer to a generated `root_as_*_with_opts` verifier (constructors `from_verify(..)` / `from_verify_named(..)`)
   - `CompositeValidator`: AND-composes multiple validators with short-circuiting
-- Errors: New `Error::ValidationFailed { validator: &'static str, reason: String }` with clear diagnostics.
+- Errors: New `ErrorKind::ValidationFailed { validator: &'static str, reason: Cow<'static, str> }` (matched via `Error::kind()`) with clear diagnostics; static reasons stay borrowed and copy-free.
 - Fluent API: `FramerExt::with_validator(..)` and `DeframerExt::with_validator(..)` mirror existing composition patterns.
-- Performance: `NoValidator` compiles away; `StructuralValidator` adds a small constant overhead (~2 ns in micro-benchmarks). Validation is allocation-free and zero-copy.
+- Performance: `NoValidator` compiles away; `TableRootValidator` adds a small constant overhead (~2 ns in micro-benchmarks). Successful validation adds no payload copy or allocation (a failure allocates its diagnostic reason).
 
 Design rationale:
 - Preserves architectural principles established in v2 (orthogonal traits, adapters, zero-cost abstractions).
@@ -1432,5 +1432,5 @@ Design rationale:
 
 Migration and usage:
 - Backward compatible: existing pipelines work unchanged; validation is opt-in.
-- Recommended read path from untrusted sources: `DefaultDeframer.bounded(max).with_validator(StructuralValidator::new())`.
+- Recommended read path from untrusted sources: `DefaultDeframer::new().with_max_frame_len(max).with_validator(TableRootValidator::new())` (the deframers default to the wire format's ~4 GiB ceiling; the explicit bound is the untrusted-input limit).
 - Benchmarks added to demonstrate near-zero cost for `NoValidator` and small, predictable overhead for structural checks.

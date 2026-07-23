@@ -3,21 +3,67 @@
 use crate::error::{Error, Result};
 
 /// A trait for checksum algorithms.
+///
+/// The on-wire width is the associated `SIZE` constant, so the width dispatch
+/// in the framing layer constant-folds by construction and a nonstandard
+/// width can never silently widen to 8 bytes. Serialization is centralized in
+/// [`write_bytes`](Self::write_bytes)/[`read_bytes`](Self::read_bytes) —
+/// pure over byte slices, little-endian, byte-exact for any `SIZE ≤ 8`
+/// (I/O stays in the deframer, where the error handling lives).
 pub trait Checksum {
-    /// Returns the size in bytes of the checksum value.
-    fn size(&self) -> usize;
+    /// Width in bytes of the checksum field on the wire. Must be ≤ 8: values
+    /// travel as the low `SIZE` little-endian bytes of the `u64` this trait
+    /// works in (enforced at compile time where framers are constructed).
+    const SIZE: usize;
 
     /// Calculates the checksum for the given payload.
     fn calculate(&self, payload: &[u8]) -> u64;
 
     /// Verifies the checksum. Returns `Ok(())` if it matches.
+    ///
+    /// The comparison is modulo the wire width: only the low `SIZE` bytes
+    /// travel, so a `calculate` wider than `SIZE` (legal for custom
+    /// implementations) must not fail verification against its own truncated
+    /// wire form. For the built-ins the mask is the identity and folds away.
     fn verify(&self, expected: u64, payload: &[u8]) -> Result<()> {
         let calculated = self.calculate(payload);
-        if calculated == expected {
+        let mask = width_mask(Self::SIZE);
+        if calculated & mask == expected & mask {
             Ok(())
         } else {
-            Err(Error::checksum_mismatch(expected, calculated))
+            Err(Error::checksum_mismatch(expected & mask, calculated & mask))
         }
+    }
+
+    /// Serializes `value` into its exact on-wire form: the low `SIZE` bytes,
+    /// little-endian, staged in `out`. Returns the wire bytes.
+    #[inline]
+    fn write_bytes<'a>(&self, value: u64, out: &'a mut [u8; 8]) -> &'a [u8] {
+        out.copy_from_slice(&value.to_le_bytes());
+        &out[..Self::SIZE]
+    }
+
+    /// Parses the `SIZE`-byte little-endian wire field back into a `u64`.
+    /// `bytes` must hold at least `SIZE` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes` contains fewer than [`SIZE`](Self::SIZE) bytes.
+    /// Deframers should first read the exact checksum width from the source.
+    #[inline]
+    fn read_bytes(&self, bytes: &[u8]) -> u64 {
+        let mut buf = [0u8; 8];
+        buf[..Self::SIZE].copy_from_slice(&bytes[..Self::SIZE]);
+        u64::from_le_bytes(buf)
+    }
+}
+
+/// The value mask a `size`-byte wire field can carry: low `8 * size` bits.
+const fn width_mask(size: usize) -> u64 {
+    if size >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (8 * size)) - 1
     }
 }
 
@@ -35,16 +81,22 @@ impl XxHash64 {
 
 #[cfg(feature = "xxhash")]
 impl Checksum for XxHash64 {
-    fn size(&self) -> usize {
-        8 // XXH3 produces a 64-bit (8-byte) hash
-    }
+    /// XXH3 produces a 64-bit (8-byte) hash.
+    const SIZE: usize = 8;
 
     fn calculate(&self, payload: &[u8]) -> u64 {
         xxhash_rust::xxh3::xxh3_64(payload)
     }
 }
 
-/// Provides an implementation of the CRC32c (Castagnoli) checksum algorithm.
+/// Provides an implementation of the CRC-32 (ISO-HDLC/IEEE, the zlib
+/// polynomial) checksum algorithm, as computed by `crc32fast`.
+///
+/// NOT CRC-32C (Castagnoli). An earlier doc comment misnamed this; the
+/// implementation — and therefore the wire format — has always been
+/// ISO-HDLC (`"123456789"` → `0xCBF43926`), and the known-answer test below
+/// pins it. If Castagnoli (hardware `crc32c` instructions) is ever wanted,
+/// it must be a new algorithm, not a silent swap: the bytes differ.
 #[cfg(feature = "crc32")]
 #[derive(Default, Clone, Copy)]
 pub struct Crc32;
@@ -58,9 +110,8 @@ impl Crc32 {
 
 #[cfg(feature = "crc32")]
 impl Checksum for Crc32 {
-    fn size(&self) -> usize {
-        4 // CRC32 produces a 32-bit (4-byte) hash
-    }
+    /// CRC32 produces a 32-bit (4-byte) hash.
+    const SIZE: usize = 4;
 
     fn calculate(&self, payload: &[u8]) -> u64 {
         // crc32fast returns a u32, so we cast it to u64 for trait compatibility.
@@ -68,8 +119,11 @@ impl Checksum for Crc32 {
     }
 }
 
-/// Provides an implementation of the CRC16 (CCITT) checksum algorithm.
-/// Ideal for extremely small packets where every byte counts.
+/// Provides an implementation of the CRC-16/XMODEM checksum algorithm
+/// (polynomial 0x1021, init 0x0000; `"123456789"` → `0x31C3`, pinned by the
+/// known-answer test). Note: this is the XMODEM variant, not CRC-16/CCITT-FALSE
+/// (init 0xFFFF, KAT 0x29B1) — the two share a polynomial and are often
+/// conflated. Ideal for extremely small packets where every byte counts.
 #[cfg(feature = "crc16")]
 #[derive(Default, Clone, Copy)]
 pub struct Crc16;
@@ -83,9 +137,8 @@ impl Crc16 {
 
 #[cfg(feature = "crc16")]
 impl Checksum for Crc16 {
-    fn size(&self) -> usize {
-        2 // CRC16 produces a 16-bit (2-byte) hash
-    }
+    /// CRC16 produces a 16-bit (2-byte) hash.
+    const SIZE: usize = 2;
 
     fn calculate(&self, payload: &[u8]) -> u64 {
         // crc16 returns a u16, so we cast it to u64 for trait compatibility.
@@ -105,9 +158,8 @@ impl NoChecksum {
 }
 
 impl Checksum for NoChecksum {
-    fn size(&self) -> usize {
-        0 // No checksum bytes are written
-    }
+    /// No checksum bytes are written.
+    const SIZE: usize = 0;
 
     fn calculate(&self, _payload: &[u8]) -> u64 {
         0
@@ -163,7 +215,7 @@ mod tests {
         assert_ne!(result, 0);
         assert!(checksum.verify(result, payload).is_ok());
         assert!(checksum.verify(result + 1, payload).is_err());
-        assert_eq!(checksum.size(), 4);
+        assert_eq!(Crc32::SIZE, 4);
     }
 
     #[cfg(feature = "crc16")]
@@ -175,30 +227,113 @@ mod tests {
         assert_ne!(result, 0);
         assert!(checksum.verify(result, payload).is_ok());
         assert!(checksum.verify(result + 1, payload).is_err());
-        assert_eq!(checksum.size(), 2);
+        assert_eq!(Crc16::SIZE, 2);
     }
 
     #[test]
     fn test_checksum_sizes() {
-        let no_checksum = NoChecksum::new();
-        assert_eq!(no_checksum.size(), 0);
+        assert_eq!(NoChecksum::SIZE, 0);
 
         #[cfg(feature = "xxhash")]
-        {
-            let xxhash = XxHash64::new();
-            assert_eq!(xxhash.size(), 8);
-        }
+        assert_eq!(XxHash64::SIZE, 8);
 
         #[cfg(feature = "crc32")]
-        {
-            let crc32 = Crc32::new();
-            assert_eq!(crc32.size(), 4);
-        }
+        assert_eq!(Crc32::SIZE, 4);
 
         #[cfg(feature = "crc16")]
-        {
-            let crc16 = Crc16::new();
-            assert_eq!(crc16.size(), 2);
+        assert_eq!(Crc16::SIZE, 2);
+    }
+
+    #[test]
+    fn known_answer_vectors() {
+        // Standard KAT input "123456789" — pins each algorithm's identity so a
+        // dependency swap or misnamed algorithm can never change the wire
+        // bytes silently. These values are normative for WIRE_FORMAT_SPEC.md §5.
+        #[cfg(feature = "crc32")]
+        assert_eq!(
+            Crc32::new().calculate(b"123456789"),
+            0xCBF4_3926,
+            "CRC-32/ISO-HDLC (NOT Castagnoli, which is 0xE3069283)"
+        );
+        #[cfg(feature = "crc16")]
+        assert_eq!(
+            Crc16::new().calculate(b"123456789"),
+            0x31C3,
+            "CRC-16/XMODEM"
+        );
+        #[cfg(feature = "xxhash")]
+        assert_eq!(
+            XxHash64::new().calculate(b"123456789"),
+            0x72DC_B18B_67A1_7DFF,
+            "XXH3-64"
+        );
+    }
+
+    #[test]
+    fn test_write_read_bytes_roundtrip_and_width() {
+        // The default helpers must be byte-exact for every width: exactly
+        // SIZE little-endian bytes on the wire, value recovered modulo the
+        // width's truncation.
+        fn roundtrip<C: Checksum>(alg: &C, value: u64) {
+            let mut out = [0u8; 8];
+            let wire = alg.write_bytes(value, &mut out);
+            assert_eq!(wire.len(), C::SIZE);
+            assert_eq!(wire, &value.to_le_bytes()[..C::SIZE]);
+            let mask = if C::SIZE == 8 {
+                u64::MAX
+            } else {
+                (1u64 << (8 * C::SIZE as u32)) - 1
+            };
+            assert_eq!(alg.read_bytes(wire), value & mask);
         }
+
+        let probe = 0x1122_3344_5566_7788u64;
+        roundtrip(&NoChecksum::new(), probe);
+        #[cfg(feature = "xxhash")]
+        roundtrip(&XxHash64::new(), probe);
+        #[cfg(feature = "crc32")]
+        roundtrip(&Crc32::new(), probe);
+        #[cfg(feature = "crc16")]
+        roundtrip(&Crc16::new(), probe);
+    }
+
+    #[test]
+    fn mismatch_diagnostics_are_limited_to_wire_width() {
+        struct Sum8;
+
+        impl Checksum for Sum8 {
+            const SIZE: usize = 1;
+
+            fn calculate(&self, payload: &[u8]) -> u64 {
+                0xABCD_0000 | payload.iter().map(|&byte| byte as u64).sum::<u64>()
+            }
+        }
+
+        let err = Sum8.verify(0, b"abc").unwrap_err();
+        match err.into_kind() {
+            crate::error::ErrorKind::ChecksumMismatch {
+                expected,
+                calculated,
+            } => {
+                assert_eq!(expected, 0);
+                assert_eq!(calculated, (b'a' as u64 + b'b' as u64 + b'c' as u64) & 0xFF);
+            }
+            other => panic!("expected ChecksumMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_bytes_panics_on_short_input_as_documented() {
+        struct Sum16;
+
+        impl Checksum for Sum16 {
+            const SIZE: usize = 2;
+
+            fn calculate(&self, payload: &[u8]) -> u64 {
+                payload.iter().map(|&byte| byte as u64).sum()
+            }
+        }
+
+        assert!(std::panic::catch_unwind(|| Sum16.read_bytes(&[0])).is_err());
     }
 }

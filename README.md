@@ -1,14 +1,10 @@
 # FlatStream
 
-[![Rust](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/dallasmarlow/flatstream-rs/actions/workflows/rust.yml)
-[![Crates.io](https://img.shields.io/crates/v/flatstream.svg)](https://crates.io/crates/flatstream)
-[![Docs.rs](https://docs.rs/flatstream/badge.svg)](https://docs.rs/flatstream)
-
 A lightweight, zero-copy oriented, high-performance Rust library for encoding and decoding sequences of framed FlatBuffers messages.
 
-FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on maintaining zero-copy behavior. It originated from a high-frequency telemetry capture agent and has evolved into a general-purpose library for high-throughput, low-latency applications that need durable, replayable streams and predictable performance characteristics.
+FlatStream provides a trait-based architecture for efficiently writing and reading streams of FlatBuffers messages with a focus on maintaining zero-copy behavior. It originated from a high-frequency telemetry capture agent and has evolved into a general-purpose library for high-throughput, low-latency applications that persist and replay streams with predictable performance characteristics.
 
-FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), bounded reads, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
+FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), configurable frame-length bounds, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
 
     Note on Performance: The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
 
@@ -16,13 +12,16 @@ FlatStream is a small framing layer that adds stream boundaries and optional int
 
 FlatStream is a small framing layer around FlatBuffers for streams (files/sockets). It writes and reads sequences of messages with a minimal header and optional checksums, while preserving zero-copy access to each FlatBuffer payload as a `&[u8]`.
 
+Two claims, scoped precisely: **"zero-copy" refers to payload access** — payloads are yielded as borrowed slices out of the reader's reusable buffer with no second payload copy or deserialization. A generic `Read` source copies each frame once into that buffer; growth may allocate, while warmed high-water-mark processing allocates nothing. A borrowed-slice/mmap source path, copy-free after the source is mapped, is planned. **Dispatch is static** on the framing/checksum/validation paths in their default configurations; deliberate exceptions when opted into: `MemoryPolicy` (one boxed call while it is consulted above its baseline; a gate-open benchmark measured ~1 ns over the no-policy path), `CompositeValidator` (one boxed call per composed validator; unmeasured), and `TypedValidator` (a function-pointer call).
+
 ## Wire format (at a glance)
 
 ```
 [4-byte LE: payload length (u32)] [N-byte checksum (optional)] [FlatBuffer payload...]
 ```
 
-- **checksum N**: 0, 2, 4, or 8 bytes depending on configured algorithm.
+- **checksum N**: the built-ins use 0, 2, 4, or 8 bytes; custom `Checksum`
+  implementations may declare any exact width from 0 through 8 bytes.
 - The payload is a normal FlatBuffer (not FlatBuffers’ internal size-prefixed variant).
 
 ## When to use / when not to use
@@ -30,7 +29,7 @@ FlatStream is a small framing layer around FlatBuffers for streams (files/socket
 - **Use FlatStream when**:
   - You need to write/read many FlatBuffers messages to a file or socket.
   - You want zero-copy access to message payloads as `&[u8]`.
-  - You want composable adapters (bounds, checksums, observers, validators) without extra allocations.
+  - You want composable adapters (bounds, checksums, observers, validators) without extra payload copies or steady-state allocations.
 
 - **Probably not a fit when**:
   - You need a full RPC protocol, service discovery, or schema negotiation.
@@ -53,12 +52,12 @@ fn main() -> Result<()> {
         let s = b.create_string("hello flatstream");
         b.finish(s, None);
         stream.write_finished(&mut b)?;
-        stream.flush()?; // Ensure all data is written
+        stream.flush()?; // Flush the underlying writer; this is not an fsync.
     }
 
     // Read it back (payload provided as &[u8])
     let reader = BufReader::new(Cursor::new(bytes));
-    let mut stream = StreamReader::new(reader, DefaultDeframer);
+    let mut stream = StreamReader::new(reader, DefaultDeframer::new());
     stream.process_all(|payload| {
         println!("payload bytes: {}", payload.len());
         Ok(())
@@ -91,12 +90,8 @@ sequenceDiagram
   App->>Writer: write_finished(&mut Builder)
   Writer->>Framer: make_header(len[, checksum])
   Framer-->>Writer: [len][opt checksum]
-  alt vectored write available
-    Writer->>OS: writev([header, payload])
-  else
-    Writer->>OS: write_all(header)
-    Writer->>OS: write_all(payload)
-  end
+  Writer->>OS: write_all(header)
+  Writer->>OS: write_all(payload)
   App->>Writer: flush()
   Note over OS: Later / other process
   participant Reader as StreamReader
@@ -135,16 +130,16 @@ sequenceDiagram
 | `Framer` | Defines how to encode `[len][opt checksum][payload]` |
 | `Deframer` | Defines how to decode `[len][opt checksum][payload]` |
 | `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
-| `Bounded*` adapters | Enforce max payload size on read/write |
+| `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read defaults to the wire format's ~4 GiB ceiling; tighten with `with_max_frame_len`) |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
 | `MemoryPolicy` | Opt-in buffer reclamation for long-running processes (`with_memory_policy`) |
 
 ## Payload Validation
 
-FlatStream includes an optional, composable validation layer that operates on both the write and read paths, ensuring payload integrity before I/O operations.
+FlatStream includes an optional, composable validation layer that operates on both the write and read paths, checking payload validity at the stream boundary.
 
-- **Why**: To prevent malformed data from ever being written to a stream, and to protect application code from processing malformed data read from a stream. This prevents panics or undefined behavior in the core processing pipeline.
+- **Why**: To prevent malformed data from ever being written to a stream, and to ensure generated FlatBuffers accessors only receive payloads that passed the configured verifier. The opt-in unchecked typed API remains explicitly `unsafe`.
 - **How**: The `Validator` trait mirrors `Checksum`. You can add a validation layer with a fluent `.with_validator(...)` call on both framers (for writing) and deframers (for reading).
   - On write, validation runs *before* the payload is written.
   - On read, validation runs *after* the payload is deframed but *before* it is yielded to application code.
@@ -156,7 +151,9 @@ FlatStream includes an optional, composable validation layer that operates on bo
 - `TableRootValidator`: Uses FlatBuffers’ built-in verifier to check that a buffer is a valid table root and to enforce verifier limits (e.g., depth, table count). It does not validate schema-specific fields.
 - `SizeValidator`: Size sanity checks (min/max bytes).
 - `CompositeValidator`: Compose multiple validators (AND semantics) in order.
-- `TypedValidator`: Schema-aware verification for user-generated FlatBuffers root types (e.g., `my_schema::MyMessage`). Construct with `TypedValidator::for_type::<T>()` or `from_verify_named(...)`.
+- `TypedValidator`: Schema-aware verification using a generated
+  `root_as_*_with_opts` function, installed with `from_verify(...)` or
+  `from_verify_named(...)`.
 
 ### Fluent API examples
 
@@ -177,7 +174,7 @@ let table_root = b.end_table(start);
 b.finish(table_root, None);
 stream.write_finished(&mut b)?;
 
-// Attempting to write a malformed payload would fail here with Error::ValidationFailed.
+// Attempting to write a malformed payload would fail here with ErrorKind::ValidationFailed.
 // For example: stream.write_payload(b"a string that is not a valid flatbuffer root")?;
 ```
 
@@ -187,7 +184,7 @@ use std::io::Cursor;
 
 // Read path: structural safety before your code sees any payload.
 let data: Vec<u8> = vec![]; // framed bytes
-let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
 let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
 reader.process_all(|payload| {
     // payload: &[u8] (in-place, zero-copy)
@@ -202,18 +199,22 @@ use flatstream::{DefaultDeframer, DeframerExt, CompositeValidator, TableRootVali
 let validator = CompositeValidator::new()
     .add(SizeValidator::new(64, 1024 * 1024))
     .add(TableRootValidator::new());
-let deframer = DefaultDeframer.with_validator(validator);
+let deframer = DefaultDeframer::new().with_validator(validator);
 ```
 
 ```rust
 use flatstream::{DefaultDeframer, DeframerExt, TypedValidator};
-// Example using generated `my_schema::MyMessage` root type:
-let deframer = DefaultDeframer.with_validator(TypedValidator::for_type::<my_schema::MyMessage>());
+
+// Example using the verifier generated for `my_schema::MyMessage`.
+let validator = TypedValidator::from_verify_named("MyMessage", |opts, payload| {
+    my_schema::root_as_my_message_with_opts(opts, payload).map(|_| ())
+});
+let deframer = DefaultDeframer::new().with_validator(validator);
 ```
 
 ### Error handling
 
-Validation errors propagate as `Error::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `Error::ChecksumMismatch`.
+Validation errors propagate as `ErrorKind::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `ErrorKind::ChecksumMismatch`.
 
 ### Performance
 
@@ -226,13 +227,16 @@ Validation errors propagate as `Error::ValidationFailed { validator, reason }`. 
   - FlatStream already prefixes at the stream layer. Adding another 4-byte prefix inside the payload is redundant. Use `flatbuffers::root`/`root_with_opts` on the payload.
 
 - **Is this zero-copy?**
-  - Yes. The reader’s `process_all()`/`messages()` provide `&[u8]` borrowed from the internal buffer. No intermediate copies are introduced by adapters.
+  - For payload access, yes: the reader’s `process_all()`/`messages()` provide `&[u8]` borrowed from the internal buffer, and no intermediate copies are introduced by adapters. The `Read`-based source fills that buffer once per frame (see the scoping note in the TL;DR); a fully borrowed slice/mmap source path is planned.
 
 - **How do I stop early?**
   - Use `messages()` and `break`, or return an `Err` from the `process_all` closure to halt. A lightweight “stop” enum could be added in the future.
 
 - **Does this replace a protocol?**
   - No. It’s a framing layer for FlatBuffers payloads. RPC/routing/etc. are out of scope.
+
+- **Does `flush()` make a file durable?**
+  - No. `StreamWriter::flush()` delegates to `Write::flush()`. If durable storage is required, flush any buffering and apply the platform-appropriate durability operation (for example `File::sync_data`/`sync_all`) at the application’s chosen group-commit boundary. FlatStream deliberately does not choose that policy.
 
 ## Why FlatStream?
 
@@ -250,14 +254,14 @@ The library's current architecture is the direct result of the performance-drive
 
 FlatStream is designed around composability and zero-cost abstractions to solve common streaming challenges with a focus on zero-copy behavior and performance.
 
-### Performance: Zero-Copy Throughout
+### Performance: No Library-Added Copies
 
-Performance is achieved by maintaining the FlatBuffers zero-copy philosophy at every level.
+Performance is achieved by maintaining the FlatBuffers zero-copy philosophy at every level the library controls (see the TL;DR for the precise scope).
 
-- ***Zero-Copy Writing:*** Both simple and expert modes are zero-copy. After serialization, builder.finished_data() returns a direct slice that is written to I/O without any intermediate copies.
-- ***Zero-Copy Reading:*** The StreamReader provides true zero-copy access through its process_all() and messages() APIs, which deliver borrowed slices (&[u8]) directly from the internal read buffer.
+- ***Writing:*** Both simple and expert modes pass builder.finished_data() to the `Write` target directly — the library adds no intermediate payload copy. (The target itself may stage bytes, e.g. `BufWriter`.)
+- ***Reading:*** The StreamReader provides zero-copy *access* through its process_all() and messages() APIs, which deliver borrowed slices (&[u8]) directly from the internal read buffer; the `Read` source fills that buffer once per frame.
 - **FlatBuffers Philosophy**: The serialized format IS the wire format, and in some cases a suitable final storage format. Unlike the proposed v2.5 design with its batching and type erasure, the current implementation maintains direct buffer-to-I/O paths and a convenience writer method with optimized, but not ultimate performance.
-- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests validate design choices with feature-gated Criterion benchmarks across configurations. Real-world performance often exceeds documented benchmarks, with workloads operating at tens of millions of messages per-second for full processing.
+- **Benchmarking and Practical Testing**: Benchmarks and experimental script tests validate design choices with feature-gated Criterion benchmarks across configurations. Published figures come only from the in-repo Criterion benchmarks (see the comparative-benchmark section for machine and methodology).
 
 FlatStream solves common streaming challenges by adhering to a few core principles:
 
@@ -271,7 +275,7 @@ The library utilizes a trait-based Strategy Pattern to separate concerns:
 
 The core types (`StreamWriter`/`StreamReader`) are generic over these traits. This allows the Rust compiler to use monomorphization, resulting in static dispatch in many cases and avoiding the overhead of dynamic dispatch (vtable lookups) on the critical path.
 
-- ***Zero-Copy by Default:*** The library is designed to maintain FlatBuffers' zero-copy philosophy. The StreamReader provides true zero-copy access to data via borrowed slices (&[u8]), eliminating memory allocations and copies on the read path.
+- ***Zero-Copy by Default:*** The library is designed to maintain FlatBuffers' zero-copy philosophy. `StreamReader` provides zero-copy *access* through borrowed slices (`&[u8]`): a generic `Read` source copies each frame once into the reusable buffer, and warmed steady-state processing adds no allocation, second payload copy, or deserialization.
 
 - ***Pragmatic Performance:*** The StreamWriter offers two modes: a simple, convenient API for common use cases, and an expert-level API that provides fine-grained control over the FlatBufferBuilder lifecycle. This allows developers to avoid common performance pitfalls like memory bloat when dealing with mixed message sizes.
 
@@ -291,7 +295,7 @@ writer.write(&"Hello, world!")?;  // Internal builder management
 
 - **Pros**: Zero configuration, automatic optimized builder reuse to avoid unnecessary heap allocations and memory copy operations, easy to use
 - **Cons**: Single internal builder can cause memory bloat with mixed sizes due to the FlatBuffers default grow-downward allocator behavior
-- **Performance**: Excellent for uniform messages (within 0-25% of expert mode)
+- **Performance**: Excellent for uniform messages; benchmark both modes with your serialization workload before choosing on speed alone
 
 ### Expert Mode - Self Managed FlatBuffers Builder(s)
 Best for: Mixed message sizes, large messages, memory-constrained systems
@@ -310,18 +314,18 @@ writer.write_finished(&mut builder)?;
 - **Cons**: More verbose, requires understanding of FlatBuffers
 - **Performance**: Greater performance potential through improved memory control
 
-> **📊 Zero-Copy Note**: Both simple and expert modes maintain perfect zero-copy behavior - data is never copied after serialization. Expert mode is recommended when you need multiple builders for different message sizes to avoid memory bloat, not because it's "more zero-copy."
+> **📊 Copy Note**: Both simple and expert modes add no payload copy after serialization — the finished builder slice goes straight to the `Write` target. Expert mode is recommended when you need multiple builders for different message sizes to avoid memory bloat, not because it copies less.
 
 ### Understanding the Real Differences
 
-The key differences between simple and expert mode are **NOT** about zero-copy (both are equally zero-copy):
+The key differences between simple and expert mode are **NOT** about copying (both pass the finished slice directly):
 
 1. **Memory Flexibility**: Expert mode allows multiple builders for different message sizes
-2. **Performance with Large Messages**: Less trait dispatch overhead (can be verifiably faster)
+2. **Builder Management**: The caller owns the reset/serialize step instead of paying for it inside `write()` (serialization dispatch is static in both modes)
 3. **Memory Efficiency**: Avoid builder bloat when mixing large and small messages
 4. **Builder Lifecycle Control**: Drop and recreate builders as needed for rare large messages
 
-The performance overhead in simple mode (0–25%) comes primarily from trait dispatch through the `StreamSerialize` trait, not from copying data. Expert mode avoids this trait dispatch by calling `write_finished()` directly with pre-serialized data. See the benchmark sections below for context and exact test descriptions.
+`StreamSerialize` is a generic bound, statically dispatched and monomorphized in simple mode. Both modes must perform serialization for changing messages; expert mode’s advantage is control over builder selection, sizing, reuse, and whether a payload can be prepared outside a latency-sensitive section. The in-repo “practical” benchmark intentionally pre-serializes the expert payload and is therefore an isolation experiment, not a general simple-mode overhead percentage.
 
 ## Installation
 
@@ -329,7 +333,7 @@ Add `flatstream` and the `flatbuffers` dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-flatbuffers = "24.3.25" # Use the appropriate version
+flatbuffers = "25.9.23" # Use the appropriate version
 flatstream = "0.2.7"
 ```
 
@@ -341,6 +345,10 @@ Data integrity checks (checksums) are optional and managed via feature flags.
 - **`crc32`**: Enables CRC32 checksum support.
 - **`crc16`**: Enables CRC16 checksum support.
 - **`all_checksums`**: Enables all available checksum algorithms for testing and development.
+- **`unsafe_typed`**: Exposes the explicitly unsafe, verification-skipping
+  typed read path for trusted-data benchmarks and specialized deployments.
+- **`instruction_bench`**: Enables the Gungraun instruction-count benchmark;
+  run it through `scripts/instruction_counts.sh`.
 
 ```toml
 [dependencies]
@@ -353,6 +361,79 @@ For comprehensive testing with all checksums enabled:
 cargo test --features all_checksums
 cargo bench --features all_checksums  # Run comprehensive benchmarks
 ```
+
+## Verification (the local gate)
+
+This project runs its full verification locally — there is no CI. The
+scripts under `scripts/` cover everything a pipeline would, and each prints
+what it checks and why:
+
+```bash
+scripts/gate.sh                  # fmt, clippy -D warnings, feature test matrix
+                                 # (incl. unsafe_typed), rustdoc, bench/fuzz
+                                 # compile checks, and an MSRV check against the
+                                 # active toolchain (rust-version in Cargo.toml)
+scripts/fuzz.sh [secs/target]    # manual local cargo-fuzz of the deframers
+                                 # (rustup nightly if present, else a Docker
+                                 # nightly container; no CI/scheduler)
+scripts/instruction_counts.sh    # pinned-environment instruction counts
+                                 # via Gungraun/Callgrind (valgrind/Linux; falls
+                                 # back to a Docker container on macOS)
+scripts/examples.sh              # run maintained non-mutating examples; several
+                                 # assert their own
+                                 # expected values (exact counts, measured
+                                 # wire-format overhead), so this doubles as an
+                                 # end-to-end behavioral proof
+RUN_LOBSTER_INGEST=1 scripts/examples.sh
+                                 # additionally regenerate the local LOBSTER
+                                 # corpus when verified ZIPs are present
+```
+
+Run `gate.sh` and `examples.sh` before every review or tag. Run `fuzz.sh` manually
+on a local machine after touching
+framing, deframing, or checksum code — the deframer is the part of the
+library that faces untrusted bytes. Run `instruction_counts.sh` when a
+Criterion result looks like it moved but the machine is suspect: wall-clock
+on a workstation swings several percent run-to-run, while instruction counts
+are stable within one recorded compiler/dependency/target/tool environment.
+Counts from different environments are not comparable. For wall-clock comparisons, use Criterion baselines
+(`cargo bench --locked -- --save-baseline <name>`, later
+`cargo bench --locked -- --baseline <name>`);
+baselines live in `target/criterion` and are machine-local.
+
+### Running the gate in a clean container
+
+`gate.sh` uses whatever `rustc` is on `PATH`. To run it against a pinned Linux
+toolchain at the exact MSRV — handy from a macOS workstation, and the closest
+thing to a from-scratch CI run without adopting CI — use the official Rust image
+whose tag matches `rust-version` in `Cargo.toml`. From the repo root:
+
+```bash
+docker run --rm \
+  -v "$PWD":/opt -w /opt \
+  -e CARGO_TARGET_DIR=/tmp/target \
+  rust:1.97.1-bookworm \
+  bash -c 'rustup component add rustfmt clippy >/dev/null 2>&1 || true; bash scripts/gate.sh'
+```
+
+Two details matter:
+
+- **Pin the tag to `rust-version`** (`rust:1.97.1-bookworm`). The container's
+  `rustc` then equals the declared MSRV, so every step runs on exactly the floor
+  and the MSRV check reports `verified` instead of the "newer — floor not proven"
+  note it prints on a newer toolchain.
+- **Redirect `CARGO_TARGET_DIR` off the bind mount** (`/tmp/target`). The mount
+  shares your working tree with the container; without the redirect, the
+  container's Linux artifacts collide with the host's macOS `target/` (forcing a
+  full rebuild in each direction) and drop root-owned files into the repo.
+
+The `rustup component add` is a no-op on the full `-bookworm` image (it already
+carries `rustfmt` and `clippy`); it keeps the command working on slimmer image
+variants too.
+
+The Docker fallback for instruction counts runs the trusted, short-lived
+benchmark container with `seccomp=unconfined`, because Gungraun disables ASLR
+with `setarch -R` and Docker's default profile blocks that syscall.
 
 ## Quick Start Example
 
@@ -455,7 +536,8 @@ fn write_expert() -> Result<()> {
 }
 ```
 
-// Schema-typed expert-mode example (representative FlatBuffers usage)
+#### Schema-typed expert-mode example
+
 ```rust
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{StreamWriter, DefaultFramer, Result};
@@ -496,12 +578,12 @@ use std::io::Cursor;
 
 fn read_data(data: Vec<u8>) -> Result<()> {
     let reader_backend = Cursor::new(data);
-    let mut reader = StreamReader::new(reader_backend, DefaultDeframer);
+    let mut reader = StreamReader::new(reader_backend, DefaultDeframer::new());
 
     // High-performance, zero-copy processing using the process_all API.
     reader.process_all(|payload: &[u8]| {
         // 'payload' is a slice pointing directly to the FlatBuffer message
-        // in the reader's internal buffer. No data has been copied.
+        // in the reader's internal buffer; access adds no second payload copy.
         println!("Read message of {} bytes.", payload.len());
         Ok(())
     })?;
@@ -517,23 +599,34 @@ Because the payload is a normal (non–size-prefixed) FlatBuffer, use the FlatBu
 #### Typed verification (preferred)
 
 ```rust
-use flatbuffers::VerifierOptions;
-// use your generated types, e.g. `use my_schema::MyMessage;`
+use flatstream::{
+    DefaultDeframer, Error, Result, StreamDeserialize, StreamReader,
+};
+use std::io::Cursor;
 
-reader.process_all(|payload: &[u8]| {
-    // Configure verifier limits (examples shown; tune for your data)
-    let opts = VerifierOptions {
-        // max_depth: 64,
-        // max_tables: 1_000_000,
-        // max_bytes: Some(16 * 1024 * 1024),
-        ..Default::default()
-    };
+struct MyMessageRoot;
 
-    let msg = flatbuffers::root_with_opts::<my_schema::MyMessage>(&opts, payload)?;
-    // use `msg` safely here
-    Ok(())
-})?;
+impl<'a> StreamDeserialize<'a> for MyMessageRoot {
+    type Root = my_schema::MyMessage<'a>;
+
+    fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
+        my_schema::root_as_my_message(payload).map_err(Error::from)
+    }
+}
+
+fn read_typed(data: Vec<u8>) -> Result<()> {
+    let mut reader = StreamReader::new(Cursor::new(data), DefaultDeframer::new());
+    reader.process_typed::<MyMessageRoot, _>(|message| {
+        // use `message` here
+        Ok(())
+    })
+}
 ```
+
+The feature-gated `process_typed_unchecked` variant skips verification and is
+therefore an `unsafe` API: the caller must guarantee that every frame is valid
+for the selected root type. Prefer the verified path unless a trusted-data
+benchmark demonstrates that verification is material.
 
 #### Generic verification (type-agnostic)
 
@@ -542,32 +635,41 @@ performs structural verification with `Verifier::visit_table(..)` (works without
 any generated types):
 
 ```rust
-use flatstream::{DeframerExt, TableRootValidator};
+use flatstream::{
+    DefaultDeframer, DeframerExt, Result, StreamReader, TableRootValidator,
+};
+use std::io::Cursor;
 
-let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
-reader.process_all(|payload: &[u8]| {
-    // payload has passed structural verification
-    Ok(())
-})?;
+fn read_structurally_valid(data: Vec<u8>) -> Result<()> {
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
+    let mut reader = StreamReader::new(Cursor::new(data), deframer);
+
+    reader.process_all(|payload: &[u8]| {
+        // payload has passed structural verification
+        Ok(())
+    })
+}
 ```
 
-### Hardening against malicious data (recommended)
+### Hardening against malicious data
 
-When reading from untrusted sources (e.g., network sockets), a malicious actor could send a frame with an extremely large length prefix (e.g., 2GB). Without protection, your application would try to allocate a huge buffer, leading to an Out-Of-Memory (OOM) crash.
+A frame's length prefix is attacker-controlled input: a corrupt or malicious header can declare an extremely large payload (e.g., 2 GB) and, without protection, the reader would try to allocate it — an Out-Of-Memory crash on demand.
 
-FlatStream provides the `.bounded()` adapter to prevent this. It's a zero-cost abstraction that checks the length *before* allocation.
+By default the deframers accept any length a 32-bit header can declare (`DEFAULT_MAX_FRAME_LEN`, ~4 GiB — the full wire-format range), so FlatBuffers' maximum frame works out of the box. When reading from an untrusted source, set an explicit ceiling with `with_max_frame_len`: frames declaring more than the configured limit are then rejected with `ErrorKind::InvalidFrame` *before* any allocation is sized from the header. The check is a single integer compare.
 
-**Recommendation**: Always use `.bounded()` on deframers when reading from untrusted streams.
+The default framers enforce only the wire format's `u32` length ceiling, so
+they write any valid frame up to ~4 GiB. Tightening is a read-side, application-layer
+decision: pick the limit that matches the payloads you actually expect.
 
 ```rust
-use flatstream::{StreamReader, DefaultDeframer, DeframerExt, Result};
+use flatstream::{StreamReader, DefaultDeframer, Result};
 use std::io::Cursor;
 
 fn read_safely(data: Vec<u8>) -> Result<()> {
     const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MiB
 
     let reader_backend = Cursor::new(data);
-    let deframer = DefaultDeframer.bounded(MAX_MESSAGE_SIZE); // Enforce limit
+    let deframer = DefaultDeframer::new().with_max_frame_len(MAX_MESSAGE_SIZE); // Bound untrusted input
     let mut reader = StreamReader::new(reader_backend, deframer);
 
     reader.process_all(|payload: &[u8]| {
@@ -598,6 +700,12 @@ while let Some(payload) = messages.next()? {
 ### Data Integrity (Checksums)
 
 To protect against data corruption, use the `ChecksumFramer` and `ChecksumDeframer`. This requires enabling a checksum feature (e.g., `xxhash`).
+
+Algorithm identities are pinned by known-answer tests (see `docs/WIRE_FORMAT_SPEC.md` §5): CRC-16/XMODEM, CRC-32/ISO-HDLC (the IEEE/zlib polynomial — **not** CRC-32C), and XXH3-64. Writer and reader must agree on the strategy out-of-band: reading a checksummed stream with the plain `DefaultDeframer` does **not** error — it silently mis-frames (the checksum bytes parse as payload). The corpus tests pin this behavior.
+
+These are non-cryptographic checksums: they detect accidental corruption, not
+malicious tampering. For an adversarial source, use an authenticated transport
+or MAC in addition to the matching checksum deframer and schema validation.
 
 ```rust
 #[cfg(feature = "xxhash")]
@@ -631,17 +739,19 @@ To protect against data corruption, use the `ChecksumFramer` and `ChecksumDefram
 }
 ```
 
-When reading, use the corresponding `ChecksumDeframer`. It will automatically validate the integrity and return `Error::ChecksumMismatch` if the data is corrupted.
+When reading, use the corresponding `ChecksumDeframer`. It will automatically validate the integrity and return `ErrorKind::ChecksumMismatch` if the data is corrupted.
 
 ### Sized Checksums
 
 The library supports checksums of different sizes to optimize for different use cases:
 
-- **CRC16 (2 bytes)**: Perfect for high-frequency small messages (75% less overhead than XXHash64)
-- **CRC32 (4 bytes)**: Good balance for medium-sized messages (50% less overhead than XXHash64)  
-- **XXHash64 (8 bytes)**: Best for large, critical messages (maximum integrity)
+Per-frame header overhead is the 4-byte length plus the checksum field (measured and asserted in `examples/sized_checksums_example.rs`):
 
-All checksums are pluggable and composable, allowing you to choose the optimal size for your specific use case.
+- **CRC16 (2 bytes)**: 6-byte headers — 50% less framing overhead than XXH3-64's 12 bytes; suited to high-frequency small messages where header bytes dominate
+- **CRC32 (4 bytes)**: 8-byte headers — 33% less framing overhead than XXH3-64
+- **XXHash64 (8 bytes)**: 12-byte headers; the widest field and strongest collision resistance of the built-ins
+
+Which to choose depends on your failure model (what corruption you expect and what a miss costs) at least as much as on payload size. All checksums are pluggable and composable.
 
 ### Adaptive Memory Management
 
@@ -658,15 +768,17 @@ let mut writer = StreamWriter::new(file, DefaultFramer).with_memory_policy(polic
 
 Policies apply to buffers the library owns — the writer's simple mode (`write()`) and the reader's internal buffer. In expert mode (`write_finished()`) you own the builder, so reclamation is your call. For custom allocators, see `with_memory_policy_and_factory`.
 
-**Measured cost** (Criterion, macOS/Apple Silicon, sink writer, 100-byte messages):
+**Measured cost** (2026/07/23, Criterion, macOS/Apple Silicon, Rust 1.97.1,
+sink writer, 100-byte messages; raw output in
+`bench_results.memory_policy.txt`):
 
 | Configuration | `write()` per message |
 |---|---|
-| No policy installed (default) | ~9 ns |
-| No-op policy installed (boxed-call cost) | ~10 ns |
-| `AdaptiveWatermarkPolicy` installed, not firing | ~12.7 ns |
+| No policy installed (default) | ~8.5 ns |
+| No-op policy installed (boxed-call cost) | ~9.4 ns |
+| `AdaptiveWatermarkPolicy` installed, not firing | ~10.9 ns |
 
-The reclaim itself trades a bounded re-growth cost for footprint: in a worst-case oscillation benchmark (a 1 MB burst followed by 1,100 small messages, forcing a reclaim every cycle), the adaptive writer runs ~2.3× the CPU of an unbounded one (~1.24 ms vs ~0.53 ms per 10-cycle iteration) in exchange for dropping the steady-state footprint from 1 MB to the 16 KB baseline. Real workloads with rare bursts pay the re-growth once per burst, not continuously — and the baseline gate guarantees a policy can never thrash at steady state.
+The reclaim itself trades a bounded re-growth cost for footprint: in a worst-case oscillation benchmark (a 1 MB burst followed by 1,100 small messages, forcing a reclaim every cycle), the adaptive writer runs ~2.6× the CPU of an unbounded one (~1.17 ms vs ~0.45 ms per 10-cycle iteration) in exchange for dropping the steady-state footprint from 1 MB to the 16 KB baseline. Real workloads with rare bursts pay the re-growth once per burst, not continuously — and the baseline gate guarantees a policy can never thrash at steady state.
 
 ## Wire Format Specification
 
@@ -703,7 +815,7 @@ While FlatStream is optimized for high performance, achieving the lowest latency
 
 If you provide an unbuffered handle (like a raw `std::fs::File` or `std::net::TcpStream`), every write operation may result in a system call, significantly increasing latency and reducing throughput.
 
-**Recommendation**: Always wrap file or network handles in `std::io::BufWriter` and `std::io::BufReader`.
+**Default recommendation**: Buffer file or network handles with `std::io::BufWriter`/`BufReader`, then measure. Buffering reduces small-write/read syscall pressure, but it adds staging; a future measure-gated vectored-write path may favor raw vector-capable sinks, while the planned slice/mmap reader avoids the `Read` path entirely.
 
 ```rust
 use std::fs::File;
@@ -724,7 +836,7 @@ let writer = StreamWriter::new(buffered_writer, DefaultFramer);
 
 This library currently uses synchronous I/O based on standard Rust `Read`/`Write` traits. In highly concurrent, low-latency capture agents, blocking the main capture thread for I/O is undesirable.
 
-**Recommendation**: In high-throughput agents, consider offloading the `StreamWriter` to a dedicated I/O thread, communicating with it via a fast MPSC channel (e.g., crossbeam or flume).
+**Recommendation**: In the single-capture-thread design, offload the `StreamWriter` to a dedicated journal thread through a bounded SPSC queue/ring with explicit drop/backpressure policy. Use a multi-producer queue only when the application actually has multiple producers.
 
 ## Performance Guide
 
@@ -735,7 +847,7 @@ This library currently uses synchronous I/O based on standard Rust `Read`/`Write
 | Learning/Prototyping | Simple (`write()`) | Easy to use, no setup |
 | Uniform message sizes | Simple (`write()`) | Performance is nearly identical |
 | Mixed message sizes | Expert (`write_finished()`) | Avoid memory bloat |
-| Large messages (>1MB) | Expert (`write_finished()`) | Up to 2x performance gain |
+| Large messages (>1MB) | Expert (`write_finished()`) | Avoids internal-builder bloat; you control allocation |
 | Memory-constrained systems | Expert (`write_finished()`) | Fine-grained memory control |
 | Multiple message types | Expert (`write_finished()`) | Use separate builders per type |
 
@@ -796,63 +908,47 @@ writer.write_finished(&mut builder)?;
 - [ ] **Consider custom allocators** for specialized memory management
 - [ ] **Profile and/or benchmark before optimizing** (the simple mode might be enough!)
 
-## Comparative benchmarks (current snapshot: 2025/08/13)
+## Comparative benchmarks (current snapshot: 2026/07/23)
 
-The following performance figures come from the criterion comparative benchmarks in this repo (feature `comparative_bench`), run on an ARM-based MacBook Pro. They reflect medians for the named groups. Results vary by hardware and workload.
+The following performance figures come from the Criterion comparative benchmarks in this repo (features `comparative_bench,all_checksums`; the latter enables the checksum variants), run on an ARM-based MacBook Pro with Rust 1.97.1. They reflect medians for the named groups. Results vary by hardware, toolchain, and workload.
 
 ### Simulated Telemetry Streams
 
 Test description (for the info below):
 
-- Data: a simple telemetry event consisting of three fields: `u64 device_id`, `u64 timestamp`, `f64 value` (24 bytes payload per message).
-- Stream format: `DefaultFramer` adds a 4-byte little-endian length prefix. Variants shown are default read, unsafe read (alternate deframer), and `xxhash64` checksum.
-- Execution: in-memory buffers (`Vec<u8>`/`Cursor`), Criterion medians. Small dataset = 100 events; large dataset ≈ 100,000 events (~2.4 MiB payload, 24 B/event).
+- Data: a simple telemetry event consisting of three logical fields (`u64 device_id`, `u64 timestamp`, `f64 value`; 24 logical bytes). FlatStream stores those bytes inside a FlatBuffer vector, so the serialized payload is larger than 24 bytes.
+- Stream format: `DefaultFramer` adds a 4-byte little-endian length prefix. Variants shown are default read and `xxhash64` checksum. (Earlier runs also measured an unsafe-read deframer variant; the alternate deframers were removed in the v0.2.7 hardening pass — the single safe read path hits the same steady state without `unsafe`.)
+- Execution: in-memory buffers (`Vec<u8>`/`Cursor`), Criterion medians. Small dataset = 100 events; large dataset ≈ 100,000 events (~2.4 MiB of logical field data before FlatBuffer overhead).
 
 - Small dataset (100 events):
-  - flatstream_default: 3.1051 µs (~32.2M msgs/s)
-  - flatstream_default_unsafe_read: 3.0955 µs (~32.3M msgs/s)
-  - flatstream_xxhash64: 3.5673 µs (~28.0M msgs/s)
-  - bincode: 3.5377 µs (~28.3M msgs/s)
-  - serde_json: 14.489 µs (~6.9M msgs/s)
-  - Observation: in this run, flatstream_default was ~12% faster than bincode and ~4.7× faster than serde_json. The unsafe read variant was within ~0.3% of the default.
+  - flatstream_default: 3.0809 µs (~32.5M msgs/s)
+  - flatstream_xxhash64: 3.3141 µs (~30.2M msgs/s)
+  - bincode: 3.1772 µs (~31.5M msgs/s)
+  - serde_json: 14.550 µs (~6.9M msgs/s)
+  - Interpretation: these are different consumption models, not an equal-work speed ranking. Bincode/serde_json deserialize owned structs, while this FlatStream case stops after borrowed frame access without decoding fields. A generated-schema, fields-consumed variant is required before making application-level speed comparisons. Within FlatStream, the configured frame-length limit does not affect read throughput: the check is the same single integer compare on every frame regardless of the limit's value.
 
  - Large dataset (~2.4 MiB):
-  - flatstream_default: 3.1521 ms (~31.7M msgs/s)
-  - flatstream_default_unsafe_read: 3.0167 ms (~33.1M msgs/s)
-  - flatstream_xxhash64: 3.5489 ms (~28.2M msgs/s)
-  - bincode: 3.2532 ms (~30.7M msgs/s)
-  - serde_json: 14.106 ms (~7.1M msgs/s)
-  - Observation: in this run, flatstream_default was ~3% faster than bincode and ~4.5× faster than serde_json. The unsafe read variant was ~4% faster than the default on this workload.
+  - flatstream_default: 2.8732 ms (~34.8M msgs/s)
+  - flatstream_xxhash64: 3.1146 ms (~32.1M msgs/s)
+  - bincode: 2.8460 ms (~35.1M msgs/s)
+  - serde_json: 13.645 ms (~7.3M msgs/s)
+  - Interpretation: the same unequal-work caveat applies; these medians describe borrowed frame access versus owned deserialization and are not application-level speedups.
 
 Test notes:
 
 - These benches run entirely in memory using `Vec<u8>`/`Cursor`; they do not include filesystem or network effects. Figures are Criterion medians on the stated machine.
 - Throughput is reported as messages per second, computed from medians and the number of messages per iteration. Byte throughput is intentionally omitted due to framing overhead variability.
-- The unsafe-read variant changes only the deframing path; writing is identical to the default configuration. Minor variance across runs is expected (power/thermal state, background load).
+- Minor variance across runs is expected (power/thermal state, background load).
 
-Checksum configurations add predictable overhead relative to the default framer in these tests:
+Checksum configurations add predictable overhead relative to the default framer in these tests (small/large dataset):
 
-- XXHash64: ~12–13%
-- CRC32: ~23–25%
-- CRC16: ~150%
+- XXHash64: ~8%
+- CRC32: ~19–20%
+- CRC16: ~150–154%
 
-Read path alternatives:
+Read path:
 
-- The suite also includes focused read-path benchmarks that swap only the deframer implementation on the same input buffer.
-- Median times measured:
-  - Read Path Implementations:
-    - DefaultDeframer: 416.11 ns
-    - UnsafeDeframer: 397.97 ns
-    - SafeTakeDeframer: 1.0354 µs
-    - Observation: in this micro-benchmark, `UnsafeDeframer` was ~4–5% faster than the default.
-  - Deframer Micro-Benchmark (buffer initialization):
-    - DefaultDeframer (zeroing): 43.794 ns
-    - UnsafeDeframer (no zeroing): 44.190 ns
-    - Observation: within noise; default was slightly faster here.
-  - Deframer sustained throughput (1000 messages):
-    - DefaultDeframer (zeroing): 66.465 µs
-    - UnsafeDeframer (no zeroing): 66.943 µs
-    - Observation: within ~1% in this run.
+- The alternate deframer implementations (`UnsafeDeframer`, `SafeTakeDeframer`) were removed in the v0.2.7 hardening pass. The buffer is now a high-water mark that zeroes only on growth, so the steady-state read path performs no per-frame zeroing in fully safe code — the cost the variants existed to dodge no longer exists to pay.
 
 
 ### Simple streams (primitive types)
@@ -861,23 +957,22 @@ Brief test description:
 
 - Data shapes: Minimal numeric (3×u64) and fixed string (16 ASCII bytes)
 - Setup: 100 messages per iteration, in-memory buffers, Criterion medians
-- Comparators: flatstream (default read, unsafe read), bincode, serde_json; bincode/serde_json use a 4-byte length prefix for fairness
+- Comparators: FlatStream borrowed frame access versus bincode/serde_json owned deserialization; all use a 4-byte length prefix, but the consumption work differs. Treat these as workflow medians, not equal-work rankings.
 
 - Simple Streams (Numeric)/write_read_cycle_100 (messages/sec, median time):
-  - flatstream_default: ~32.1M (3.1163 µs)
-  - flatstream_default_unsafe_read: ~31.6M (3.1666 µs)
-  - bincode: ~28.9M (3.4559 µs)
-  - serde_json: ~10.6M (9.3950 µs)
+  - flatstream_default: ~31.2M (3.2010 µs)
+  - bincode: ~30.7M (3.2540 µs)
+  - serde_json: ~10.2M (9.7996 µs)
 
 - Simple Streams (String16)/write_read_cycle_100 (messages/sec, median time):
-  - flatstream_default: ~47.0M (2.1278 µs)
-  - flatstream_default_unsafe_read: ~47.7M (2.0993 µs)
-  - bincode: ~14.2M (7.0211 µs)
-  - serde_json: ~10.4M (9.6035 µs)
+  - flatstream_default: ~45.9M (2.1778 µs)
+  - bincode: ~20.0M (5.0011 µs)
+  - serde_json: ~12.9M (7.7608 µs)
 
 - Read-only deframer isolation (100 prewritten messages, messages/sec; median time):
-  - Numeric: default ~226M (442.57 ns), unsafe ~239M (419.33 ns)
-  - String16: default ~208M (480.18 ns), unsafe ~224M (445.18 ns)
+  - Numeric: default ~202M (493.89 ns)
+  - String16: default ~199M (502.50 ns)
+  - Note: attribute changes only with a saved Criterion baseline from the same machine, toolchain, and dependency set; cross-snapshot wall-clock differences are not causal evidence.
 
 
 ## Benchmarking and updating performance figures
@@ -893,21 +988,25 @@ Commands (write outputs to files):
 
 ```bash
 # 1) Core suite (flatstream-only benches)
-cargo bench | tee bench_results.txt
+cargo bench --locked --bench benchmarks | tee bench_results.txt
 
-# 2) Comparative suite (flatstream vs bincode/serde_json)
-cargo bench --features comparative_bench --bench comparative_benchmarks | tee bench_results.comparative.txt
+# 2) Comparative suite (flatstream vs bincode/serde_json; all_checksums enables
+#    the xxhash64/crc32/crc16 variants recorded in the results file)
+cargo bench --locked --features comparative_bench,all_checksums --bench comparative_benchmarks | tee bench_results.comparative.txt
 
 # 3) Simple streams suite (primitive types, plus read-only deframer isolation)
-cargo bench --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt
+cargo bench --locked --features comparative_bench --bench simple_benchmarks | tee bench_results.simple.txt
+
+# 4) Memory-policy overhead and reclamation trade-off
+cargo bench --locked --bench memory_policy_benchmarks | tee bench_results.memory_policy.txt
 ```
 
 Where to copy numbers from:
 
 - Simulated Telemetry Streams (comparative_benchmarks)
   - In `bench_results.comparative.txt`, extract the median times for:
-    - Small dataset (100 events): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
-  - Large dataset (~2.4 MiB): `flatstream_default`, `flatstream_default_unsafe_read`, `flatstream_xxhash64`, `bincode`, `serde_json`
+    - Small dataset (100 events): `flatstream_default`, `flatstream_xxhash64`, `bincode`, `serde_json`
+  - Large dataset (~2.4 MiB): `flatstream_default`, `flatstream_xxhash64`, `bincode`, `serde_json`
   - Update the section “Comparative benchmarks (current snapshot: YYYY/MM/DD)” in this README and refresh the date.
 
 - Simple streams (primitive types)
@@ -917,10 +1016,15 @@ Where to copy numbers from:
     - Read-only: `Simple Streams (Numeric)/read_only_100/*` and `Simple Streams (String16)/read_only_100/*`
   - Update the “Simple streams (primitive types)” section in this README.
 
+- Memory policies
+  - In `bench_results.memory_policy.txt`, extract `policy_overhead/*` and
+    `oscillation_reclamation/*`.
+  - Update the dated “Measured cost” snapshot in “Adaptive Memory Management.”
+
 Converting medians to messages/sec (optional, shown in this README):
 
 - For write_read_cycle_100: messages_per_sec ≈ 100 / median_seconds.
-  - Example: 3.10 µs → 3.10e-6 s → 100 / 3.10e-6 ≈ 32.3M msgs/s
+  - Example: 3.43 µs → 3.43e-6 s → 100 / 3.43e-6 ≈ 29.2M msgs/s
 - For read_only_100: messages_per_sec ≈ 100 / median_seconds (same formula).
 
 Notes:

@@ -2,7 +2,7 @@
 
 **Status:** Implemented / Verified (v0.2.7)  
 **Author:** Dallas Marlow  
-**Date:** 2025-08-12
+**Updated:** 2026-07-23
 
 ## 1. Overview
 
@@ -38,24 +38,36 @@ flowchart LR
 
 ## 5. Checksum Algorithms
 
-The writer and reader must agree out-of-band on one of the following algorithms. The checksum always covers the payload bytes only (the 4-byte length is not included in the calculation).
+The writer and reader must agree out-of-band on one of the following built-in algorithms. The checksum always covers the payload bytes only (the 4-byte length is not included in the calculation).
 
 - 0 bytes: No checksum
-- 2 bytes: CRC16 (XMODEM) — stored as `u16` LE
-- 4 bytes: CRC32 (Castagnoli/implementation-compatible with `crc32fast`) — stored as `u32` LE
+- 2 bytes: CRC-16/XMODEM — stored as `u16` LE
+- 4 bytes: CRC-32/ISO-HDLC (the IEEE/zlib polynomial, as computed by `crc32fast`) — stored as `u32` LE
 - 8 bytes: XXH3-64 — stored as `u64` LE
 
+Known-answer vectors (input = ASCII `"123456789"`; use these to validate a foreign implementation before trusting it):
+
+| Algorithm | KAT value |
+|---|---|
+| CRC-16/XMODEM | `0x31C3` |
+| CRC-32/ISO-HDLC | `0xCBF43926` |
+| XXH3-64 | `0x72DCB18B67A17DFF` |
+
 Notes:
-- In the Rust implementation, the concrete algorithms are `Crc16` (XMODEM), `Crc32` (via `crc32fast`), and `XxHash64` (XXH3-64). Values are cast to `u64` internally but written with their exact on-wire width (2/4/8 bytes, little-endian).
-- Additional algorithms may be added in future versions. Negotiation remains out-of-band.
+- **The CRC-32 is ISO-HDLC, not CRC-32C/Castagnoli** (Castagnoli's KAT is `0xE3069283`). A previous revision of this document misnamed the algorithm and its reference reader used the Castagnoli table — a reader built from that revision cannot validate these streams. The KAT table above is normative and is pinned by `known_answer_vectors` in `src/checksum.rs`.
+- In the Rust implementation, the concrete algorithms are `Crc16` (XMODEM), `Crc32` (ISO-HDLC via `crc32fast`), and `XxHash64` (XXH3-64). Values are cast to `u64` internally but written with their exact on-wire width (2/4/8 bytes, little-endian).
+- Custom Rust `Checksum` implementations may declare any exact width from 0
+  through 8 bytes. Additional algorithms (CRC-32C, for example) are new
+  out-of-band strategies, never redefinitions of an existing algorithm.
 
 ## 6. Reader State Machine (Informative)
 
 1. Read 4 bytes → `L` (u32 LE). On clean EOF here, signal end-of-stream; on partial read, signal `UnexpectedEof`.
-2. If checksummed, read `N` checksum bytes → `C` (u16/u32/u64 LE depending on algorithm). Partial read → `UnexpectedEof`.
-3. Read `L` payload bytes into a buffer. Partial read → `UnexpectedEof`.
-4. If checksummed, compute `C' = checksum(payload)` and compare with `C` (after width truncation). Mismatch → `ChecksumMismatch`.
-5. Yield `payload` to the caller. Repeat from step 1.
+2. If `L` exceeds the reader's configured maximum payload length, signal `InvalidFrame` — before any allocation is sized from `L`.
+3. If checksummed, read `N` checksum bytes → `C` (u16/u32/u64 LE depending on algorithm). Partial read → `UnexpectedEof`.
+4. Read `L` payload bytes into a buffer. Partial read → `UnexpectedEof`.
+5. If checksummed, compute `C' = checksum(payload)` and compare with `C` (after width truncation). Mismatch → `ChecksumMismatch`.
+6. Yield `payload` to the caller. Repeat from step 1.
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +99,8 @@ stateDiagram-v2
 ## 8. Interoperability Requirements
 
 - Integer endianness is little-endian for all header fields.
-- The checksum field width must match the configured algorithm exactly (2/4/8 bytes).
+- The checksum field width must match the configured algorithm exactly
+  (2/4/8 bytes for the built-ins; 0–8 bytes for custom algorithms).
 - The checksum covers only the payload bytes.
 - The checksum algorithm is not self-describing; implementations must be initialized with the agreed algorithm before reading.
 - Frames are concatenated with no separators. Clean EOF may only occur between frames.
@@ -95,7 +108,11 @@ stateDiagram-v2
 
 ## 9. Reference Reader (Go, CRC32)
 
-The following ~20-line Go function reads a single frame from a `bufio.Reader`. Set `withCRC32=false` to read a stream without checksums.
+The following compact Go function reads a single frame from a `bufio.Reader`.
+Set `withCRC32=false` to read a stream without checksums. It applies an
+application-level 16 MiB bound before allocating the payload buffer — the Rust
+reader accepts the full `u32` range by default and expects callers to set their
+own bound the same way (§8); pick the limit that matches your payloads.
 
 ```go
 package wirefmt
@@ -104,16 +121,20 @@ import (
     "bufio"
     "encoding/binary"
     "errors"
+    "fmt"
     "hash/crc32"
     "io"
 )
 
-var crc32c = crc32.MakeTable(crc32.Castagnoli)
+const maxFrameLen uint32 = 16 * 1024 * 1024
 
 func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
     var lenLE [4]byte
     if _, err := io.ReadFull(r, lenLE[:]); err != nil { return nil, err }
     n := binary.LittleEndian.Uint32(lenLE[:])
+    if n > maxFrameLen {
+        return nil, fmt.Errorf("frame length %d exceeds limit %d", n, maxFrameLen)
+    }
 
     var exp uint32
     if withCRC32 {
@@ -126,7 +147,8 @@ func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
     if _, err := io.ReadFull(r, buf); err != nil { return nil, err }
 
     if withCRC32 {
-        if crc32.Checksum(buf, crc32c) != exp {
+        // CRC-32/ISO-HDLC — Go's IEEE table (KAT: "123456789" → 0xCBF43926).
+        if crc32.ChecksumIEEE(buf) != exp {
             return nil, errors.New("checksum mismatch")
         }
     }
@@ -135,13 +157,16 @@ func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
 ```
 
 Adaptation notes:
+- `io.ReadFull` returns `io.EOF` when zero header bytes are available and
+  `io.ErrUnexpectedEOF` after a partial header, preserving the clean-boundary
+  versus torn-frame distinction.
 - For CRC16, read/write 2 bytes (LE) and use an XMODEM polynomial implementation.
 - For XXH3-64, read/write 8 bytes (LE) and use a XXH3-64 function.
 
 ## 10. Conformance Checklist
 
 - [ ] Read 4-byte LE length and enforce a configured maximum before allocation
-- [ ] Read exact checksum width (2/4/8) based on agreed algorithm
+- [ ] Read the exact checksum width agreed for the algorithm
 - [ ] Read exact `L` payload bytes
 - [ ] Verify checksum over payload only (when enabled)
 - [ ] Treat partial reads as `UnexpectedEof`
@@ -155,10 +180,16 @@ Adaptation notes:
 - Denial-of-service: Reject frames exceeding reasonable application limits.
 - Algorithm agility: Ensure both sides agree on algorithm and width; do not auto-detect from width alone unless strictly controlled.
 - Payload validity: Use FlatBuffers’ verifier on the payload when needed; the framing layer provides integrity, not schema validation.
+- Authentication: The built-in checksums are non-cryptographic. They detect
+  accidental corruption but do not prevent an attacker from modifying a
+  payload and recomputing its checksum; use a MAC or authenticated transport
+  when tampering is in scope.
 
 ## 12. Versioning and Compatibility
 
-- The current wire format is stable and backward-compatible for existing algorithms. New checksum algorithms can be added without changing the frame structure, provided both sides agree out-of-band.
+- The current wire format is stable for the built-in algorithms. New checksum
+  algorithms can be added without changing the frame structure, provided both
+  sides agree on the algorithm and exact width out-of-band.
 - The on-wire representation of integers remains little-endian across platforms.
 
 ## 13. Appendix: Example Hex (Format-Level)

@@ -25,9 +25,10 @@ struct PolicySlot<'a, A: flatbuffers::Allocator> {
 /// This writer is generic over a `Framer` strategy, which defines how
 /// each message is framed in the byte stream (e.g., with or without a checksum).
 ///
-/// **Zero-Copy Guarantee**: Both writing modes maintain perfect zero-copy behavior.
-/// After serialization, `builder.finished_data()` returns a direct slice that's
-/// written to I/O without any intermediate copies.
+/// **Copy behavior**: Both writing modes pass `builder.finished_data()` to the
+/// `Write` target directly — the library introduces no intermediate payload
+/// copy. (The target itself may copy, e.g. `BufWriter` staging into its
+/// buffer; that is the target's contract, not this crate's.)
 ///
 /// The writer can operate in two modes:
 /// 1. **Simple mode**: Writer manages its own builder internally
@@ -211,7 +212,8 @@ where
         // Reset the internal builder for reuse
         self.builder.reset();
 
-        // Direct serialization to the builder - no temporary allocations or copying
+        // Serialize directly into the reusable builder. The implementation of
+        // StreamSerialize controls any temporary work it performs.
         item.serialize(&mut self.builder)?;
 
         // Get the finished payload from the builder
@@ -280,8 +282,8 @@ where
     ///
     /// # Performance
     /// - Zero allocations with proper builder reuse via `reset()`
-    /// - Up to 2x faster than simple mode for large messages
-    /// - Enables memory-efficient handling of mixed message sizes
+    /// - Avoids internal-builder bloat and gives the caller full control over
+    ///   builder lifecycle and allocation for mixed message sizes
     ///
     /// # Memory policy
     /// Any installed [`MemoryPolicy`] does **not** apply here: the builder is
@@ -343,163 +345,99 @@ where
 mod tests {
     use super::*;
     use crate::framing::DefaultFramer;
+    use crate::policy::NoOpPolicy;
 
+    #[cfg(feature = "xxhash")]
+    use crate::checksum::Checksum;
     #[cfg(feature = "xxhash")]
     use crate::{ChecksumFramer, XxHash64};
     use std::io::Cursor;
 
-    #[test]
-    fn test_write_default_framer() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        // Create and finish a builder
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
+    /// Serializes `s` as a string root into `builder` and returns the exact
+    /// payload bytes the writer must put on the wire.
+    fn finished(builder: &mut FlatBufferBuilder, s: &str) -> Vec<u8> {
+        builder.reset();
+        let data = builder.create_string(s);
         builder.finish(data, None);
+        builder.finished_data().to_vec()
+    }
 
-        assert!(writer.write_finished(&mut builder).is_ok());
+    #[test]
+    fn write_finished_default_layout_is_byte_exact() {
+        // The on-wire output is fully specified: [4-byte LE len | payload] per
+        // frame, concatenated. Assert the exact bytes for a 3-frame stream.
+        let mut wire = Vec::new();
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+        let mut builder = FlatBufferBuilder::new();
 
-        let data = buffer;
-        assert!(!data.is_empty());
-        // DefaultFramer: 4 bytes (length) + payload (no checksum)
-        assert!(data.len() >= 4);
+        let mut expected = Vec::new();
+        for i in 0..3 {
+            let payload = finished(&mut builder, &format!("message {i}"));
+            writer.write_finished(&mut builder).unwrap();
+            expected.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            expected.extend_from_slice(&payload);
+        }
+        writer.flush().unwrap();
+        drop(writer);
+        assert_eq!(wire, expected);
     }
 
     #[cfg(feature = "xxhash")]
     #[test]
-    fn test_write_with_checksum_feature() {
-        let mut buffer = Vec::new();
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        // Create and finish a builder
+    fn write_finished_checksummed_layout_is_byte_exact() {
+        // [4-byte LE len | 8-byte LE xxh3 | payload], checksum over the payload
+        // only. Recompute the checksum independently and assert exact bytes.
+        let mut wire = Vec::new();
+        let mut writer =
+            StreamWriter::new(Cursor::new(&mut wire), ChecksumFramer::new(XxHash64::new()));
         let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
+        let payload = finished(&mut builder, "test data");
+        writer.write_finished(&mut builder).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
 
-        assert!(writer.write_finished(&mut builder).is_ok());
-
-        let data = buffer;
-        assert!(!data.is_empty());
-        // Should have: 4 bytes (length) + 8 bytes (checksum) + payload
-        assert!(data.len() >= 12);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        expected.extend_from_slice(&XxHash64::new().calculate(&payload).to_le_bytes());
+        expected.extend_from_slice(&payload);
+        assert_eq!(wire, expected);
     }
 
     #[test]
-    fn test_write_without_checksum() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+    fn simple_mode_writes_readable_string_root() {
+        // Simple mode serializes through the internal builder; the framed
+        // payload must parse back as the same string root.
+        let mut wire = Vec::new();
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+        writer.write(&"test message").unwrap();
+        writer.flush().unwrap();
+        drop(writer);
 
-        // Create and finish a builder
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("no checksum");
-        builder.finish(data, None);
-
-        assert!(writer.write_finished(&mut builder).is_ok());
-
-        let data = buffer;
-        assert!(!data.is_empty());
-        // Should have: 4 bytes (length) + payload (no checksum)
-        assert!(data.len() >= 4);
+        let len = u32::from_le_bytes(wire[..4].try_into().unwrap()) as usize;
+        assert_eq!(wire.len(), 4 + len);
+        let root = flatbuffers::root::<&str>(&wire[4..]).unwrap();
+        assert_eq!(root, "test message");
     }
 
     #[test]
-    fn test_multiple_messages() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+    fn write_with_policy_installed_is_transparent() {
+        // An installed no-op policy must not change the bytes written.
+        let mut without = Vec::new();
+        StreamWriter::new(Cursor::new(&mut without), DefaultFramer)
+            .write(&"policy message")
+            .unwrap();
 
-        for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            assert!(writer.write_finished(&mut builder).is_ok());
-        }
+        let mut with_policy = Vec::new();
+        StreamWriter::new(Cursor::new(&mut with_policy), DefaultFramer)
+            .with_memory_policy(NoOpPolicy)
+            .write(&"policy message")
+            .unwrap();
 
-        let data = buffer;
-        assert!(!data.is_empty());
-    }
-
-    #[cfg(feature = "xxhash")]
-    #[test]
-    fn test_multiple_messages_with_checksum() {
-        let mut buffer = Vec::new();
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            assert!(writer.write_finished(&mut builder).is_ok());
-        }
-
-        let data = buffer;
-        assert!(!data.is_empty());
+        assert_eq!(with_policy, without);
     }
 
     #[test]
-    fn test_simple_write_mode() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        // Test the simple write mode with a string
-        assert!(writer.write(&"test message").is_ok());
-
-        let data = buffer;
-        assert!(!data.is_empty());
-        // Should have: 4 bytes (length) + payload
-        assert!(data.len() >= 4);
-    }
-
-    #[test]
-    fn test_multiple_simple_writes() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        // Test multiple simple writes
-        assert!(writer.write(&"message 1").is_ok());
-        assert!(writer.write(&"message 2").is_ok());
-        assert!(writer.write(&"message 3").is_ok());
-
-        let data = buffer;
-        assert!(!data.is_empty());
-    }
-
-    #[test]
-    fn test_flush() {
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-        assert!(writer.flush().is_ok());
-    }
-
-    #[test]
-    fn test_write_with_policy_installed() {
-        use crate::policy::NoOpPolicy;
-
-        let mut buffer = Vec::new();
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), DefaultFramer)
-            .with_memory_policy(NoOpPolicy);
-
-        assert!(writer.write(&"policy message 1").is_ok());
-        assert!(writer.write(&"policy message 2").is_ok());
-
-        let data = buffer;
-        assert!(!data.is_empty());
-    }
-
-    #[test]
-    fn test_writer_with_policy_is_send() {
-        use crate::policy::NoOpPolicy;
-
+    fn writer_with_policy_is_send() {
         fn assert_send<T: Send>(_: &T) {}
         let writer =
             StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(NoOpPolicy);

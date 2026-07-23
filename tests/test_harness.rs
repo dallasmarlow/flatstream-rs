@@ -84,7 +84,8 @@ impl TestHarness {
 }
 
 // A reusable macro for defining standard framer/deframer write-read cycle tests.
-// Placed here to centralize common test patterns.
+// Placed here to centralize common test patterns. Read-back asserts payload
+// *content* equality against the exact builder bytes, not just frame counts.
 #[allow(unused_macros)]
 macro_rules! test_framer_deframer_pair {
     ($test_name:ident, $framer:expr, $deframer:expr, $messages:expr) => {
@@ -95,7 +96,9 @@ macro_rules! test_framer_deframer_pair {
 
             let harness = TestHarness::new();
 
-            // Write phase: frame and persist messages using the provided framer
+            // Write phase: frame and persist messages using the provided framer,
+            // capturing the exact payload bytes the stream must reproduce.
+            let mut expected: Vec<Vec<u8>> = Vec::new();
             {
                 let mut stream_writer = harness.writer($framer);
                 let mut builder = FlatBufferBuilder::new();
@@ -103,23 +106,24 @@ macro_rules! test_framer_deframer_pair {
                     builder.reset();
                     let data = builder.create_string(msg);
                     builder.finish(data, None);
+                    expected.push(builder.finished_data().to_vec());
                     stream_writer.write_finished(&mut builder).unwrap();
                 }
                 stream_writer.flush().unwrap();
             }
 
-            // Read phase: deframe and count messages using the provided deframer
+            // Read phase: every payload must come back byte-identical, in order.
             {
                 let mut stream_reader = harness.reader($deframer);
                 let mut count = 0usize;
                 stream_reader
                     .process_all(|payload| {
-                        assert!(!payload.is_empty() || $messages.is_empty());
+                        assert_eq!(payload, &expected[count][..]);
                         count += 1;
                         Ok(())
                     })
                     .unwrap();
-                assert_eq!(count, $messages.len());
+                assert_eq!(count, expected.len());
             }
         }
     };

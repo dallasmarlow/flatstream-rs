@@ -8,7 +8,7 @@ struct StrRoot;
 impl<'a> StreamDeserialize<'a> for StrRoot {
     type Root = &'a str;
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     }
 }
 
@@ -35,7 +35,8 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
     // Design: Prebuild buffers with 1k/10k/100k string messages, then compare:
     // - manual_*: manual `flatbuffers::root::<&str>` within `process_all`
     // - typed_*: `process_typed::<StrRoot, _>` using `StreamDeserialize`
-    // - typed_unchecked_*: `process_typed_unchecked` (feature-gated), skipping verification
+    // - typed_unchecked_*: unsafe `process_typed_unchecked` (feature-gated),
+    //   skipping verification for the valid buffers prepared by this benchmark
     //
     // Takeaway:
     // - typed_* should match manual_* throughput for valid data, with better ergonomics/safety
@@ -49,7 +50,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
     // Manual verification path: baseline correctness and performance
     group.bench_function("manual_small", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -62,7 +63,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("manual_medium", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -75,7 +76,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("manual_large", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -89,7 +90,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
     // Typed, safe path: should be equivalent to manual for valid inputs
     group.bench_function("typed_small", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -101,7 +102,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("typed_medium", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -113,7 +114,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("typed_large", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -128,37 +129,49 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
         // Unchecked typed path: skips verification; use only for trusted data
         group.bench_function("typed_unchecked_small", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
-                reader
-                    .process_typed_unchecked::<StrRoot, _>(|root| {
-                        black_box(root);
-                        Ok(())
-                    })
-                    .unwrap();
+                let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
+                // SAFETY: `small` was constructed above as a stream of valid
+                // FlatBuffer `&str` roots.
+                unsafe {
+                    reader
+                        .process_typed_unchecked::<StrRoot, _>(|root| {
+                            black_box(root);
+                            Ok(())
+                        })
+                        .unwrap();
+                }
             });
         });
 
         group.bench_function("typed_unchecked_medium", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
-                reader
-                    .process_typed_unchecked::<StrRoot, _>(|root| {
-                        black_box(root);
-                        Ok(())
-                    })
-                    .unwrap();
+                let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
+                // SAFETY: `medium` was constructed above as a stream of valid
+                // FlatBuffer `&str` roots.
+                unsafe {
+                    reader
+                        .process_typed_unchecked::<StrRoot, _>(|root| {
+                            black_box(root);
+                            Ok(())
+                        })
+                        .unwrap();
+                }
             });
         });
 
         group.bench_function("typed_unchecked_large", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
-                reader
-                    .process_typed_unchecked::<StrRoot, _>(|root| {
-                        black_box(root);
-                        Ok(())
-                    })
-                    .unwrap();
+                let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
+                // SAFETY: `large` was constructed above as a stream of valid
+                // FlatBuffer `&str` roots.
+                unsafe {
+                    reader
+                        .process_typed_unchecked::<StrRoot, _>(|root| {
+                            black_box(root);
+                            Ok(())
+                        })
+                        .unwrap();
+                }
             });
         });
     }

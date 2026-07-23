@@ -5,6 +5,20 @@ use crate::error::{Error, Result};
 use crate::validation::Validator;
 use std::io::{Read, Write};
 
+/// Default maximum accepted payload length for the core deframers: the full
+/// range a 32-bit length header can address (`u32::MAX`, ~4 GiB).
+///
+/// The wire format's `u32` length prefix caps every frame at this size, so the
+/// default reads any valid frame out of the box (comfortably above FlatBuffers'
+/// own 2 GiB buffer ceiling). A length header is nonetheless
+/// attacker-controlled input (a torn or corrupt frame is the *expected* input
+/// for a journal after a crash), so when reading from an untrusted source,
+/// tighten the accepted length with
+/// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len): a single integer
+/// compare then rejects an oversized declared length before any allocation is
+/// sized from it.
+pub const DEFAULT_MAX_FRAME_LEN: usize = u32::MAX as usize;
+
 //--- Framer Trait and Implementations ---
 
 /// A trait that defines how a raw payload is framed and written to a stream.
@@ -38,7 +52,10 @@ impl Framer for DefaultFramer {
     }
 }
 
-/// A framing strategy that includes a checksum: `[4-byte length | 8-byte checksum | payload]`
+/// A framing strategy that includes a checksum:
+/// `[4-byte length | C::SIZE-byte checksum | payload]` — the checksum field's
+/// width is the algorithm's associated `SIZE` (8 for XXH3-64, 4 for CRC-32,
+/// 2 for CRC-16), not a fixed 8 bytes.
 ///
 /// When to use: Integrity validation at read-time and/or independent message corruption detection.
 pub struct ChecksumFramer<C: Checksum> {
@@ -47,6 +64,12 @@ pub struct ChecksumFramer<C: Checksum> {
 
 impl<C: Checksum> ChecksumFramer<C> {
     pub fn new(checksum_alg: C) -> Self {
+        const {
+            assert!(
+                C::SIZE <= 8,
+                "checksum wider than the u64 the trait works in"
+            )
+        };
         Self { checksum_alg }
     }
 }
@@ -64,12 +87,13 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         }
         let payload_len = payload.len() as u32;
         let checksum = self.checksum_alg.calculate(payload);
-        let checksum_size = self.checksum_alg.size();
 
         // Assemble the full header ([4-byte length | checksum bytes]) in a
         // 12-byte stack scratch and issue a single write_all — halves the call
         // count on this path versus writing length and checksum separately.
         // The bytes on the wire are identical (wire-format corpus tests).
+        // `C::SIZE` is an associated const, so the header length and the
+        // serialization width constant-fold by construction.
         //
         // On "copying" here: only header *metadata* is materialized — integers
         // must become little-endian bytes somewhere, and previously each
@@ -80,27 +104,10 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         // bytes.
         let mut header = [0u8; 12];
         header[..4].copy_from_slice(&payload_len.to_le_bytes());
-        let header_len = match checksum_size {
-            0 => 4,
-            2 => {
-                // 2 bytes for CRC16
-                header[4..6].copy_from_slice(&(checksum as u16).to_le_bytes());
-                6
-            }
-            4 => {
-                // 4 bytes for CRC32
-                header[4..8].copy_from_slice(&(checksum as u32).to_le_bytes());
-                8
-            }
-            _ => {
-                // 8 bytes for XXHash64; any other size also writes the full
-                // u64 (matching the previous behavior)
-                header[4..12].copy_from_slice(&checksum.to_le_bytes());
-                12
-            }
-        };
+        let checksum_field: &mut [u8; 8] = (&mut header[4..12]).try_into().unwrap();
+        self.checksum_alg.write_bytes(checksum, checksum_field);
 
-        writer.write_all(&header[..header_len])?;
+        writer.write_all(&header[..4 + C::SIZE])?;
         writer.write_all(payload)?;
         Ok(())
     }
@@ -108,83 +115,184 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
 
 //--- Deframer Trait and Implementations ---
 
+/// Fills `header` from `reader`, distinguishing the EOF cases the wire spec
+/// separates (`WIRE_FORMAT_SPEC.md` §6): zero bytes then EOF is a clean
+/// frame boundary (`Ok(None)`); a torn header (some but not all bytes) is
+/// `ErrorKind::UnexpectedEof`; all other I/O errors propagate intact as
+/// `ErrorKind::Io`. `Interrupted` reads are retried, matching `read_exact`.
+///
+/// Shape matters here: the boundary probe is a one-byte `read_exact` — a
+/// one-byte request cannot be torn, so its `UnexpectedEof` means exactly
+/// "zero bytes available", i.e. a clean boundary. Both calls are `read_exact`
+/// with lengths statically known at every monomorphized call site, so they
+/// compile to plain loads; reading the whole header through one dynamic
+/// `read` call costs a real memcpy per frame — measured at +100% on the
+/// tight read loops.
+#[inline(always)]
+fn read_header<R: Read>(reader: &mut R, header: &mut [u8]) -> Result<Option<()>> {
+    match reader.read_exact(&mut header[..1]) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    reader
+        .read_exact(&mut header[1..])
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::unexpected_eof(),
+            _ => e.into(),
+        })?;
+    Ok(Some(()))
+}
+
+/// Rejects a declared payload length that exceeds the configured bound —
+/// before any allocation is sized from it.
+#[inline(always)]
+fn check_frame_len(payload_len: usize, max: usize) -> Result<()> {
+    if payload_len > max {
+        return Err(Error::invalid_frame_with(
+            "frame length exceeds configured limit",
+            Some(payload_len),
+            None,
+            Some(max),
+        ));
+    }
+    Ok(())
+}
+
+/// Reads `payload_len` bytes into the front of `buffer`, growing (and
+/// zero-initializing) it only when the high-water mark rises. A partial
+/// payload is `ErrorKind::UnexpectedEof`; other I/O errors propagate intact.
+#[inline(always)]
+fn read_payload<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, payload_len: usize) -> Result<()> {
+    if payload_len > buffer.len() {
+        buffer.resize(payload_len, 0);
+    }
+    reader
+        .read_exact(&mut buffer[..payload_len])
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Error::unexpected_eof(),
+            _ => e.into(),
+        })
+}
+
 /// A trait that defines how a message is deframed and read from a stream.
 ///
-/// Purpose: Parse a framed stream into payload slices, validating headers and (optionally) checksums.
+/// Purpose: Parse a framed stream into payload lengths, validating headers and
+/// (optionally) checksums. On success `buffer[..n]` holds the payload; the
+/// buffer is a high-water mark — implementations grow it as needed (zeroing
+/// only the growth) and never shrink it, so steady-state reads touch memory
+/// exactly once, in `read_exact`.
 pub trait Deframer {
-    /// Returns Ok(Some(())) on success, Ok(None) on clean EOF.
-    fn read_and_deframe<R: Read>(&self, reader: &mut R, buffer: &mut Vec<u8>)
-        -> Result<Option<()>>;
-
-    /// Fast-path: called when the 4-byte little-endian payload length has already been read.
-    /// Implementations must read any additional header fields (e.g., checksum), then the payload.
-    fn read_after_length<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-        payload_len: usize,
-    ) -> Result<Option<()>>;
-}
-
-/// The default deframing strategy.
-///
-/// When to use: Safe, straightforward parser. Resizes and zeroes the buffer.
-#[derive(Clone, Copy, Default)]
-pub struct DefaultDeframer;
-
-impl DefaultDeframer {
-    // Intentionally no constructor; use `DefaultDeframer` unit value directly or `DefaultDeframer::default()`.
-}
-
-impl Deframer for DefaultDeframer {
+    /// Reads one frame. Returns `Ok(Some(n))` with the payload length on
+    /// success (payload in `buffer[..n]`), `Ok(None)` on clean EOF at a frame
+    /// boundary; EOF anywhere inside a frame is `ErrorKind::UnexpectedEof`.
+    ///
+    /// The provided implementation reads the 4-byte little-endian length
+    /// header and delegates to [`read_after_length`](Self::read_after_length).
+    #[inline]
     fn read_and_deframe<R: Read>(
         &self,
         reader: &mut R,
         buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
+    ) -> Result<Option<usize>> {
         let mut len_bytes = [0u8; 4];
-        match reader.read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None), // Clean EOF
-            Err(e) => return Err(e.into()),
+        match read_header(reader, &mut len_bytes)? {
+            Some(()) => {
+                self.read_after_length(reader, buffer, u32::from_le_bytes(len_bytes) as usize)
+            }
+            None => Ok(None),
         }
-
-        let payload_len = u32::from_le_bytes(len_bytes) as usize;
-        buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-
-        Ok(Some(()))
     }
 
+    /// Continues a read whose 4-byte little-endian payload length has already
+    /// been parsed. Implementations must bound `payload_len` before sizing any
+    /// allocation from it, then read any additional header fields (e.g.
+    /// checksum) and the payload.
     fn read_after_length<R: Read>(
         &self,
         reader: &mut R,
         buffer: &mut Vec<u8>,
         payload_len: usize,
-    ) -> Result<Option<()>> {
-        buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-        Ok(Some(()))
+    ) -> Result<Option<usize>>;
+}
+
+/// The default deframing strategy for `[4-byte length | payload]` streams.
+///
+/// When to use: The general-purpose parser for almost all cases. By default it
+/// accepts any length a 32-bit header can declare ([`DEFAULT_MAX_FRAME_LEN`],
+/// ~4 GiB) — the wire format's own ceiling. When reading from an untrusted
+/// source, tighten the accepted length with
+/// [`with_max_frame_len`](Self::with_max_frame_len) so a corrupt header can't
+/// demand a huge allocation.
+#[derive(Clone, Copy)]
+pub struct DefaultDeframer {
+    max_frame_len: usize,
+}
+
+impl DefaultDeframer {
+    pub fn new() -> Self {
+        Self {
+            max_frame_len: DEFAULT_MAX_FRAME_LEN,
+        }
+    }
+
+    /// Sets the maximum accepted payload length (enforced before allocation).
+    pub fn with_max_frame_len(mut self, max: usize) -> Self {
+        self.max_frame_len = max;
+        self
+    }
+}
+
+impl Default for DefaultDeframer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Deframer for DefaultDeframer {
+    #[inline]
+    fn read_after_length<R: Read>(
+        &self,
+        reader: &mut R,
+        buffer: &mut Vec<u8>,
+        payload_len: usize,
+    ) -> Result<Option<usize>> {
+        check_frame_len(payload_len, self.max_frame_len)?;
+        read_payload(reader, buffer, payload_len)?;
+        Ok(Some(payload_len))
     }
 }
 
 /// A deframing strategy that verifies a checksum.
 ///
 /// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
+/// Applies the same length policy as [`DefaultDeframer`]: the wire format's
+/// ~4 GiB ceiling by default ([`DEFAULT_MAX_FRAME_LEN`]), tightened for
+/// untrusted input with [`with_max_frame_len`](Self::with_max_frame_len).
 #[derive(Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
+    max_frame_len: usize,
 }
 
 impl<C: Checksum> ChecksumDeframer<C> {
     pub fn new(checksum_alg: C) -> Self {
-        Self { checksum_alg }
+        const {
+            assert!(
+                C::SIZE <= 8,
+                "checksum wider than the u64 the trait works in"
+            )
+        };
+        Self {
+            checksum_alg,
+            max_frame_len: DEFAULT_MAX_FRAME_LEN,
+        }
+    }
+
+    /// Sets the maximum accepted payload length (enforced before allocation).
+    pub fn with_max_frame_len(mut self, max: usize) -> Self {
+        self.max_frame_len = max;
+        self
     }
 }
 
@@ -193,67 +301,25 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         &self,
         reader: &mut R,
         buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
-        // This directly addresses Lesson 3: Distinguish between clean and unexpected EOF.
-        let mut len_bytes = [0u8; 4];
-        match reader.read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
+    ) -> Result<Option<usize>> {
+        // Read `[len | checksum]` as one header (write-path twin of the
+        // ChecksumFramer's single-write_all assembly). Safe only because
+        // `read_header` distinguishes a clean frame boundary (zero bytes)
+        // from a torn header — a plain `read_exact` over the merged header
+        // could not tell those apart (spec §6). `C::SIZE` keeps the header
+        // length statically known, so the reads compile to plain loads.
+        let mut header = [0u8; 12];
+        match read_header(reader, &mut header[..4 + C::SIZE])? {
+            Some(()) => {}
+            None => return Ok(None),
         }
+        let payload_len = u32::from_le_bytes(header[..4].try_into().unwrap()) as usize;
+        check_frame_len(payload_len, self.max_frame_len)?;
+        let expected = self.checksum_alg.read_bytes(&header[4..4 + C::SIZE]);
 
-        let payload_len = u32::from_le_bytes(len_bytes) as usize;
-        let checksum_size = self.checksum_alg.size();
-
-        // Read checksum bytes based on the checksum size
-        let expected_checksum = match checksum_size {
-            0 => {
-                // No checksum to read
-                0
-            }
-            2 => {
-                // Read 2 bytes for CRC16
-                let mut checksum_bytes = [0u8; 2];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u16::from_le_bytes(checksum_bytes) as u64
-            }
-            4 => {
-                // Read 4 bytes for CRC32
-                let mut checksum_bytes = [0u8; 4];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u32::from_le_bytes(checksum_bytes) as u64
-            }
-            8 => {
-                // Read 8 bytes for XXHash64
-                let mut checksum_bytes = [0u8; 8];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u64::from_le_bytes(checksum_bytes)
-            }
-            _ => {
-                // For any other size, read 8 bytes (backward compatibility)
-                let mut checksum_bytes = [0u8; 8];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u64::from_le_bytes(checksum_bytes)
-            }
-        };
-
-        buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-
-        self.checksum_alg.verify(expected_checksum, buffer)?;
-
-        Ok(Some(()))
+        read_payload(reader, buffer, payload_len)?;
+        self.checksum_alg.verify(expected, &buffer[..payload_len])?;
+        Ok(Some(payload_len))
     }
 
     fn read_after_length<R: Read>(
@@ -261,240 +327,30 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         reader: &mut R,
         buffer: &mut Vec<u8>,
         payload_len: usize,
-    ) -> Result<Option<()>> {
-        let checksum_size = self.checksum_alg.size();
+    ) -> Result<Option<usize>> {
+        check_frame_len(payload_len, self.max_frame_len)?;
 
-        let expected_checksum = match checksum_size {
-            0 => 0,
-            2 => {
-                let mut checksum_bytes = [0u8; 2];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u16::from_le_bytes(checksum_bytes) as u64
-            }
-            4 => {
-                let mut checksum_bytes = [0u8; 4];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u32::from_le_bytes(checksum_bytes) as u64
-            }
-            8 => {
-                let mut checksum_bytes = [0u8; 8];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u64::from_le_bytes(checksum_bytes)
-            }
-            _ => {
-                let mut checksum_bytes = [0u8; 8];
-                reader
-                    .read_exact(&mut checksum_bytes)
-                    .map_err(|_| Error::UnexpectedEof)?;
-                u64::from_le_bytes(checksum_bytes)
-            }
-        };
+        // The length header is already consumed, so EOF here is inside the
+        // frame: a torn checksum field maps to UnexpectedEof, every other
+        // I/O error propagates intact (recovery logic needs the kind).
+        let mut checksum_bytes = [0u8; 8];
+        reader
+            .read_exact(&mut checksum_bytes[..C::SIZE])
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::UnexpectedEof => Error::unexpected_eof(),
+                _ => e.into(),
+            })?;
+        let expected = self.checksum_alg.read_bytes(&checksum_bytes);
 
-        buffer.resize(payload_len, 0);
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-
-        self.checksum_alg.verify(expected_checksum, buffer)?;
-        Ok(Some(()))
-    }
-}
-
-/// A high-performance deframer that uses an `unsafe` block to avoid unnecessary buffer zeroing.
-///
-/// Safety: Only use with trusted data sources (e.g., files you just wrote). Avoids buffer
-/// initialization to remove zeroing cost; ensures capacity via `reserve` and sets length with `unsafe`.
-#[derive(Clone, Copy, Default)]
-pub struct UnsafeDeframer;
-
-impl UnsafeDeframer {
-    // Intentionally no constructor; use `UnsafeDeframer` unit value directly.
-}
-
-// Implementation for the unsafe version
-impl Deframer for UnsafeDeframer {
-    fn read_and_deframe<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
-        let mut len_bytes = [0u8; 4];
-        match reader.read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
-        }
-
-        let payload_len = u32::from_le_bytes(len_bytes) as usize;
-
-        buffer.clear();
-        if buffer.capacity() < payload_len {
-            let additional = payload_len.saturating_sub(buffer.len());
-            if additional > 0 {
-                buffer.reserve(additional);
-            }
-        }
-
-        unsafe {
-            buffer.set_len(payload_len);
-        }
-
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-        Ok(Some(()))
-    }
-
-    fn read_after_length<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-        payload_len: usize,
-    ) -> Result<Option<()>> {
-        // Only grow the buffer if current capacity is insufficient.
-        if buffer.capacity() < payload_len {
-            let additional = payload_len.saturating_sub(buffer.len());
-            if additional > 0 {
-                buffer.reserve(additional);
-            }
-        }
-        unsafe {
-            buffer.set_len(payload_len);
-        }
-        reader.read_exact(buffer).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-            _ => e.into(),
-        })?;
-        Ok(Some(()))
-    }
-}
-
-/// Deframer using the safe `Read::take` method.
-///
-/// When to use: Alternative safe implementation; performance may vary with reader type.
-#[derive(Clone, Copy, Default)]
-pub struct SafeTakeDeframer;
-
-impl SafeTakeDeframer {
-    // Intentionally no constructor; use `SafeTakeDeframer` unit value directly.
-}
-
-// Implementation for the safe version
-impl Deframer for SafeTakeDeframer {
-    fn read_and_deframe<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
-        let mut len_bytes = [0u8; 4];
-        match reader.read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
-        }
-
-        let payload_len = u32::from_le_bytes(len_bytes) as usize;
-
-        buffer.clear();
-        buffer.reserve(payload_len);
-
-        reader.take(payload_len as u64).read_to_end(buffer)?;
-
-        if buffer.len() != payload_len {
-            return Err(Error::UnexpectedEof);
-        }
-
-        Ok(Some(()))
-    }
-
-    fn read_after_length<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-        payload_len: usize,
-    ) -> Result<Option<()>> {
-        buffer.clear();
-        buffer.reserve(payload_len);
-        reader.take(payload_len as u64).read_to_end(buffer)?;
-        if buffer.len() != payload_len {
-            return Err(Error::UnexpectedEof);
-        }
-        Ok(Some(()))
-    }
-}
-
-/// A composable adapter that enforces a maximum frame length for any deframer
-///
-/// Failure semantics: Returns `Error::InvalidFrame` with context (declared_len/limit) when exceeded.
-/// that begins by reading a 4-byte little-endian payload length.
-pub struct BoundedDeframer<D: Deframer> {
-    inner: D,
-    max: usize,
-}
-
-impl<D: Deframer> BoundedDeframer<D> {
-    pub fn new(inner: D, max: usize) -> Self {
-        Self { inner, max }
-    }
-}
-
-// (no shim needed)
-
-impl<D: Deframer> Deframer for BoundedDeframer<D> {
-    fn read_and_deframe<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
-        let mut len_bytes = [0u8; 4];
-        match reader.read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
-        }
-
-        let payload_len = u32::from_le_bytes(len_bytes) as usize;
-        if payload_len > self.max {
-            return Err(Error::invalid_frame_with(
-                "frame length exceeds configured limit",
-                Some(payload_len),
-                None,
-                Some(self.max),
-            ));
-        }
-
-        self.inner.read_after_length(reader, buffer, payload_len)
-    }
-
-    fn read_after_length<R: Read>(
-        &self,
-        reader: &mut R,
-        buffer: &mut Vec<u8>,
-        payload_len: usize,
-    ) -> Result<Option<()>> {
-        if payload_len > self.max {
-            return Err(Error::invalid_frame_with(
-                "frame length exceeds configured limit",
-                Some(payload_len),
-                None,
-                Some(self.max),
-            ));
-        }
-        self.inner.read_after_length(reader, buffer, payload_len)
+        read_payload(reader, buffer, payload_len)?;
+        self.checksum_alg.verify(expected, &buffer[..payload_len])?;
+        Ok(Some(payload_len))
     }
 }
 
 /// A composable adapter that enforces a maximum payload length for any framer.
 ///
-/// Failure semantics: Returns `Error::InvalidFrame` with context (payload len/limit) when exceeded.
+/// Failure semantics: Returns `ErrorKind::InvalidFrame` with context (payload len/limit) when exceeded.
 pub struct BoundedFramer<F: Framer> {
     inner: F,
     max_len: usize,
@@ -565,11 +421,11 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
         &self,
         reader: &mut R,
         buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
+    ) -> Result<Option<usize>> {
         match self.inner.read_and_deframe(reader, buffer)? {
-            Some(()) => {
-                self.validator.validate(buffer)?;
-                Ok(Some(()))
+            Some(n) => {
+                self.validator.validate(&buffer[..n])?;
+                Ok(Some(n))
             }
             None => Ok(None),
         }
@@ -581,11 +437,11 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
         reader: &mut R,
         buffer: &mut Vec<u8>,
         payload_len: usize,
-    ) -> Result<Option<()>> {
+    ) -> Result<Option<usize>> {
         match self.inner.read_after_length(reader, buffer, payload_len)? {
-            Some(()) => {
-                self.validator.validate(buffer)?;
-                Ok(Some(()))
+            Some(n) => {
+                self.validator.validate(&buffer[..n])?;
+                Ok(Some(n))
             }
             None => Ok(None),
         }
@@ -634,11 +490,11 @@ impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
         &self,
         reader: &mut R,
         buffer: &mut Vec<u8>,
-    ) -> Result<Option<()>> {
+    ) -> Result<Option<usize>> {
         match self.inner.read_and_deframe(reader, buffer)? {
-            Some(()) => {
-                (self.callback)(buffer);
-                Ok(Some(()))
+            Some(n) => {
+                (self.callback)(&buffer[..n]);
+                Ok(Some(n))
             }
             None => Ok(None),
         }
@@ -649,11 +505,11 @@ impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
         reader: &mut R,
         buffer: &mut Vec<u8>,
         payload_len: usize,
-    ) -> Result<Option<()>> {
+    ) -> Result<Option<usize>> {
         match self.inner.read_after_length(reader, buffer, payload_len)? {
-            Some(()) => {
-                (self.callback)(buffer);
-                Ok(Some(()))
+            Some(n) => {
+                (self.callback)(&buffer[..n]);
+                Ok(Some(n))
             }
             None => Ok(None),
         }
@@ -685,11 +541,6 @@ impl<T: Framer> FramerExt for T {}
 
 /// Extension methods for deframers to enable fluent composition without importing adapter types.
 pub trait DeframerExt: Deframer + Sized {
-    /// Enforce a maximum payload length.
-    fn bounded(self, max: usize) -> BoundedDeframer<Self> {
-        BoundedDeframer::new(self, max)
-    }
-
     /// Observe payloads on the read path without copying. Useful for metrics/logging.
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
         ObserverDeframer::new(self, callback)

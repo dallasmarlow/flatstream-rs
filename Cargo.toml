@@ -2,7 +2,8 @@
 name = "flatstream"
 version = "0.2.7"
 edition = "2021"
-authors = ["Dallas Marlow <dallas@example.com>"]
+rust-version = "1.97.1"
+authors = ["Dallas Marlow <dallasmarlow@gmail.com>"]
 description = "High-performance FlatBuffers streaming with data integrity"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dallasmarlow/flatstream-rs"
@@ -13,7 +14,6 @@ publish = false  # Initially for private repo
 [dependencies]
 flatbuffers = "25.9.23"
 thiserror = "1.0"
-tokio = { version = "1", features = ["full"], optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 bincode = { version = "1.3", optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -29,6 +29,9 @@ flatc_example = []
 unsafe_typed = []
 # Meta-feature to enable all checksum algorithms for testing and development
 all_checksums = ["xxhash", "crc32", "crc16"]
+# Opt-in for the Gungraun instruction-count bench (requires valgrind/Linux;
+# run via scripts/instruction_counts.sh)
+instruction_bench = []
 # Feature for comparative benchmarks against alternative serialization approaches
 comparative_bench = ["serde", "bincode", "serde_json", "bumpalo", "xxhash", "crc32", "crc16"]
 lobster = []
@@ -47,6 +50,14 @@ version = "0.4"
 optional = true
 
 [dev-dependencies]
+# Deterministic instruction counts under valgrind/callgrind (Linux-only; the
+# installed gungraun-runner must match this version — see
+# scripts/instruction_counts.sh).
+gungraun = "0.19.4"
+# Pin bincode-next for the instruction-count bench: Gungraun's broad transitive
+# range would otherwise float it to a newer major, changing generated code and
+# thus instruction counts. The pin keeps the pinned-container build reproducible.
+bincode-next = { version = "=2.1.0", default-features = false, features = ["serde", "std"] }
 tempfile = "3.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
@@ -113,6 +124,11 @@ harness = false
 [[bench]]
 name = "memory_policy_benchmarks"
 harness = false
+
+[[bench]]
+name = "instruction_count"
+harness = false
+required-features = ["instruction_bench", "all_checksums"]
 
 [[example]]
 name = "typed_reading_flatc_example"

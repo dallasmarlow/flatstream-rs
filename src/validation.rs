@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 pub trait Validator: Send + Sync {
     /// Validates the payload according to the implementation's rules.
     ///
-    /// Returns `Ok(())` if valid, or `Error::ValidationFailed` on failure.
+    /// Returns `Ok(())` if valid, or `ErrorKind::ValidationFailed` on failure.
     fn validate(&self, payload: &[u8]) -> Result<()>;
 
     /// Returns the name of this validator for diagnostics/monitoring.
@@ -86,10 +86,10 @@ impl Validator for TableRootValidator {
     fn validate(&self, payload: &[u8]) -> Result<()> {
         // Fast path trivial size sanity check; avoids constructing options for empty buffers.
         if payload.len() < 4 {
-            return Err(Error::ValidationFailed {
-                validator: self.name(),
-                reason: "buffer too small for FlatBuffer".to_string(),
-            });
+            return Err(Error::validation_failed(
+                self.name(),
+                "buffer too small for FlatBuffer",
+            ));
         }
 
         let opts = flatbuffers::VerifierOptions {
@@ -109,10 +109,7 @@ impl Validator for TableRootValidator {
         verifier
             .visit_table(root_rel)
             .map(|tv| tv.finish())
-            .map_err(|e| Error::ValidationFailed {
-                validator: self.name(),
-                reason: e.to_string(),
-            })?;
+            .map_err(|e| Error::validation_failed(self.name(), e.to_string()))?;
 
         Ok(())
     }
@@ -140,16 +137,16 @@ impl Validator for SizeValidator {
     fn validate(&self, payload: &[u8]) -> Result<()> {
         let size = payload.len();
         if size < self.min_size {
-            return Err(Error::ValidationFailed {
-                validator: self.name(),
-                reason: format!("payload size {size} is less than min {}", self.min_size),
-            });
+            return Err(Error::validation_failed(
+                self.name(),
+                format!("payload size {size} is less than min {}", self.min_size),
+            ));
         }
         if size > self.max_size {
-            return Err(Error::ValidationFailed {
-                validator: self.name(),
-                reason: format!("payload size {size} exceeds max {}", self.max_size),
-            });
+            return Err(Error::validation_failed(
+                self.name(),
+                format!("payload size {size} exceeds max {}", self.max_size),
+            ));
         }
         Ok(())
     }
@@ -209,7 +206,7 @@ impl Validator for CompositeValidator {
 /// A type-specific validator created for a concrete FlatBuffer root type.
 ///
 /// This validator verifies that the payload contains a valid FlatBuffer whose
-/// root type is a specific generated table `T` (e.g., `TelemetryEvent`).
+/// root type is a specific generated table (e.g., `TelemetryEvent`).
 pub struct TypedValidator {
     opts: flatbuffers::VerifierOptions,
     verify: fn(
@@ -220,37 +217,18 @@ pub struct TypedValidator {
 }
 
 impl TypedValidator {
-    /// Creates a typed validator for the given root type `T` with default limits.
-    pub fn for_type<T>() -> Self
-    where
-        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
-    {
-        Self {
-            opts: flatbuffers::VerifierOptions::default(),
-            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
-            name_static: std::any::type_name::<T>(),
-        }
-    }
-
-    /// Creates a typed validator with custom limits for root type `T`.
-    pub fn with_limits_for_type<T>(max_depth: usize, max_tables: usize) -> Self
-    where
-        for<'a> T: flatbuffers::Follow<'a> + flatbuffers::Verifiable,
-    {
-        let opts = flatbuffers::VerifierOptions {
-            max_depth,
-            max_tables,
-            ..Default::default()
-        };
-        Self {
-            opts,
-            verify: |opts, payload| flatbuffers::root_with_opts::<T>(opts, payload).map(|_| ()),
-            name_static: std::any::type_name::<T>(),
-        }
-    }
-
     /// Creates a typed validator from a schema-specific verification function
     /// and a static name for diagnostics.
+    ///
+    /// Generated FlatBuffers table roots borrow from the payload, so pass a
+    /// non-capturing closure around the generated `root_as_*_with_opts`
+    /// function:
+    ///
+    /// ```ignore
+    /// TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
+    ///     telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
+    /// })
+    /// ```
     pub fn from_verify_named(
         name: &'static str,
         verify: fn(
@@ -321,15 +299,14 @@ impl TypedValidator {
 
 // Intentionally no Default implementation for `TypedValidator` to prevent
 // accidental construction of a no-op typed validator. Use the explicit
-// constructors: `for_type`, `with_limits_for_type`, `from_verify_named`, etc.
+// schema-verifier constructors: `from_verify_named`,
+// `with_limits_from_verify_named`, etc.
 
 impl Validator for TypedValidator {
     #[inline]
     fn validate(&self, payload: &[u8]) -> Result<()> {
-        (self.verify)(&self.opts, payload).map_err(|e| Error::ValidationFailed {
-            validator: self.name(),
-            reason: e.to_string(),
-        })
+        (self.verify)(&self.opts, payload)
+            .map_err(|e| Error::validation_failed(self.name(), e.to_string()))
     }
 
     fn name(&self) -> &'static str {
@@ -340,6 +317,7 @@ impl Validator for TypedValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use flatbuffers::FlatBufferBuilder;
 
     #[test]
@@ -354,11 +332,11 @@ mod tests {
         assert!(v.validate(b"abc").is_ok());
         assert!(matches!(
             v.validate(b"ab"),
-            Err(Error::ValidationFailed { validator, .. }) if validator == "SizeValidator"
+            Err(e) if matches!(e.kind(), ErrorKind::ValidationFailed { validator, .. } if *validator == "SizeValidator")
         ));
         assert!(matches!(
             v.validate(b"abcdef"),
-            Err(Error::ValidationFailed { validator, .. }) if validator == "SizeValidator"
+            Err(e) if matches!(e.kind(), ErrorKind::ValidationFailed { validator, .. } if *validator == "SizeValidator")
         ));
     }
 
@@ -376,7 +354,7 @@ mod tests {
         let small = [0u8; 2];
         assert!(matches!(
             sv.validate(&small),
-            Err(Error::ValidationFailed { validator, .. }) if validator == "TableRootValidator"
+            Err(e) if matches!(e.kind(), ErrorKind::ValidationFailed { validator, .. } if *validator == "TableRootValidator")
         ));
     }
 
@@ -399,7 +377,7 @@ mod tests {
         let composite = CompositeValidator::new().add(SizeValidator::new(3, 10));
         assert!(matches!(
             composite.validate(bad),
-            Err(Error::ValidationFailed { validator, .. }) if validator == "SizeValidator"
+            Err(e) if matches!(e.kind(), ErrorKind::ValidationFailed { validator, .. } if *validator == "SizeValidator")
         ));
     }
 }

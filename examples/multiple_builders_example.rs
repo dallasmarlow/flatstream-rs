@@ -6,8 +6,7 @@
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::*;
-use std::fs::File;
-use std::io::BufWriter;
+use std::io::Cursor;
 
 // Small, frequent control messages
 struct ControlMessage {
@@ -74,10 +73,10 @@ enum Message {
 fn main() -> Result<()> {
     println!("=== Multiple Builders Example ===\n");
 
-    // Create output file
-    let file = File::create("multi_message_stream.bin")?;
-    let writer = BufWriter::new(file);
-    let mut stream_writer = StreamWriter::new(writer, DefaultFramer);
+    // In-memory sink: the example is about builder management, not file I/O,
+    // and examples should not drop files into the working directory.
+    let mut out = Vec::new();
+    let mut stream_writer = StreamWriter::new(Cursor::new(&mut out), DefaultFramer);
 
     // Create separate builders for each message type
     // This prevents small messages from being serialized in a builder
@@ -148,6 +147,19 @@ fn main() -> Result<()> {
     }
 
     stream_writer.flush()?;
+    drop(stream_writer);
+
+    // Prove every heterogeneous payload was framed and remains readable. The
+    // example is about builder ownership, not schema decoding, so frame count
+    // is the relevant end-to-end assertion here.
+    let mut reader = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let mut frame_count = 0usize;
+    reader.process_all(|_| {
+        frame_count += 1;
+        Ok(())
+    })?;
+    assert_eq!(frame_count, messages.len());
+
     println!("\n✅ Messages written successfully!");
 
     // Memory efficiency analysis
