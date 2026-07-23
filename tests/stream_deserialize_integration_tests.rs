@@ -8,7 +8,7 @@ impl<'a> StreamDeserialize<'a> for StrRoot {
     type Root = &'a str;
 
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     }
 }
 
@@ -30,7 +30,7 @@ fn build_string_messages(count: usize) -> Vec<u8> {
 fn typed_read_default_deframer() {
     // Purpose: Typed processing with DefaultDeframer yields expected roots and counts.
     let data = build_string_messages(3);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut count = 0;
     reader
         .process_typed::<StrRoot, _>(|root| {
@@ -46,7 +46,7 @@ fn typed_read_default_deframer() {
 fn typed_messages_iterator_default() {
     // Purpose: The typed iterator yields the same number of roots with expected content.
     let data = build_string_messages(3);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut it = reader.typed_messages::<StrRoot>();
     let mut count = 0;
     while let Some(root) = it.next().unwrap() {
@@ -60,7 +60,7 @@ fn typed_messages_iterator_default() {
 fn process_typed_with_payload_passes_both() {
     // Purpose: process_typed_with_payload passes both the typed root and the raw payload slice.
     let data = build_string_messages(1);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut saw = false;
     reader
         .process_typed_with_payload::<StrRoot, _>(|root, payload| {
@@ -77,7 +77,7 @@ fn process_typed_with_payload_passes_both() {
 fn process_typed_unchecked_skips_verification() {
     // Purpose: Unchecked typed processing skips verification but still iterates the same count.
     let data = build_string_messages(2);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut count = 0;
     reader
         .process_typed_unchecked::<StrRoot, _>(|_root| {
@@ -89,25 +89,10 @@ fn process_typed_unchecked_skips_verification() {
 }
 
 #[test]
-fn typed_read_safe_take_deframer() {
-    // Purpose: Typed reading works equivalently with SafeTakeDeframer.
+fn typed_read_unbounded_deframer() {
+    // Purpose: Typed reading works equivalently with the explicit unbounded opt-in.
     let data = build_string_messages(3);
-    let mut reader = StreamReader::new(Cursor::new(&data), SafeTakeDeframer);
-    let mut count = 0;
-    reader
-        .process_typed::<StrRoot, _>(|_| {
-            count += 1;
-            Ok(())
-        })
-        .unwrap();
-    assert_eq!(count, 3);
-}
-
-#[test]
-fn typed_read_unsafe_deframer() {
-    // Purpose: Typed reading works equivalently with UnsafeDeframer (trusted data).
-    let data = build_string_messages(3);
-    let mut reader = StreamReader::new(Cursor::new(&data), UnsafeDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::unbounded());
     let mut count = 0;
     reader
         .process_typed::<StrRoot, _>(|_| {
@@ -209,8 +194,8 @@ fn checksum_mismatch_propagates_error_typed() {
 
     let mut reader = StreamReader::new(Cursor::new(&buf), ChecksumDeframer::new(XxHash64::new()));
     let err = reader.process_typed::<StrRoot, _>(|_| Ok(())).unwrap_err();
-    match err {
-        Error::ChecksumMismatch { .. } => {}
+    match err.into_kind() {
+        ErrorKind::ChecksumMismatch { .. } => {}
         other => panic!("expected checksum mismatch, got {other:?}"),
     }
 }
@@ -219,20 +204,20 @@ fn checksum_mismatch_propagates_error_typed() {
 fn processor_error_propagates_and_stops_typed() {
     // Purpose: An error in the typed processor closure propagates and stops iteration.
     let data = build_string_messages(5);
-    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&data), DefaultDeframer::new());
     let mut count = 0usize;
     let err = reader
         .process_typed::<StrRoot, _>(|_| {
             count += 1;
             if count == 3 {
-                return Err(Error::Io(std::io::Error::other("stop")));
+                return Err(Error::from(std::io::Error::other("stop")));
             }
             Ok(())
         })
         .unwrap_err();
     assert_eq!(count, 3);
-    match err {
-        Error::Io(e) => assert_eq!(e.to_string(), "stop"),
+    match err.into_kind() {
+        ErrorKind::Io(e) => assert_eq!(e.to_string(), "stop"),
         _ => panic!("unexpected error"),
     }
 }
@@ -243,16 +228,16 @@ fn from_payload_invalid_and_empty() {
     // Empty
     let empty: &[u8] = &[];
     let err = StrRoot::from_payload(empty).unwrap_err();
-    match err {
-        Error::FlatbuffersError(_) => {}
+    match err.into_kind() {
+        ErrorKind::FlatbuffersError(_) => {}
         _ => panic!("expected flatbuffers error"),
     }
 
     // Random bytes
     let bad = [1u8, 2, 3, 4, 5, 6, 7];
     let err = StrRoot::from_payload(&bad).unwrap_err();
-    match err {
-        Error::FlatbuffersError(_) => {}
+    match err.into_kind() {
+        ErrorKind::FlatbuffersError(_) => {}
         _ => panic!("expected flatbuffers error"),
     }
 }

@@ -13,7 +13,7 @@
 //!
 //! * **Composable Architecture**: Separate traits for serialization, framing, and checksums
 //! * **Flexible Framing**: Choose between simple length-prefixed or checksum-protected framing
-//! * **Zero-Copy Reading**: Direct access to FlatBuffer payloads through the Processor API
+//! * **Borrowed Payload Access**: Direct `&[u8]` access through the Processor API
 //! * **Memory Efficient**: Reusable buffers and minimal allocations
 //! * **Type Safe**: Generic over I/O types and framing strategies
 //!
@@ -21,8 +21,8 @@
 //!
 //! ```rust
 //! use flatstream::*;
-//! use std::fs::File;
 //! use flatbuffers::FlatBufferBuilder;
+//! use std::io::Cursor;
 //!
 //! // Define your serializable type
 //! struct MyData {
@@ -40,27 +40,30 @@
 //! }
 //!
 //! fn main() -> Result<()> {
-//!     // Write with default framing
-//!     let file = File::create("data.bin")?;
+//!     // Write with default framing. Any `Write` works — swap the Cursor for
+//!     // `BufWriter::new(File::create("data.bin")?)` to journal to disk.
+//!     let mut storage = Vec::new();
 //!     let framer = DefaultFramer;
-//!     let mut writer = StreamWriter::new(file, framer);
+//!     let mut writer = StreamWriter::new(Cursor::new(&mut storage), framer);
 //!
 //!     let data = MyData { message: "Hello".to_string(), value: 42 };
-//!     
+//!
 //!     // Write the data directly (simple mode)
 //!     writer.write(&data)?;
 //!     writer.flush()?;
 //!
 //!     // Read with default deframing using the Processor API
-//!     let file = File::open("data.bin")?;
-//!     let deframer = DefaultDeframer;
-//!     let mut reader = StreamReader::new(file, deframer);
+//!     let deframer = DefaultDeframer::new();
+//!     let mut reader = StreamReader::new(Cursor::new(&storage), deframer);
 //!
 //!     // Note: `payload` is valid only until the next successful read.
+//!     let mut count = 0;
 //!     reader.process_all(|payload| {
-//!         println!("Read message: {} bytes", payload.len());
+//!         assert!(!payload.is_empty());
+//!         count += 1;
 //!         Ok(())
 //!     })?;
+//!     assert_eq!(count, 1);
 //!
 //!     Ok(())
 //! }
@@ -79,8 +82,8 @@
 //! ## Validation (Zero-Copy)
 //!
 //! Validation is an optional, composable layer that operates directly on the
-//! in-place payload slice (`&[u8]`). It introduces no allocations and preserves
-//! the library's zero-copy guarantees.
+//! in-place payload slice (`&[u8]`). On successful validation it adds no payload
+//! copy or allocation; failures allocate their diagnostic reason.
 //!
 //! - Writers: `FramerExt::with_validator(..)` validates before bytes are written.
 //! - Readers: `DeframerExt::with_validator(..)` validates after deframing (and
@@ -93,14 +96,19 @@
 //! # use std::io::Cursor;
 //! // Read with structural validation (type-agnostic)
 //! let data: Vec<u8> = vec![]; // framed bytes
-//! let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+//! let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
 //! let mut reader = StreamReader::new(Cursor::new(data), deframer);
 //! reader.process_all(|payload| {
-//!     // payload is an in-place &[u8] slice; no copies or allocations
+//!     // payload is an in-place &[u8] slice; validation adds no copies, and
+//!     // no allocations on the success path (a failure allocates its reason)
 //!     Ok(())
 //! })?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+
+// The default build is provably free of `unsafe`: the only unsafe block in the
+// crate is the opt-in `unsafe_typed` verification-skipping path (reader.rs).
+#![cfg_attr(not(feature = "unsafe_typed"), forbid(unsafe_code))]
 
 pub mod checksum;
 pub mod error;
@@ -113,14 +121,14 @@ pub mod writer;
 
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 pub use framing::{
-    BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer,
-    FramerExt, SafeTakeDeframer, UnsafeDeframer, ValidatingDeframer, ValidatingFramer,
+    BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer, FramerExt,
+    ValidatingDeframer, ValidatingFramer, DEFAULT_MAX_FRAME_LEN,
 };
 pub use policy::{
-    AdaptiveWatermarkPolicy, MemoryPolicy, NoOpPolicy, ReclamationInfo, ReclamationReason,
-    SizeThresholdPolicy,
+    AdaptiveWatermarkPolicy, Clock, MemoryPolicy, MonotonicClock, NoOpPolicy, ReclamationInfo,
+    ReclamationReason, SizeThresholdPolicy,
 };
 pub use reader::{Messages, StreamReader, TypedMessages};
 pub use traits::StreamDeserialize;

@@ -1,212 +1,144 @@
-// Example purpose: End-to-end telemetry capture and processing. Demonstrates external
-// builder reuse for zero-allocation writes, BufWriter/BufReader, and processor API usage.
+// Example purpose: The reference end-to-end workload — a telemetry capture agent.
+// Expert-mode writes with a reused builder, real FlatBuffers payloads (a vector of
+// f64 channels — no generated code required), zero-copy *typed* reads that compute
+// real statistics, and manual iteration with early exit.
+//
+// Every claim this example makes is asserted: the data is deterministic, so the
+// exact alert counts and channel averages are derivable by hand (the arithmetic is
+// in the comments) and the example fails loudly if the library or the reasoning is
+// wrong. Run it to prove the behavior, not to admire the printouts.
+
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
-use std::time::{SystemTime, UNIX_EPOCH};
+use flatstream::{
+    DefaultDeframer, DefaultFramer, Error, Result, StreamDeserialize, StreamReader, StreamWriter,
+};
+use std::io::Cursor;
 
-fn get_current_timestamp_nanos() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64
+// Each frame's payload is a FlatBuffers vector of f64 channels, addressed by
+// index. This keeps the example free of flatc-generated code while still being
+// a real FlatBuffer read zero-copy via typed access — for named-field schemas,
+// see `typed_reading_flatc_example.rs`.
+const IDX_TIMESTAMP_S: usize = 0;
+const IDX_SPEED_KPH: usize = 1;
+const IDX_RPM: usize = 2;
+const IDX_TEMP_C: usize = 3;
+const IDX_BATTERY_PCT: usize = 4;
+
+const EVENT_COUNT: usize = 2_000;
+
+/// Deterministic tick generator (100 Hz). The formulas are chosen so the alert
+/// counts below are exact:
+///   speed  = (i % 200) * 0.5      → > 80 ⇔ i%200 ≥ 161 → 39 ticks/cycle × 10 cycles = 390
+///   temp   = 20 + (i % 40)        → > 50 ⇔ i%40  ≥ 31 →  9 ticks/cycle × 50 cycles = 450
+///   battery= 100 − i·0.045        → < 20 ⇔ i ≥ 1778   → 2000 − 1778               = 222
+fn channels_at(i: usize) -> [f64; 5] {
+    [
+        i as f64 * 0.01,
+        (i % 200) as f64 * 0.5,
+        800.0 + i as f64,
+        20.0 + (i % 40) as f64,
+        100.0 - i as f64 * 0.045,
+    ]
 }
 
-// Define a telemetry event type that implements StreamSerialize
-struct TelemetryEvent {
-    timestamp: u64,
-    device_id: String,
-    speed_kph: f32,
-    rpm: u32,
-    temperature_celsius: f32,
-    battery_level: f32,
-}
+/// Typed zero-copy access: the root is a FlatBuffers vector borrowed straight
+/// from the reader's buffer — no deserialization, no allocation per frame.
+struct TelemetryFrame;
 
-impl StreamSerialize for TelemetryEvent {
-    fn serialize<A: flatbuffers::Allocator>(
-        &self,
-        builder: &mut FlatBufferBuilder<A>,
-    ) -> Result<(), flatstream::Error> {
-        let data = format!(
-            "{},{},{},{},{},{}",
-            &self.device_id,
-            self.timestamp,
-            self.speed_kph,
-            self.rpm,
-            self.temperature_celsius,
-            self.battery_level
-        );
-        let data_str = builder.create_string(&data);
-        builder.finish(data_str, None);
-        Ok(())
+impl<'a> StreamDeserialize<'a> for TelemetryFrame {
+    type Root = flatbuffers::Vector<'a, f64>;
+    fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
+        flatbuffers::root::<flatbuffers::Vector<'a, f64>>(payload).map_err(Error::from)
     }
 }
 
-fn create_telemetry_event() -> TelemetryEvent {
-    let timestamp = get_current_timestamp_nanos();
-    let device_id = format!("device-{}", (timestamp % 1000) / 100);
-    let speed_kph = (timestamp % 200) as f32 * 0.5; // 0-100 km/h
-    let rpm = 800 + ((timestamp % 5000) as u32); // 800-5800 RPM
-    let temperature_celsius = 20.0 + ((timestamp % 40) as f32); // 20-60°C
-    let battery_level = 100.0 - ((timestamp % 100) as f32); // 0-100%
+fn main() -> Result<()> {
+    println!("=== Telemetry Agent (reference workload) ===\n");
 
-    TelemetryEvent {
-        timestamp,
-        device_id,
-        speed_kph,
-        rpm,
-        temperature_celsius,
-        battery_level,
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let telemetry_file = "telemetry_stream.bin";
-
-    println!("=== Telemetry Agent Example (v2.5) ===");
-    println!("Writing telemetry events to: {telemetry_file}");
-
-    // Create the telemetry stream file
-    let file = File::create(telemetry_file)?;
-    let writer = BufWriter::new(file);
-
-    // Create a StreamWriter with default framing (no checksums for simplicity)
-    let framer = DefaultFramer;
-    let mut stream_writer = StreamWriter::new(writer, framer);
-
-    // External builder management for zero-allocation writes
-    let mut builder = FlatBufferBuilder::new();
-
-    // Simulate capturing telemetry events for 10 seconds
-    println!("Capturing telemetry events...");
-    let start_time = SystemTime::now();
-    let mut event_count = 0;
-
-    while SystemTime::now().duration_since(start_time)?.as_secs() < 10 {
-        // Sample data in real-time (simulate shared memory access)
-        let event = create_telemetry_event();
-
-        // Build message with external builder (zero-allocation)
-        builder.reset();
-        event.serialize(&mut builder)?;
-
-        // Emit to stream (zero-allocation write)
-        stream_writer.write_finished(&mut builder)?;
-        event_count += 1;
-
-        // Simulate some processing time
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        if event_count % 10 == 0 {
-            println!("  Captured {event_count} events...");
+    // --- Capture: expert mode, one builder reused across all frames -----------
+    let mut journal = Vec::new();
+    {
+        let mut writer = StreamWriter::new(Cursor::new(&mut journal), DefaultFramer);
+        let mut builder = FlatBufferBuilder::new();
+        for i in 0..EVENT_COUNT {
+            builder.reset(); // reuse the builder's allocation every tick
+            let v = builder.create_vector(&channels_at(i));
+            builder.finish(v, None);
+            writer.write_finished(&mut builder)?;
         }
+        writer.flush()?;
     }
+    println!(
+        "captured {EVENT_COUNT} frames, {} bytes on the wire",
+        journal.len()
+    );
 
-    // Ensure all data is written to disk
-    stream_writer.flush()?;
-    println!("Captured {event_count} telemetry events");
+    // --- Analysis: typed zero-copy scan over the whole stream -----------------
+    let mut reader = StreamReader::new(Cursor::new(&journal), DefaultDeframer::new());
+    let (mut frames, mut speed_sum, mut temp_sum, mut rpm_sum) = (0usize, 0.0f64, 0.0f64, 0.0f64);
+    let (mut speed_alerts, mut temp_alerts, mut battery_alerts) = (0u32, 0u32, 0u32);
 
-    // Now demonstrate real-time processing of the telemetry stream
-    println!("\n=== Real-time Telemetry Processing ===");
-    println!("Processing telemetry events with processor API...");
-
-    let file = File::open(telemetry_file)?;
-    let reader = BufReader::new(file);
-    let deframer = DefaultDeframer;
-    let mut stream_reader = StreamReader::new(reader, deframer);
-
-    let mut processed_count = 0;
-    let mut total_speed = 0.0;
-    let mut total_rpm = 0.0;
-    let mut total_temp = 0.0;
-    let mut total_battery = 0.0;
-    let mut alerts = 0;
-
-    // Process all telemetry events with zero-allocation
-    stream_reader.process_all(|payload| {
-        if let Ok(data_str) = std::str::from_utf8(payload) {
-            processed_count += 1;
-
-            // Parse telemetry data (in a real system, you'd deserialize the FlatBuffer)
-            for part in data_str.split(',') {
-                if part.starts_with("speed_kph=") {
-                    if let Ok(speed) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
-                        total_speed += speed;
-
-                        // Alert for high speed
-                        if speed > 80.0 {
-                            alerts += 1;
-                            println!("  ⚠️  High speed alert: {speed:.1} km/h");
-                        }
-                    }
-                } else if part.starts_with("rpm=") {
-                    if let Ok(rpm) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
-                        total_rpm += rpm;
-
-                        // Alert for high RPM
-                        if rpm > 5000.0 {
-                            alerts += 1;
-                            println!("  ⚠️  High RPM alert: {rpm:.0} RPM");
-                        }
-                    }
-                } else if part.starts_with("temp_c=") {
-                    if let Ok(temp) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
-                        total_temp += temp;
-
-                        // Alert for high temperature
-                        if temp > 50.0 {
-                            alerts += 1;
-                            println!("  ⚠️  High temperature alert: {temp:.1}°C");
-                        }
-                    }
-                } else if part.starts_with("battery=") {
-                    if let Ok(battery) = part.split('=').nth(1).unwrap_or("0").parse::<f32>() {
-                        total_battery += battery;
-
-                        // Alert for low battery
-                        if battery < 20.0 {
-                            alerts += 1;
-                            println!("  ⚠️  Low battery alert: {battery:.1}%");
-                        }
-                    }
-                }
-            }
-
-            // Process every 10th event for demonstration
-            if processed_count % 10 == 0 {
-                println!("  Processed {processed_count} events, {alerts} alerts so far");
-            }
+    reader.process_typed::<TelemetryFrame, _>(|channels| {
+        frames += 1;
+        let speed = channels.get(IDX_SPEED_KPH);
+        let temp = channels.get(IDX_TEMP_C);
+        speed_sum += speed;
+        temp_sum += temp;
+        rpm_sum += channels.get(IDX_RPM);
+        if speed > 80.0 {
+            speed_alerts += 1;
+        }
+        if temp > 50.0 {
+            temp_alerts += 1;
+        }
+        if channels.get(IDX_BATTERY_PCT) < 20.0 {
+            battery_alerts += 1;
         }
         Ok(())
     })?;
 
-    // Print final statistics
-    println!("\n=== Telemetry Analysis Complete ===");
-    println!("Total events processed: {processed_count}");
-    if processed_count > 0 {
-        println!(
-            "Average speed: {:.1} km/h",
-            total_speed / processed_count as f32
-        );
-        println!("Average RPM: {:.0}", total_rpm / processed_count as f32);
-        println!(
-            "Average temperature: {:.1}°C",
-            total_temp / processed_count as f32
-        );
-        println!(
-            "Average battery: {:.1}%",
-            total_battery / processed_count as f32
-        );
-    }
-    println!("Total alerts generated: {alerts}");
+    let avg_speed = speed_sum / frames as f64;
+    let avg_temp = temp_sum / frames as f64;
+    let avg_rpm = rpm_sum / frames as f64;
+    println!("frames processed: {frames}");
+    println!("avg speed: {avg_speed:.2} km/h   avg rpm: {avg_rpm:.1}   avg temp: {avg_temp:.1} °C");
+    println!("alerts — speed: {speed_alerts}, temp: {temp_alerts}, battery: {battery_alerts}");
 
-    println!("\n=== Telemetry Agent Example Complete ===");
-    println!("Key v2.5 features demonstrated:");
-    println!("  • External builder management for zero-allocation writes");
-    println!("  • Processor API for high-performance bulk processing");
-    println!("  • Real-time telemetry processing with zero-copy access");
-    println!("  • Efficient memory usage throughout the pipeline");
+    // Prove the run against the hand-derived expectations (see channels_at).
+    assert_eq!(frames, EVENT_COUNT);
+    assert_eq!(speed_alerts, 390);
+    assert_eq!(temp_alerts, 450);
+    assert_eq!(battery_alerts, 222);
+    // avg(speed) = 0.5 · mean(0..=199) = 49.75; avg(temp) = 20 + mean(0..=39) = 39.5;
+    // avg(rpm) = 800 + mean(0..=1999) = 1799.5
+    assert!((avg_speed - 49.75).abs() < 1e-9);
+    assert!((avg_temp - 39.5).abs() < 1e-9);
+    assert!((avg_rpm - 1799.5).abs() < 1e-9);
 
+    // --- Manual iteration with early exit: find the first speed alert ---------
+    // `messages()` yields raw payloads under caller control — the pattern for
+    // scans that stop early instead of processing the whole stream.
+    let mut reader = StreamReader::new(Cursor::new(&journal), DefaultDeframer::new());
+    let mut messages = reader.messages();
+    let mut examined = 0usize;
+    let first_alert_ts = loop {
+        match messages.next()? {
+            Some(payload) => {
+                examined += 1;
+                let channels = TelemetryFrame::from_payload(payload)?;
+                if channels.get(IDX_SPEED_KPH) > 80.0 {
+                    break Some(channels.get(IDX_TIMESTAMP_S));
+                }
+            }
+            None => break None,
+        }
+    };
+    // First i with (i % 200)·0.5 > 80 is 161 → timestamp 1.61 s, 162 frames read.
+    let ts = first_alert_ts.expect("an alert exists in the stream");
+    println!("first speed alert at t={ts:.2}s after examining {examined} frames (early exit)");
+    assert_eq!(examined, 162);
+    assert!((ts - 1.61).abs() < 1e-9);
+
+    println!("\nall assertions passed — behavior proven, not assumed ✓");
     Ok(())
 }

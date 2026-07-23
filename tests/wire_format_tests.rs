@@ -45,6 +45,63 @@ fn checksumframer_layout_crc32() {
     assert_eq!(&out[8..], payload);
 }
 
+#[test]
+fn nonstandard_checksum_width_is_byte_exact() {
+    // Purpose: A custom width (3 bytes here) must produce a self-consistent,
+    // byte-exact stream: exactly SIZE checksum bytes on the wire (the old
+    // `_ =>` fallback silently wrote 8), verification modulo the wire width,
+    // corruption still detected. Structural guarantee of the Checksum trait's
+    // associated SIZE + write_bytes/read_bytes/verify defaults.
+    use flatstream::checksum::Checksum;
+    use flatstream::framing::{ChecksumDeframer, ChecksumFramer, Deframer, Framer};
+
+    /// Toy 3-byte checksum: byte sum, deliberately *wider* than 3 bytes
+    /// before truncation to exercise the width-masked verification.
+    #[derive(Clone, Copy, Default)]
+    struct Sum24;
+    impl Checksum for Sum24 {
+        const SIZE: usize = 3;
+        fn calculate(&self, payload: &[u8]) -> u64 {
+            payload.iter().map(|&b| b as u64).sum::<u64>() | 0xFF00_0000_0000_0000
+        }
+    }
+
+    let payload = b"nonstandard width";
+    let mut out = Vec::new();
+    ChecksumFramer::new(Sum24)
+        .frame_and_write(&mut out, payload)
+        .unwrap();
+
+    // Layout: [4-byte LE length | 3-byte LE checksum | payload]
+    assert_eq!(out.len(), 4 + 3 + payload.len());
+    let len = u32::from_le_bytes(out[..4].try_into().unwrap()) as usize;
+    assert_eq!(len, payload.len());
+    let wire_sum = u32::from_le_bytes([out[4], out[5], out[6], 0]) as u64;
+    assert_eq!(
+        wire_sum,
+        payload.iter().map(|&b| b as u64).sum::<u64>() & 0x00FF_FFFF
+    );
+    assert_eq!(&out[7..], payload);
+
+    // Roundtrip verifies.
+    let deframer = ChecksumDeframer::new(Sum24);
+    let mut buf = Vec::new();
+    let n = deframer
+        .read_and_deframe(&mut std::io::Cursor::new(&out), &mut buf)
+        .unwrap()
+        .unwrap();
+    assert_eq!(&buf[..n], payload);
+
+    // Corruption within the low 3 bytes is still detected.
+    let mut corrupt = out.clone();
+    corrupt[7] ^= 0x01; // first payload byte
+    let mut buf = Vec::new();
+    let err = deframer
+        .read_and_deframe(&mut std::io::Cursor::new(&corrupt), &mut buf)
+        .unwrap_err();
+    assert!(matches!(err.kind(), ErrorKind::ChecksumMismatch { .. }));
+}
+
 #[cfg(feature = "crc16")]
 #[test]
 fn checksumframer_layout_crc16() {

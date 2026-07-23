@@ -284,7 +284,6 @@ fn open_csv_from_zip(zip_path: &Path, predicate: impl Fn(&str) -> bool) -> Inges
 fn main() -> IngestResult<()> {
     let zips_dir = Path::new("tests/corpus/lobster/zips");
     let out_dir = Path::new("tests/corpus/lobster");
-    fs::create_dir_all(out_dir)?;
 
     // Only process verified, listed ZIP file bases
     let file_bases = lobster_common::find_verified_zip_file_bases(
@@ -293,7 +292,11 @@ fn main() -> IngestResult<()> {
     );
     if file_bases.is_empty() {
         eprintln!("No verified LOBSTER ZIPs found. Ensure files listed in SHASUMS.txt are present and valid.");
+        return Ok(());
     }
+
+    // Do not create output directories for the documented no-corpus no-op.
+    fs::create_dir_all(out_dir)?;
 
     let mut processed = 0usize;
     for base in file_bases {
@@ -332,8 +335,6 @@ fn main() -> IngestResult<()> {
         processed += 1;
     }
 
-    if processed == 0 {
-        eprintln!("No ZIPs found in {}", zips_dir.display());
-    }
+    debug_assert!(processed > 0);
     Ok(())
 }

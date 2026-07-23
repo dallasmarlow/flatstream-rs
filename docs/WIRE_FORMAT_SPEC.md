@@ -41,13 +41,22 @@ flowchart LR
 The writer and reader must agree out-of-band on one of the following algorithms. The checksum always covers the payload bytes only (the 4-byte length is not included in the calculation).
 
 - 0 bytes: No checksum
-- 2 bytes: CRC16 (XMODEM) — stored as `u16` LE
-- 4 bytes: CRC32 (Castagnoli/implementation-compatible with `crc32fast`) — stored as `u32` LE
+- 2 bytes: CRC-16/XMODEM — stored as `u16` LE
+- 4 bytes: CRC-32/ISO-HDLC (the IEEE/zlib polynomial, as computed by `crc32fast`) — stored as `u32` LE
 - 8 bytes: XXH3-64 — stored as `u64` LE
 
+Known-answer vectors (input = ASCII `"123456789"`; use these to validate a foreign implementation before trusting it):
+
+| Algorithm | KAT value |
+|---|---|
+| CRC-16/XMODEM | `0x31C3` |
+| CRC-32/ISO-HDLC | `0xCBF43926` |
+| XXH3-64 | `0x72DCB18B67A17DFF` |
+
 Notes:
-- In the Rust implementation, the concrete algorithms are `Crc16` (XMODEM), `Crc32` (via `crc32fast`), and `XxHash64` (XXH3-64). Values are cast to `u64` internally but written with their exact on-wire width (2/4/8 bytes, little-endian).
-- Additional algorithms may be added in future versions. Negotiation remains out-of-band.
+- **The CRC-32 is ISO-HDLC, not CRC-32C/Castagnoli** (Castagnoli's KAT is `0xE3069283`). A previous revision of this document misnamed the algorithm and its reference reader used the Castagnoli table — a reader built from that revision cannot validate these streams. The KAT table above is normative and is pinned by `known_answer_vectors` in `src/checksum.rs`.
+- In the Rust implementation, the concrete algorithms are `Crc16` (XMODEM), `Crc32` (ISO-HDLC via `crc32fast`), and `XxHash64` (XXH3-64). Values are cast to `u64` internally but written with their exact on-wire width (2/4/8 bytes, little-endian).
+- Additional algorithms may be added in future versions (CRC-32C would be a new algorithm ID, never a redefinition). Negotiation remains out-of-band.
 
 ## 6. Reader State Machine (Informative)
 
@@ -108,8 +117,6 @@ import (
     "io"
 )
 
-var crc32c = crc32.MakeTable(crc32.Castagnoli)
-
 func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
     var lenLE [4]byte
     if _, err := io.ReadFull(r, lenLE[:]); err != nil { return nil, err }
@@ -126,7 +133,8 @@ func ReadFrame(r *bufio.Reader, withCRC32 bool) ([]byte, error) {
     if _, err := io.ReadFull(r, buf); err != nil { return nil, err }
 
     if withCRC32 {
-        if crc32.Checksum(buf, crc32c) != exp {
+        // CRC-32/ISO-HDLC — Go's IEEE table (KAT: "123456789" → 0xCBF43926).
+        if crc32.ChecksumIEEE(buf) != exp {
             return nil, errors.New("checksum mismatch")
         }
     }

@@ -7,18 +7,24 @@
 // serialization libraries (e.g., bincode and serde_json) in a streaming workload?
 //
 // Methodology:
-// Each library performs the same task to ensure an apples-to-apples comparison:
-// 1) Serialize a TelemetryEvent struct
-// 2) Prepend a 4-byte little-endian length prefix (manual for others; built-in for flatstream)
-// 3) Write the framed message to an in-memory buffer
-// 4) Read the stream back by deframing each message
-// 5) Deserialize back into the struct
+// All libraries serialize, frame, write, and deframe the same TelemetryEvent
+// stream in memory. THE CONSUMPTION MODELS DIFFER BY DESIGN, and the numbers
+// must be read with that in mind:
+// - bincode / serde_json deserialize each message back into an owned
+//   `TelemetryEvent` struct (that is those libraries' contract).
+// - flatstream yields each payload as a borrowed `&[u8]` and does NOT decode
+//   fields — zero-copy frame access IS flatstream's contract; field access is
+//   the caller's schema-specific choice via generated FlatBuffers accessors.
+// So this compares "framed zero-copy access" against "framed owned
+// deserialization" — the two workflows an application actually chooses
+// between — NOT an identical end-to-end task. A fields-consumed flatstream
+// variant is planned before any equal-work rankings are published.
 //
 // Interpretation:
-// - flatstream_default: Baseline using zero-copy APIs with DefaultFramer
+// - flatstream_default: Baseline zero-copy frame access with DefaultFramer
 // - flatstream_*checksum*: Adds a checksum; measures integrity cost
-// - bincode: Fast binary format with manual framing
-// - serde_json: Text format; slowest but human-readable
+// - bincode: Fast binary format with manual framing + owned deserialization
+// - serde_json: Text format + owned deserialization; slowest but human-readable
 //
 // Notes:
 // - In-memory buffers are used to isolate CPU/algorithmic cost from I/O latency.
@@ -28,8 +34,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize,
-    StreamWriter, UnsafeDeframer,
+    self as flatstream, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
@@ -111,7 +116,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             black_box(&buffer);
 
             // Read phase
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -123,9 +128,9 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    // Benchmark 1b: flatstream-rs default framer with unbounded read path
     // Measures upper bound for read throughput when skipping verification/zeroing.
-    group.bench_function("flatstream_default_unsafe_read", |b| {
+    group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             // Write phase
@@ -135,8 +140,8 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             }
             black_box(&buffer);
 
-            // Read phase (unsafe deframer)
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            // Read phase (unbounded deframer)
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -255,7 +260,7 @@ fn benchmark_alternatives_small(c: &mut Criterion) {
             black_box(&buffer);
 
             // Read phase
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -354,7 +359,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             black_box(&buffer);
 
             // Read phase
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -366,9 +371,9 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
         });
     });
 
-    // Benchmark 1b: flatstream-rs default framer with UnsafeDeframer (read path only)
+    // Benchmark 1b: flatstream-rs default framer with unbounded read path
     // Upper-bound read throughput by skipping verification/zeroing.
-    group.bench_function("flatstream_default_unsafe_read", |b| {
+    group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             // Write phase
@@ -378,8 +383,8 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             }
             black_box(&buffer);
 
-            // Read phase (unsafe deframer)
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            // Read phase (unbounded deframer)
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -494,7 +499,7 @@ fn benchmark_alternatives_large(c: &mut Criterion) {
             black_box(&buffer);
 
             // Read phase
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {

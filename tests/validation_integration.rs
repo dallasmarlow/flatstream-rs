@@ -30,11 +30,13 @@ fn validating_deframer_rejects_structurally_invalid_payload_after_deframe() {
         .frame_and_write(&mut framed, &payload)
         .unwrap();
 
-    let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let err = reader.read_message().unwrap_err();
-    match err {
-        Error::ValidationFailed { validator, .. } => assert_eq!(validator, "TableRootValidator"),
+    match err.into_kind() {
+        ErrorKind::ValidationFailed { validator, .. } => {
+            assert_eq!(validator, "TableRootValidator")
+        }
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
 }
@@ -49,7 +51,7 @@ fn validating_deframer_accepts_valid() {
         framer.frame_and_write(&mut framed, &buf).unwrap();
     }
 
-    let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let first = reader.read_message().unwrap();
     assert!(first.is_some());
@@ -75,8 +77,8 @@ fn validating_deframer_with_checksum_propagates_checksum_error() {
     let deframer = ChecksumDeframer::new(XxHash64::new()).with_validator(TableRootValidator::new());
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let err = reader.read_message().unwrap_err();
-    match err {
-        Error::ChecksumMismatch { .. } => {}
+    match err.into_kind() {
+        ErrorKind::ChecksumMismatch { .. } => {}
         other => panic!("expected ChecksumMismatch, got {other:?}"),
     }
 }
@@ -87,11 +89,13 @@ fn fluent_api_compiles_and_runs() {
     let mut framed = Vec::new();
     DefaultFramer.frame_and_write(&mut framed, &buf).unwrap();
 
-    let deframer = DefaultDeframer.bounded(1024 * 1024).with_validator(
-        CompositeValidator::new()
-            .add(SizeValidator::new(1, 1024 * 1024))
-            .add(TableRootValidator::new()),
-    );
+    let deframer = DefaultDeframer::new()
+        .with_max_frame_len(1024 * 1024)
+        .with_validator(
+            CompositeValidator::new()
+                .add(SizeValidator::new(1, 1024 * 1024))
+                .add(TableRootValidator::new()),
+        );
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     // Use process_all to validate that the pipeline accepts the typed message
     reader.process_all(|_| Ok(())).unwrap();
@@ -105,8 +109,10 @@ fn validating_framer_rejects_invalid_before_write() {
 
     let mut sink = Vec::new();
     let err = framer.frame_and_write(&mut sink, &payload).unwrap_err();
-    match err {
-        Error::ValidationFailed { validator, .. } => assert_eq!(validator, "TableRootValidator"),
+    match err.into_kind() {
+        ErrorKind::ValidationFailed { validator, .. } => {
+            assert_eq!(validator, "TableRootValidator")
+        }
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
 }
@@ -128,7 +134,7 @@ fn typed_validator_accepts_matching_root() {
     let validator = TypedValidator::from_verify(|opts, payload| {
         telemetry_generated::telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
     });
-    let deframer = DefaultDeframer.with_validator(validator);
+    let deframer = DefaultDeframer::new().with_validator(validator);
     let mut framed = Vec::new();
     DefaultFramer.frame_and_write(&mut framed, &buf).unwrap();
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
@@ -155,13 +161,13 @@ fn typed_validator_rejects_wrong_type() {
     let validator = TypedValidator::from_verify(|opts, payload| {
         telemetry_generated::telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
     });
-    let deframer = DefaultDeframer.with_validator(validator);
+    let deframer = DefaultDeframer::new().with_validator(validator);
     let mut framed = Vec::new();
     DefaultFramer.frame_and_write(&mut framed, &buf).unwrap();
     let mut reader = StreamReader::new(Cursor::new(framed), deframer);
     let err = reader.process_all(|_| Ok(())).unwrap_err();
-    match err {
-        Error::ValidationFailed { validator, .. } => assert_eq!(validator, "TypedValidator"),
+    match err.into_kind() {
+        ErrorKind::ValidationFailed { validator, .. } => assert_eq!(validator, "TypedValidator"),
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
 }
@@ -175,17 +181,17 @@ fn process_all_and_messages_propagate_validation_failed() {
         .frame_and_write(&mut framed, &payload)
         .unwrap();
 
-    let deframer = DefaultDeframer.with_validator(TableRootValidator::new());
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
     let mut reader = StreamReader::new(Cursor::new(framed.clone()), deframer);
 
     let err = reader.process_all(|_| Ok(())).unwrap_err();
-    assert!(matches!(err, Error::ValidationFailed { .. }));
+    assert!(matches!(err.kind(), ErrorKind::ValidationFailed { .. }));
 
     let mut reader = StreamReader::new(
         Cursor::new(framed),
-        DefaultDeframer.with_validator(TableRootValidator::new()),
+        DefaultDeframer::new().with_validator(TableRootValidator::new()),
     );
     let mut iter = reader.messages();
     let err = iter.next().unwrap_err();
-    assert!(matches!(err, Error::ValidationFailed { .. }));
+    assert!(matches!(err.kind(), ErrorKind::ValidationFailed { .. }));
 }

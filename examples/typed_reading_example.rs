@@ -10,7 +10,7 @@ struct StrRoot;
 impl<'a> StreamDeserialize<'a> for StrRoot {
     type Root = &'a str;
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     }
 }
 
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     }
 
     // Read back using typed API
-    let mut reader = StreamReader::new(Cursor::new(&storage), DefaultDeframer);
+    let mut reader = StreamReader::new(Cursor::new(&storage), DefaultDeframer::new());
     reader.process_typed::<StrRoot, _>(|root| {
         println!("{root}");
         Ok(())

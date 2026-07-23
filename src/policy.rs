@@ -122,6 +122,48 @@ impl MemoryPolicy for NoOpPolicy {
     }
 }
 
+/// A monotonic time source for time-based policy triggers.
+///
+/// This is a determinism seam: production code uses the default
+/// [`MonotonicClock`]; tests and simulators inject a clock they control, so
+/// time-dependent behavior is reproducible without sleeping. Implementations
+/// report time elapsed since their own origin — only the difference between
+/// two `now()` readings is meaningful — and must never run backwards.
+/// (`Send` for the same reason as [`MemoryPolicy`]: policies move across
+/// threads with their writer/reader, and they carry their clock.)
+pub trait Clock: Send {
+    /// Time elapsed since the clock's origin.
+    fn now(&self) -> Duration;
+}
+
+/// The production [`Clock`]: monotonic time from a stored [`Instant`] origin.
+#[derive(Debug, Clone, Copy)]
+pub struct MonotonicClock {
+    origin: Instant,
+}
+
+impl MonotonicClock {
+    /// Creates a clock whose origin is "now".
+    pub fn new() -> Self {
+        Self {
+            origin: Instant::now(),
+        }
+    }
+}
+
+impl Default for MonotonicClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clock for MonotonicClock {
+    #[inline]
+    fn now(&self) -> Duration {
+        self.origin.elapsed()
+    }
+}
+
 /// An adaptive, capacity-aware policy with hysteresis to avoid thrashing.
 ///
 /// # How it works
@@ -137,7 +179,7 @@ impl MemoryPolicy for NoOpPolicy {
 ///    writes (or a time duration) before triggering a reset. This ensures we don't
 ///    shrink immediately after a large message, only to grow again for the next one.
 #[derive(Debug, Clone)]
-pub struct AdaptiveWatermarkPolicy {
+pub struct AdaptiveWatermarkPolicy<C: Clock = MonotonicClock> {
     /// Trigger when `current_capacity >= last_message_size * size_ratio_threshold`.
     pub size_ratio_threshold: usize,
     /// How many qualifying messages to observe before resetting.
@@ -148,7 +190,8 @@ pub struct AdaptiveWatermarkPolicy {
     pub baseline_capacity: usize,
     // Internal state
     messages_since_over: u32,
-    last_over_seen_at: Option<Instant>,
+    last_over_seen_at: Option<Duration>,
+    clock: C,
 }
 
 impl AdaptiveWatermarkPolicy {
@@ -166,9 +209,23 @@ impl AdaptiveWatermarkPolicy {
     /// Creates a policy that triggers once `messages_to_wait` consecutive
     /// messages have each observed `capacity >= message_size * size_ratio_threshold`.
     ///
-    /// (The state fields are private, so this constructor — or `Default` — is
-    /// the way to build one.)
+    /// (The state fields are private, so this constructor — or `Default`, or
+    /// [`with_clock`](Self::with_clock) — is the way to build one.)
     pub fn new(size_ratio_threshold: usize, messages_to_wait: u32) -> Self {
+        Self::with_clock(
+            size_ratio_threshold,
+            messages_to_wait,
+            MonotonicClock::new(),
+        )
+    }
+}
+
+impl<C: Clock> AdaptiveWatermarkPolicy<C> {
+    /// Like [`new`](AdaptiveWatermarkPolicy::new), but with an injected
+    /// [`Clock`] — the determinism seam for tests and simulators, which drive
+    /// time explicitly instead of sleeping. The clock is a generic default
+    /// parameter, so the production path pays no dispatch for the seam.
+    pub fn with_clock(size_ratio_threshold: usize, messages_to_wait: u32, clock: C) -> Self {
         Self {
             size_ratio_threshold,
             messages_to_wait,
@@ -176,6 +233,7 @@ impl AdaptiveWatermarkPolicy {
             baseline_capacity: DEFAULT_BASELINE_CAPACITY,
             messages_since_over: 0,
             last_over_seen_at: None,
+            clock,
         }
     }
 
@@ -203,7 +261,7 @@ impl Default for AdaptiveWatermarkPolicy {
     }
 }
 
-impl MemoryPolicy for AdaptiveWatermarkPolicy {
+impl<C: Clock> MemoryPolicy for AdaptiveWatermarkPolicy<C> {
     fn should_reset(
         &mut self,
         last_message_size: usize,
@@ -218,10 +276,9 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
 
         let overprovisioned =
             current_capacity >= last_message_size.saturating_mul(self.size_ratio_threshold);
-        // NOTE: direct clock read; to be routed through an injected `Clock`
-        // trait in the v0.3 hardening pass (determinism seam — see
-        // docs/planning/NEXT_STEPS.md item B8).
-        let now = self.cooldown.as_ref().map(|_| Instant::now());
+        // Clock read at most once per consult, and only when a cooldown is
+        // configured: the count-only configuration performs no clock reads.
+        let now = self.cooldown.as_ref().map(|_| self.clock.now());
 
         if overprovisioned {
             self.messages_since_over = self.messages_since_over.saturating_add(1);
@@ -236,7 +293,7 @@ impl MemoryPolicy for AdaptiveWatermarkPolicy {
 
         let count_ok = overprovisioned && self.messages_since_over >= self.messages_to_wait;
         let time_ok = match (self.cooldown, self.last_over_seen_at, now) {
-            (Some(cd), Some(t0), Some(t1)) => t1.duration_since(t0) >= cd,
+            (Some(cd), Some(t0), Some(t1)) => t1.saturating_sub(t0) >= cd,
             _ => false,
         };
 
@@ -364,6 +421,32 @@ impl MemoryPolicy for SizeThresholdPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    /// Simulator-controlled clock: tests advance time explicitly, so the
+    /// time-based assertions below are deterministic and sleep-free.
+    #[derive(Clone, Default)]
+    struct TestClock(Arc<AtomicU64>); // elapsed milliseconds
+
+    impl TestClock {
+        fn advance_ms(&self, ms: u64) {
+            self.0.fetch_add(ms, Ordering::Relaxed);
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::Relaxed))
+        }
+    }
+
+    #[test]
+    fn monotonic_clock_is_monotonic() {
+        let clock = MonotonicClock::new();
+        let first = clock.now();
+        assert!(clock.now() >= first);
+    }
 
     #[test]
     fn test_noop_policy() {
@@ -410,8 +493,9 @@ mod tests {
     #[test]
     fn test_adaptive_cooldown() {
         // High count so the trigger relies on time alone
-        let mut policy =
-            AdaptiveWatermarkPolicy::new(10, 100).with_cooldown(Duration::from_millis(50));
+        let clock = TestClock::default();
+        let mut policy = AdaptiveWatermarkPolicy::with_clock(10, 100, clock.clone())
+            .with_cooldown(Duration::from_millis(50));
 
         let capacity = 1000;
         let small_msg = 50;
@@ -423,8 +507,8 @@ mod tests {
         // Immediate follow-up: no reset
         assert_eq!(policy.should_reset(small_msg, capacity), None);
 
-        // Wait for cooldown
-        std::thread::sleep(Duration::from_millis(60));
+        // Advance past the cooldown
+        clock.advance_ms(60);
 
         // Next write triggers reset via time
         assert_eq!(
@@ -441,28 +525,29 @@ mod tests {
         // caller does not consult the policy at all (capacity at the reclaim
         // baseline) and cause an immediate, premature TimeCooldown on the next
         // over-provisioned observation.
-        let mut policy =
-            AdaptiveWatermarkPolicy::new(10, 100).with_cooldown(Duration::from_millis(50));
+        let clock = TestClock::default();
+        let mut policy = AdaptiveWatermarkPolicy::with_clock(10, 100, clock.clone())
+            .with_cooldown(Duration::from_millis(50));
         let capacity = 1000;
         let small_msg = 50;
 
         // Arm and fire once via time.
         assert_eq!(policy.should_reset(small_msg, capacity), None);
-        std::thread::sleep(Duration::from_millis(60));
+        clock.advance_ms(60);
         assert_eq!(
             policy.should_reset(small_msg, capacity),
             Some(ReclamationReason::TimeCooldown)
         );
 
         // Simulate an idle / gated-out period longer than the cooldown.
-        std::thread::sleep(Duration::from_millis(60));
+        clock.advance_ms(60);
 
         // The next over-provisioned observation must START a fresh window,
         // not fire against the stale timestamp.
         assert_eq!(policy.should_reset(small_msg, capacity), None);
 
         // ...and fires again only after the cooldown elapses from that restart.
-        std::thread::sleep(Duration::from_millis(60));
+        clock.advance_ms(60);
         assert_eq!(
             policy.should_reset(small_msg, capacity),
             Some(ReclamationReason::TimeCooldown)

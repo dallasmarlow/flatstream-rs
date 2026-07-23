@@ -16,34 +16,36 @@ fn make_frame(payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn bounded_deframer_happy_path() {
-    // Purpose: BoundedDeframer should accept a frame under the limit and return the payload.
+    // Purpose: A deframer bound should accept a frame under the limit and return the payload.
     let payload = vec![1u8, 2, 3, 4, 5];
     let data = make_frame(&payload);
 
-    let deframer = BoundedDeframer::new(DefaultDeframer, 10);
+    let deframer = DefaultDeframer::new().with_max_frame_len(10);
     let mut reader = Cursor::new(&data);
     let mut buffer = Vec::new();
 
-    let result = deframer.read_and_deframe(&mut reader, &mut buffer).unwrap();
-    assert!(matches!(result, Some(())));
-    assert_eq!(buffer, payload);
+    let n = deframer
+        .read_and_deframe(&mut reader, &mut buffer)
+        .unwrap()
+        .unwrap();
+    assert_eq!(&buffer[..n], payload);
 }
 
 #[test]
 fn bounded_deframer_over_limit() {
-    // Purpose: BoundedDeframer should reject frames whose declared length exceeds the bound.
+    // Purpose: The deframer must reject frames whose declared length exceeds the bound.
     let payload = vec![0u8; 16];
     let data = make_frame(&payload);
 
-    let deframer = BoundedDeframer::new(DefaultDeframer, 8);
+    let deframer = DefaultDeframer::new().with_max_frame_len(8);
     let mut reader = Cursor::new(&data);
     let mut buffer = Vec::new();
 
     let err = deframer
         .read_and_deframe(&mut reader, &mut buffer)
         .unwrap_err();
-    match err {
-        Error::InvalidFrame { message, .. } => {
+    match err.into_kind() {
+        ErrorKind::InvalidFrame { message, .. } => {
             assert!(message.contains("exceeds"));
         }
         other => panic!("expected InvalidFrame, got {other:?}"),
@@ -64,21 +66,34 @@ fn bounded_framer_happy_path() {
 
     // Verify round-trip with default deframer
     let mut buf = Vec::new();
-    DefaultDeframer
+    let n = DefaultDeframer::new()
         .read_and_deframe(&mut cur, &mut buf)
         .unwrap()
         .unwrap();
-    assert_eq!(buf, payload);
+    assert_eq!(&buf[..n], payload);
 }
 
 #[test]
-#[should_panic(expected = "InvalidFrame")]
-fn write_over_limit_should_panic() {
-    // Purpose: Writing over the bound should return InvalidFrame; unwrap triggers panic here.
+fn write_over_limit_returns_invalid_frame() {
+    // Purpose: Writing over the bound returns InvalidFrame with the declared
+    // length and limit in context — asserted exactly, not via panic-message
+    // substring matching.
     let mut out = Vec::new();
     let framer = DefaultFramer.bounded(4);
-    // 5 bytes exceeds the bound; this should panic inside unwrap()
-    framer.frame_and_write(&mut out, b"hello").unwrap();
+    // 5 bytes exceeds the 4-byte bound.
+    let err = framer.frame_and_write(&mut out, b"hello").unwrap_err();
+    match err.into_kind() {
+        ErrorKind::InvalidFrame {
+            declared_len,
+            limit,
+            ..
+        } => {
+            assert_eq!(declared_len, Some(5));
+            assert_eq!(limit, Some(4));
+        }
+        other => panic!("expected InvalidFrame, got {other:?}"),
+    }
+    assert!(out.is_empty(), "nothing may be written on rejection");
 }
 
 #[test]
@@ -102,7 +117,7 @@ fn observer_deframer_callback_invoked() {
     let data = make_frame(&payload);
 
     let seen: RefCell<Vec<Vec<u8>>> = RefCell::new(Vec::new());
-    let deframer = ObserverDeframer::new(DefaultDeframer, |p: &[u8]| {
+    let deframer = ObserverDeframer::new(DefaultDeframer::new(), |p: &[u8]| {
         seen.borrow_mut().push(p.to_vec());
     });
 
@@ -122,12 +137,15 @@ fn observer_deframer_callback_invoked() {
     assert_eq!(seen[0], payload);
 }
 
-// --- Checksum observer tests (feature-gated) ---
+// --- Checksum observer test (feature-gated) ---
+// One checksummed variant suffices: the observer adapters are generic over the
+// inner framer/deframer, so composing with any checksum proves the forwarding;
+// the algorithms themselves are covered by the checksum/wire-format tests.
 
 #[cfg(feature = "xxhash")]
 #[test]
-fn observer_with_checksum_xxhash_callbacks_invoked() {
-    // Purpose: Observer callbacks fire correctly with ChecksumFramer/ChecksumDeframer (xxhash).
+fn observer_with_checksum_callbacks_invoked() {
+    // Purpose: Observer callbacks fire correctly composed over checksum framing.
     use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
     use flatstream::XxHash64;
 
@@ -146,76 +164,6 @@ fn observer_with_checksum_xxhash_callbacks_invoked() {
     // Deframer observer
     let deframer_called = Cell::new(0usize);
     let deframer = ObserverDeframer::new(ChecksumDeframer::new(XxHash64::new()), |p: &[u8]| {
-        assert_eq!(p, payload);
-        deframer_called.set(deframer_called.get() + 1);
-    });
-    let mut sr = StreamReader::new(Cursor::new(bytes), deframer);
-    let mut count = 0;
-    sr.process_all(|p| {
-        assert_eq!(p, payload);
-        count += 1;
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(count, 1);
-    assert_eq!(deframer_called.get(), 1);
-}
-
-#[cfg(feature = "crc32")]
-#[test]
-fn observer_with_checksum_crc32_callbacks_invoked() {
-    // Purpose: Observer callbacks fire correctly with CRC32-framed streams.
-    use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
-    use flatstream::Crc32;
-
-    let payload = b"observe checksum crc32";
-
-    let framer_called = Cell::new(0usize);
-    let framer = ObserverFramer::new(ChecksumFramer::new(Crc32::new()), |p: &[u8]| {
-        assert_eq!(p, payload);
-        framer_called.set(framer_called.get() + 1);
-    });
-    let mut bytes = Vec::new();
-    framer.frame_and_write(&mut bytes, payload).unwrap();
-    assert_eq!(framer_called.get(), 1);
-
-    let deframer_called = Cell::new(0usize);
-    let deframer = ObserverDeframer::new(ChecksumDeframer::new(Crc32::new()), |p: &[u8]| {
-        assert_eq!(p, payload);
-        deframer_called.set(deframer_called.get() + 1);
-    });
-    let mut sr = StreamReader::new(Cursor::new(bytes), deframer);
-    let mut count = 0;
-    sr.process_all(|p| {
-        assert_eq!(p, payload);
-        count += 1;
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(count, 1);
-    assert_eq!(deframer_called.get(), 1);
-}
-
-#[cfg(feature = "crc16")]
-#[test]
-fn observer_with_checksum_crc16_callbacks_invoked() {
-    // Purpose: Observer callbacks fire correctly with CRC16-framed streams.
-    use flatstream::framing::{ChecksumDeframer, ChecksumFramer};
-    use flatstream::Crc16;
-
-    let payload = b"observe checksum crc16";
-
-    let framer_called = Cell::new(0usize);
-    let framer = ObserverFramer::new(ChecksumFramer::new(Crc16::new()), |p: &[u8]| {
-        assert_eq!(p, payload);
-        framer_called.set(framer_called.get() + 1);
-    });
-    let mut bytes = Vec::new();
-    framer.frame_and_write(&mut bytes, payload).unwrap();
-    assert_eq!(framer_called.get(), 1);
-
-    let deframer_called = Cell::new(0usize);
-    let deframer = ObserverDeframer::new(ChecksumDeframer::new(Crc16::new()), |p: &[u8]| {
         assert_eq!(p, payload);
         deframer_called.set(deframer_called.get() + 1);
     });
@@ -252,52 +200,38 @@ fn fluent_bounded_equivalence_framer() {
     let err2 = fluent
         .frame_and_write(&mut Vec::new(), &payload_bad)
         .unwrap_err();
-    assert!(matches!(err1, Error::InvalidFrame { .. }));
-    assert!(matches!(err2, Error::InvalidFrame { .. }));
+    assert!(matches!(err1.kind(), ErrorKind::InvalidFrame { .. }));
+    assert!(matches!(err2.kind(), ErrorKind::InvalidFrame { .. }));
 }
 
 #[test]
-fn fluent_bounded_equivalence_deframer() {
-    // Purpose: Fluent API .bounded() produces identical behavior to manual BoundedDeframer.
-    // Create a frame with payload length 6
+fn max_frame_len_enforced_through_adapters() {
+    // Purpose: The core deframer's bound is enforced on both trait entry points,
+    // including when composed under an adapter (which forwards read_after_length).
     let data_bad = make_frame(&[1u8; 6]);
     let data_ok = make_frame(&[2u8; 5]);
 
-    let manual = BoundedDeframer::new(DefaultDeframer, 5);
-    let fluent = DefaultDeframer.bounded(5);
+    let deframer = DefaultDeframer::new()
+        .with_max_frame_len(5)
+        .observed(|_p: &[u8]| {});
 
-    // Over-limit should error for both
+    // Over-limit should error through the adapter
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_bad);
-        let err = manual.read_and_deframe(&mut cur, &mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidFrame { .. }));
-    }
-    {
-        let mut buf = Vec::new();
-        let mut cur = Cursor::new(&data_bad);
-        let err = fluent.read_and_deframe(&mut cur, &mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidFrame { .. }));
+        let err = deframer.read_and_deframe(&mut cur, &mut buf).unwrap_err();
+        assert!(matches!(err.kind(), ErrorKind::InvalidFrame { .. }));
     }
 
-    // Under-limit should succeed for both
+    // Under-limit should succeed through the adapter
     {
         let mut buf = Vec::new();
         let mut cur = Cursor::new(&data_ok);
-        manual
+        let n = deframer
             .read_and_deframe(&mut cur, &mut buf)
             .unwrap()
             .unwrap();
-        assert_eq!(buf, &data_ok[4..]);
-    }
-    {
-        let mut buf = Vec::new();
-        let mut cur = Cursor::new(&data_ok);
-        fluent
-            .read_and_deframe(&mut cur, &mut buf)
-            .unwrap()
-            .unwrap();
-        assert_eq!(buf, &data_ok[4..]);
+        assert_eq!(&buf[..n], &data_ok[4..]);
     }
 }
 
@@ -326,8 +260,8 @@ fn fluent_observed_equivalence_deframer() {
         .frame_and_write(&mut framed, &payload)
         .unwrap();
 
-    let manual = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| {});
-    let fluent = DefaultDeframer.observed(|_p: &[u8]| {});
+    let manual = ObserverDeframer::new(DefaultDeframer::new(), |_p: &[u8]| {});
+    let fluent = DefaultDeframer::new().observed(|_p: &[u8]| {});
 
     let mut buf_m = Vec::new();
     let mut cur_m = Cursor::new(&framed);
@@ -358,7 +292,7 @@ fn fluent_observed_callbacks_invoked() {
 
     // Deframer: callback should be called once on read
     let called = Cell::new(0usize);
-    let deframer = DefaultDeframer.observed(|_p: &[u8]| called.set(called.get() + 1));
+    let deframer = DefaultDeframer::new().observed(|_p: &[u8]| called.set(called.get() + 1));
     let mut sr = StreamReader::new(Cursor::new(out), deframer);
     let mut count = 0;
     sr.process_all(|p| {
@@ -388,7 +322,7 @@ fn stream_writer_with_capacity_smoke() {
 #[test]
 fn stream_reader_ergonomics_capacity_and_reserve() {
     let reader = Cursor::new(Vec::<u8>::new());
-    let mut sr = StreamReader::with_capacity(reader, DefaultDeframer, 1024);
+    let mut sr = StreamReader::with_capacity(reader, DefaultDeframer::new(), 1024);
     assert!(sr.buffer_capacity() >= 1024);
 
     let target: usize = 2048;
@@ -400,7 +334,7 @@ fn stream_reader_ergonomics_capacity_and_reserve() {
 #[test]
 fn stream_reader_accessors_and_into_inner() {
     let reader = Cursor::new(vec![0u8; 0]);
-    let mut sr = StreamReader::new(reader, DefaultDeframer);
+    let mut sr = StreamReader::new(reader, DefaultDeframer::new());
 
     // Accessors compile and return references
     let _r_ref: &Cursor<Vec<u8>> = sr.get_ref();

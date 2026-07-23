@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
     // Observe payloads as they are read
     let read_msgs = Cell::new(0usize);
-    let deframer = ObserverDeframer::new(DefaultDeframer, |_p: &[u8]| {
+    let deframer = ObserverDeframer::new(DefaultDeframer::new(), |_p: &[u8]| {
         read_msgs.set(read_msgs.get() + 1);
     });
     let mut stream_reader = StreamReader::new(Cursor::new(&bytes), deframer);

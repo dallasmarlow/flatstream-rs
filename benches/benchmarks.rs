@@ -5,8 +5,6 @@ use flatbuffers::FlatBufferBuilder;
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream::checksum::Checksum;
 use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter};
-#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
-use flatstream::{SafeTakeDeframer, UnsafeDeframer};
 use std::io::Cursor;
 
 // ---
@@ -18,7 +16,6 @@ use std::io::Cursor;
 // - Write batching and end-to-end cycles
 // - High-frequency and large-message scenarios
 // - Memory efficiency and regression-sensitive operations
-// - Alternative read-path implementations (Default/SafeTake/Unsafe)
 // - Deframer micro and sustained throughput
 //
 // Each group includes brief commentary about the design and what to look for in results.
@@ -313,7 +310,7 @@ fn benchmark_read_default_deframer(c: &mut Criterion) {
 
     c.bench_function("read_default_deframer_100_messages", |b| {
         b.iter(|| {
-            let deframer = DefaultDeframer;
+            let deframer = DefaultDeframer::new();
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             reader
@@ -343,7 +340,7 @@ fn benchmark_zero_allocation_reading(c: &mut Criterion) {
 
     c.bench_function("zero_allocation_reading_100_messages", |b| {
         b.iter(|| {
-            let deframer = DefaultDeframer;
+            let deframer = DefaultDeframer::new();
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             let mut total_size = 0;
@@ -460,7 +457,7 @@ fn benchmark_write_read_cycle_default(c: &mut Criterion) {
 
             // Read
             {
-                let deframer = DefaultDeframer;
+                let deframer = DefaultDeframer::new();
                 let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
                 let mut count = 0;
                 reader
@@ -545,7 +542,7 @@ fn benchmark_high_frequency_reading(c: &mut Criterion) {
 
     c.bench_function("high_frequency_reading_1000_messages", |b| {
         b.iter(|| {
-            let deframer = DefaultDeframer;
+            let deframer = DefaultDeframer::new();
             let mut reader = StreamReader::new(Cursor::new(&buffer), deframer);
             let mut count = 0;
             let mut total_size = 0;
@@ -683,72 +680,7 @@ fn benchmark_regression_sensitive_operations(c: &mut Criterion) {
     });
 }
 
-// === READ PATH ALTERNATIVES BENCHMARKS ===
-
-// In: benches/benchmarks.rs
-
-#[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
-fn benchmark_read_path_alternatives(c: &mut Criterion) {
-    // 1. Prepare a consistent set of test data
-    let mut buffer = Vec::new();
-    {
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(std::io::Cursor::new(&mut buffer), framer);
-        for i in 0..100 {
-            let msg = format!("message {i}");
-            writer.write(&msg).unwrap();
-        }
-    }
-
-    let mut group = c.benchmark_group("Read Path Implementations");
-
-    // Baseline: DefaultDeframer
-    // Safe, straightforward read path that resizes and zeroes the buffer
-    group.bench_function("DefaultDeframer (Original)", |b| {
-        b.iter(|| {
-            let deframer = DefaultDeframer;
-            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
-            reader
-                .process_all(|payload| {
-                    black_box(payload);
-                    Ok(())
-                })
-                .unwrap();
-        });
-    });
-
-    // SafeTakeDeframer: Safe alternative using Read::take; may vary by reader
-    group.bench_function("SafeTakeDeframer", |b| {
-        b.iter(|| {
-            let deframer = SafeTakeDeframer;
-            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
-            reader
-                .process_all(|payload| {
-                    black_box(payload);
-                    Ok(())
-                })
-                .unwrap();
-        });
-    });
-
-    // UnsafeDeframer: Avoids zeroing; fastest but requires trusted data source
-    group.bench_function("UnsafeDeframer", |b| {
-        b.iter(|| {
-            let deframer = UnsafeDeframer;
-            let mut reader = StreamReader::new(std::io::Cursor::new(&buffer), deframer);
-            reader
-                .process_all(|payload| {
-                    black_box(payload);
-                    Ok(())
-                })
-                .unwrap();
-        });
-    });
-
-    group.finish();
-}
-
-// === IMPROVED DEFRAMER MICRO-BENCHMARK ===
+// === DEFRAMER MICRO-BENCHMARK ===
 
 #[cfg(not(any(feature = "xxhash", feature = "crc32", feature = "crc16")))]
 use flatstream::framing::Deframer;
@@ -785,46 +717,19 @@ fn benchmark_deframer_micro(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("Deframer Micro-Benchmark (Buffer Initialization)");
 
-    // This buffer will be reused by the deframers in the hot loop.
+    // This buffer is reused across iterations: after the first frame it sits at
+    // its high-water mark, so the loop measures the steady state (no growth,
+    // no zeroing) — the state a long-running reader lives in.
     let mut read_buffer = Vec::with_capacity(8192);
 
-    group.bench_function("DefaultDeframer (zeroing)", |b| {
+    group.bench_function("DefaultDeframer (steady state)", |b| {
         b.iter(|| {
-            let deframer = DefaultDeframer;
+            let deframer = DefaultDeframer::new();
             let mut reader = MockReader {
                 data: &buffer,
                 pos: 0,
             };
             // We are timing ONLY the deframing logic here.
-            deframer
-                .read_and_deframe(&mut reader, &mut read_buffer)
-                .unwrap();
-            black_box(&read_buffer);
-        });
-    });
-
-    // ADDED: Benchmark for SafeTakeDeframer
-    group.bench_function("SafeTakeDeframer", |b| {
-        b.iter(|| {
-            let deframer = SafeTakeDeframer;
-            let mut reader = MockReader {
-                data: &buffer,
-                pos: 0,
-            };
-            deframer
-                .read_and_deframe(&mut reader, &mut read_buffer)
-                .unwrap();
-            black_box(&read_buffer);
-        });
-    });
-
-    group.bench_function("UnsafeDeframer (no zeroing)", |b| {
-        b.iter(|| {
-            let deframer = UnsafeDeframer;
-            let mut reader = MockReader {
-                data: &buffer,
-                pos: 0,
-            };
             deframer
                 .read_and_deframe(&mut reader, &mut read_buffer)
                 .unwrap();
@@ -853,49 +758,14 @@ fn benchmark_deframer_sustained_throughput(c: &mut Criterion) {
 
     let mut read_buffer = Vec::with_capacity(8192);
 
-    group.bench_function("DefaultDeframer (zeroing)", |b| {
+    group.bench_function("DefaultDeframer (steady state)", |b| {
         b.iter(|| {
-            let deframer = DefaultDeframer;
+            let deframer = DefaultDeframer::new();
             let mut reader = MockReader {
                 data: &buffer,
                 pos: 0,
             };
             // Process all messages in the buffer
-            while deframer
-                .read_and_deframe(&mut reader, &mut read_buffer)
-                .unwrap()
-                .is_some()
-            {
-                black_box(&read_buffer);
-            }
-        });
-    });
-
-    // ADDED: Benchmark for SafeTakeDeframer
-    group.bench_function("SafeTakeDeframer", |b| {
-        b.iter(|| {
-            let deframer = SafeTakeDeframer;
-            let mut reader = MockReader {
-                data: &buffer,
-                pos: 0,
-            };
-            while deframer
-                .read_and_deframe(&mut reader, &mut read_buffer)
-                .unwrap()
-                .is_some()
-            {
-                black_box(&read_buffer);
-            }
-        });
-    });
-
-    group.bench_function("UnsafeDeframer (no zeroing)", |b| {
-        b.iter(|| {
-            let deframer = UnsafeDeframer;
-            let mut reader = MockReader {
-                data: &buffer,
-                pos: 0,
-            };
             while deframer
                 .read_and_deframe(&mut reader, &mut read_buffer)
                 .unwrap()
@@ -925,7 +795,6 @@ criterion_group!(
     benchmark_large_messages,
     benchmark_memory_efficiency,
     benchmark_regression_sensitive_operations,
-    benchmark_read_path_alternatives,
     benchmark_deframer_micro,
     benchmark_deframer_sustained_throughput,
 );

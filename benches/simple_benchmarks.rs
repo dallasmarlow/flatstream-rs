@@ -1,16 +1,18 @@
 // benches/simple_benchmarks.rs
 // Simple, high-throughput micro-benchmarks on primitive-type payloads.
-// Compares flatstream (default/bounded/unsafe read) with bincode and serde_json.
+// Compares flatstream (default/bounded/unbounded read) with bincode and serde_json.
 // ---
 // Purpose: Provide an easy-to-interpret baseline on tiny numeric and small string
-// shapes, including write+read cycles and read-only deframer isolation. For fairness,
-// bincode/json use manual framing to match flatstream's wire format.
+// shapes, including write+read cycles and read-only deframer isolation. All paths
+// use equivalent 4-byte framing, but their consumption work differs: FlatStream
+// stops after borrowed frame access while bincode/JSON deserialize owned values.
+// These are workflow medians, not equal-work cross-library speed rankings; a
+// fields-consumed FlatStream comparison is planned before publishing rankings.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    BoundedDeframer, BoundedFramer, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize,
-    StreamWriter, UnsafeDeframer,
+    BoundedFramer, DefaultDeframer, DefaultFramer, StreamReader, StreamSerialize, StreamWriter,
 };
 use std::io::{Cursor, Read, Write};
 
@@ -94,7 +96,7 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
                     writer.write_finished(&mut builder).unwrap();
                 }
             }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -124,7 +126,7 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
             }
             let mut reader = StreamReader::new(
                 Cursor::new(&buffer),
-                BoundedDeframer::new(DefaultDeframer, 1 << 30),
+                DefaultDeframer::new().with_max_frame_len(1 << 30),
             );
             let mut count = 0;
             reader
@@ -137,7 +139,7 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flatstream_default_unsafe_read", |b| {
+    group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             {
@@ -149,7 +151,7 @@ fn bench_simple_numeric_write_read_cycle(c: &mut Criterion) {
                     writer.write_finished(&mut builder).unwrap();
                 }
             }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -226,7 +228,7 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
                     writer.write_finished(&mut builder).unwrap();
                 }
             }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -256,7 +258,7 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
             }
             let mut reader = StreamReader::new(
                 Cursor::new(&buffer),
-                BoundedDeframer::new(DefaultDeframer, 1 << 30),
+                DefaultDeframer::new().with_max_frame_len(1 << 30),
             );
             let mut count = 0;
             reader
@@ -269,7 +271,7 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flatstream_default_unsafe_read", |b| {
+    group.bench_function("flatstream_default_unbounded_read", |b| {
         b.iter(|| {
             let mut buffer = Vec::new();
             {
@@ -281,7 +283,7 @@ fn bench_simple_string_write_read_cycle(c: &mut Criterion) {
                     writer.write_finished(&mut builder).unwrap();
                 }
             }
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -361,7 +363,7 @@ fn bench_simple_numeric_read_only(c: &mut Criterion) {
 
     group.bench_function("default_deframer", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -377,7 +379,7 @@ fn bench_simple_numeric_read_only(c: &mut Criterion) {
         b.iter(|| {
             let mut reader = StreamReader::new(
                 Cursor::new(&buffer),
-                BoundedDeframer::new(DefaultDeframer, 1 << 30),
+                DefaultDeframer::new().with_max_frame_len(1 << 30),
             );
             let mut count = 0;
             reader
@@ -390,9 +392,9 @@ fn bench_simple_numeric_read_only(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("unsafe_deframer", |b| {
+    group.bench_function("unbounded_deframer", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -424,7 +426,7 @@ fn bench_simple_string_read_only(c: &mut Criterion) {
 
     group.bench_function("default_deframer", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::new());
             let mut count = 0;
             reader
                 .process_all(|_payload| {
@@ -440,7 +442,7 @@ fn bench_simple_string_read_only(c: &mut Criterion) {
         b.iter(|| {
             let mut reader = StreamReader::new(
                 Cursor::new(&buffer),
-                BoundedDeframer::new(DefaultDeframer, 1 << 30),
+                DefaultDeframer::new().with_max_frame_len(1 << 30),
             );
             let mut count = 0;
             reader
@@ -453,9 +455,9 @@ fn bench_simple_string_read_only(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("unsafe_deframer", |b| {
+    group.bench_function("unbounded_deframer", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&buffer), UnsafeDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&buffer), DefaultDeframer::unbounded());
             let mut count = 0;
             reader
                 .process_all(|_payload| {

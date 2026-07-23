@@ -12,9 +12,12 @@ use std::marker::PhantomData;
 /// This reader is generic over a `Deframer` strategy, which defines how
 /// each message is parsed from the byte stream.
 ///
-/// **Zero-Copy Guarantee**: Both APIs provide direct access to the internal buffer
-/// as `&[u8]` slices. The FlatBuffers philosophy is preserved - no parsing, no
-/// copying, just direct access to the serialized data.
+/// **Copy behavior**: Both APIs yield `&[u8]` slices borrowed from the internal
+/// buffer. A generic [`Read`] source copies each frame once into that buffer;
+/// growth may allocate, while warmed high-water-mark processing adds no
+/// allocation, second payload copy, or deserialization. The deframer parses
+/// only the frame header (length and optional checksum), never the payload,
+/// which is handed to the caller as the serialized FlatBuffer bytes.
 ///
 /// The returned `&[u8]` payload slices are borrowed from the reader's
 /// internal buffer and are valid only until the next successful read.
@@ -25,10 +28,10 @@ use std::marker::PhantomData;
 ///
 /// # Performance: Processor API vs. Expert API
 ///
-/// The `process_all()` method provides the highest performance by using a closure
-/// that receives borrowed slices (`&[u8]`) directly from the internal buffer. This
-/// eliminates all allocations and provides zero-copy access to message payloads.
-/// Performance: Excellent - zero-copy access to message payloads.
+/// The `process_all()` method uses a closure that receives borrowed slices
+/// (`&[u8]`) directly from the internal buffer. After the buffer reaches its
+/// high-water mark, the read loop performs no heap allocations and adds no
+/// second payload copy.
 ///
 /// The `messages()` method provides manual iteration control for cases where you
 /// need more complex control flow or want to process messages conditionally.
@@ -37,7 +40,7 @@ use std::marker::PhantomData;
 /// ```rust
 /// # use flatstream::{StreamReader, DefaultDeframer, Result};
 /// # use std::io::Cursor;
-/// # let mut reader = StreamReader::new(Cursor::new(vec![]), DefaultDeframer);
+/// # let mut reader = StreamReader::new(Cursor::new(vec![]), DefaultDeframer::new());
 ///
 /// // High-performance processor API
 /// reader.process_all(|payload| {
@@ -55,15 +58,15 @@ use std::marker::PhantomData;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ## Choosing a Deframer
+/// ## Buffer Behavior and Frame Bounds
 ///
-/// This reader is generic over a `Deframer` strategy. You can choose from several built-in implementations based on your performance and safety needs:
-///
-/// * **`DefaultDeframer` (Recommended)**: The standard, safe implementation. It reads the exact number of bytes specified by the length prefix. It is safe and performs well for almost all use cases.
-///
-/// * **`SafeTakeDeframer`**: An alternative safe implementation that uses `Read::take`. Its performance may vary depending on the underlying reader, but it provides another safe option.
-///
-/// * **`UnsafeDeframer` (Expert)**: The highest-performance option, intended for scenarios where you have a trusted data source (e.g., reading a file you just wrote). It avoids initializing the buffer by using `unsafe` code, which can provide a speed boost by eliminating writes to memory. **Only use this if you have benchmarked it and understand the risks.**
+/// The internal buffer is a high-water mark: it grows to the largest payload
+/// seen (zero-initializing only the growth) and is then reused in place, so
+/// steady-state reads perform no allocation and no per-frame zeroing. The
+/// deframers bound each frame's declared length (default
+/// [`DEFAULT_MAX_FRAME_LEN`](crate::framing::DEFAULT_MAX_FRAME_LEN), 16 MiB)
+/// *before* sizing any allocation from it; unbounded reading is an explicit
+/// opt-in (e.g. `DefaultDeframer::unbounded()`) for fully trusted streams.
 ///
 /// ## Memory Reclamation
 ///
@@ -151,11 +154,11 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
             .deframer
             .read_and_deframe(&mut self.reader, &mut self.buffer)?
         {
-            Some(_) => {
+            Some(n) => {
                 if self.policy.is_some() {
-                    self.evaluate_memory_policy();
+                    self.evaluate_memory_policy(n);
                 }
-                Ok(Some(&self.buffer))
+                Ok(Some(&self.buffer[..n]))
             }
             None => Ok(None),
         }
@@ -177,7 +180,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// (`inline(never)`) to keep `read_message`'s inlinable body minimal for
     /// readers without a policy.
     #[inline(never)]
-    fn evaluate_memory_policy(&mut self) {
+    fn evaluate_memory_policy(&mut self, last_message_size: usize) {
         let Some(slot) = self.policy.as_mut() else {
             return;
         };
@@ -185,13 +188,13 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
         // At or below the policy's baseline there is nothing to reclaim —
         // skip the policy so its state cannot churn.
         if capacity > slot.baseline_capacity {
-            if let Some(reason) = slot.policy.should_reset(self.buffer.len(), capacity) {
+            if let Some(reason) = slot.policy.should_reset(last_message_size, capacity) {
                 // Schedule the shrink for the start of the *next* read so the
                 // payload about to be returned is never invalidated.
                 self.pending_shrink = true;
                 slot.policy.on_reclaim(&ReclamationInfo {
                     reason,
-                    last_message_size: self.buffer.len(),
+                    last_message_size,
                     capacity_before: capacity,
                     capacity_after: slot.baseline_capacity,
                 });
@@ -270,7 +273,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// impl<'a> StreamDeserialize<'a> for StrRoot {
     ///     type Root = &'a str;
     ///     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     ///     }
     /// }
     ///
@@ -286,7 +289,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// }
     ///
     /// // Read with typed API
-    /// let mut reader = StreamReader::new(Cursor::new(&buf), DefaultDeframer);
+    /// let mut reader = StreamReader::new(Cursor::new(&buf), DefaultDeframer::new());
     /// reader.process_typed::<StrRoot, _>(|root| {
     ///     assert_eq!(root, "hello");
     ///     Ok(())
@@ -384,11 +387,13 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
     /// * `Ok(Some(payload))` - A message was successfully read
     /// * `Ok(None)` - End of stream reached
     /// * `Err(e)` - An error occurred during reading
+    #[inline]
     pub fn next_message(&mut self) -> Result<Option<&[u8]>> {
         self.reader.read_message()
     }
 
     #[allow(clippy::should_implement_trait)]
+    #[inline]
     pub fn next(&mut self) -> Result<Option<&[u8]>> {
         self.next_message()
     }
@@ -416,7 +421,7 @@ where
     /// impl<'a> StreamDeserialize<'a> for StrRoot {
     ///     type Root = &'a str;
     ///     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+    ///         flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     ///     }
     /// }
     /// # fn main() -> Result<()> {
@@ -428,12 +433,13 @@ where
     ///     b.finish(s, None);
     ///     w.write_finished(&mut b)?;
     /// }
-    /// let mut r = StreamReader::new(Cursor::new(&buf), DefaultDeframer);
+    /// let mut r = StreamReader::new(Cursor::new(&buf), DefaultDeframer::new());
     /// let mut it = r.typed_messages::<StrRoot>();
     /// let first = it.next().unwrap().unwrap();
     /// assert_eq!(first, "hello");
     /// # Ok(()) }
     /// ```
+    #[inline]
     pub fn next_typed<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
         match self.reader.read_message()? {
             Some(payload) => {
@@ -445,6 +451,7 @@ where
     }
 
     #[allow(clippy::should_implement_trait)]
+    #[inline]
     pub fn next<'p>(&'p mut self) -> Result<Option<<T as StreamDeserialize<'p>>::Root>> {
         self.next_typed()
     }
@@ -462,279 +469,111 @@ mod tests {
     use crate::{ChecksumDeframer, ChecksumFramer, XxHash64};
     use std::io::Cursor;
 
-    #[test]
-    fn test_read_message_default_framer() {
-        // Write a message first
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
+    /// Writes `messages` as string roots and returns (wire bytes, expected
+    /// payload bytes per frame).
+    fn write_stream<F: crate::framing::Framer>(
+        framer: F,
+        messages: &[&str],
+    ) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let mut wire = Vec::new();
+        let mut expected = Vec::new();
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), framer);
         let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
+        for msg in messages {
+            builder.reset();
+            let data = builder.create_string(msg);
+            builder.finish(data, None);
+            expected.push(builder.finished_data().to_vec());
+            writer.write_finished(&mut builder).unwrap();
+        }
+        drop(writer);
+        (wire, expected)
+    }
 
-        // Now read it back
-        let data = buffer;
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let result = reader.read_message().unwrap();
-        assert!(result.is_some());
-        let payload = result.unwrap();
-        assert!(!payload.is_empty());
+    #[test]
+    fn read_message_returns_exact_payload() {
+        let (wire, expected) = write_stream(DefaultFramer, &["test data"]);
+        let mut reader = StreamReader::new(Cursor::new(wire), DefaultDeframer::new());
+        assert_eq!(reader.read_message().unwrap().unwrap(), &expected[0][..]);
+        assert!(reader.read_message().unwrap().is_none());
     }
 
     #[cfg(feature = "xxhash")]
     #[test]
-    fn test_read_message_with_xxhash64_feature() {
-        // Write a message first
-        let mut buffer = Vec::new();
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
-
-        // Now read it back
-        let data = buffer;
-        let checksum = XxHash64::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let result = reader.read_message().unwrap();
-        assert!(result.is_some());
-        let payload = result.unwrap();
-        assert!(!payload.is_empty());
+    fn read_message_checksummed_returns_exact_payload() {
+        let (wire, expected) = write_stream(ChecksumFramer::new(XxHash64::new()), &["test data"]);
+        let mut reader =
+            StreamReader::new(Cursor::new(wire), ChecksumDeframer::new(XxHash64::new()));
+        assert_eq!(reader.read_message().unwrap().unwrap(), &expected[0][..]);
+        assert!(reader.read_message().unwrap().is_none());
     }
 
     #[test]
-    fn test_read_message_default_no_checksum() {
-        // Write a message first
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("no checksum");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
-
-        // Now read it back
-        let data = buffer;
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let result = reader.read_message().unwrap();
-        assert!(result.is_some());
-        let payload = result.unwrap();
-        assert!(!payload.is_empty());
-    }
-
-    #[test]
-    fn test_process_all() {
-        // Write multiple messages
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
-        }
-
-        // Read them back using process_all
-        let data = buffer;
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let mut count = 0;
+    fn process_all_yields_every_payload_in_order() {
+        let (wire, expected) = write_stream(DefaultFramer, &["one", "two", "three"]);
+        let mut reader = StreamReader::new(Cursor::new(wire), DefaultDeframer::new());
+        let mut count = 0usize;
         reader
             .process_all(|payload| {
-                assert!(!payload.is_empty());
+                assert_eq!(payload, &expected[count][..]);
                 count += 1;
                 Ok(())
             })
             .unwrap();
-
-        assert_eq!(count, 3);
+        assert_eq!(count, expected.len());
     }
 
     #[test]
-    fn test_messages_expert_api() {
-        // Write multiple messages
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
-        }
-
-        // Read them back using the expert API
-        let data = buffer;
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let mut count = 0;
+    fn messages_iterator_yields_every_payload_in_order() {
+        let (wire, expected) = write_stream(DefaultFramer, &["one", "two", "three"]);
+        let mut reader = StreamReader::new(Cursor::new(wire), DefaultDeframer::new());
+        let mut count = 0usize;
         let mut messages = reader.messages();
         while let Some(payload) = messages.next().unwrap() {
-            assert!(!payload.is_empty());
+            assert_eq!(payload, &expected[count][..]);
             count += 1;
         }
-        assert_eq!(count, 3);
+        assert_eq!(count, expected.len());
     }
 
-    #[cfg(feature = "xxhash")]
     #[test]
-    fn test_process_all_with_checksum() {
-        // Write multiple messages
-        let mut buffer = Vec::new();
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
+    fn empty_stream_is_clean_eof_on_both_apis() {
+        let mut reader = StreamReader::new(Cursor::new(Vec::new()), DefaultDeframer::new());
+        assert!(reader.read_message().unwrap().is_none());
 
-        for i in 0..3 {
-            let mut builder = FlatBufferBuilder::new();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
-        }
-
-        // Read them back using process_all
-        let data = buffer;
-        let checksum = XxHash64::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let mut count = 0;
+        let mut reader = StreamReader::new(Cursor::new(Vec::new()), DefaultDeframer::new());
+        let mut count = 0usize;
         reader
-            .process_all(|payload| {
-                assert!(!payload.is_empty());
+            .process_all(|_| {
                 count += 1;
                 Ok(())
             })
             .unwrap();
-
-        assert_eq!(count, 3);
-    }
-
-    #[test]
-    fn test_read_empty_stream() {
-        let empty_data = Vec::new();
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(empty_data), deframer);
-
-        let result = reader.read_message().unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_process_all_empty_stream() {
-        let empty_data = Vec::new();
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(empty_data), deframer);
-
-        let mut count = 0;
-        reader
-            .process_all(|_payload| {
-                count += 1;
-                Ok(())
-            })
-            .unwrap();
-
         assert_eq!(count, 0);
     }
 
     #[test]
-    fn test_process_all_error_propagation() {
-        // Write some test data first
-        let mut buffer = Vec::new();
-        let framer = DefaultFramer;
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        for i in 0..5 {
-            builder.reset();
-            let data = builder.create_string(&format!("message {i}"));
-            builder.finish(data, None);
-            writer.write_finished(&mut builder).unwrap();
-        }
-
-        // Now test error propagation in process_all
-        let data = buffer;
-        let deframer = DefaultDeframer;
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-
-        let mut count = 0;
-        let result = reader.process_all(|_payload| {
+    fn process_all_propagates_processor_error_and_stops() {
+        // A processor error must stop iteration immediately and surface intact.
+        let (wire, _) = write_stream(DefaultFramer, &["a", "b", "c", "d", "e"]);
+        let mut reader = StreamReader::new(Cursor::new(wire), DefaultDeframer::new());
+        let mut count = 0usize;
+        let result = reader.process_all(|_| {
             count += 1;
-
-            // Simulate an error on the third message
             if count == 3 {
-                return Err(crate::error::Error::Io(std::io::Error::other(
+                return Err(crate::error::Error::from(std::io::Error::other(
                     "Simulated processing error",
                 )));
             }
-
             Ok(())
         });
-
-        // Should get an error
-        assert!(result.is_err());
-
-        // Should have processed exactly 3 messages before the error
         assert_eq!(count, 3);
-
-        // Verify the error is the one we created
-        match result.unwrap_err() {
-            crate::error::Error::Io(e) => {
+        match result.unwrap_err().into_kind() {
+            crate::error::ErrorKind::Io(e) => {
                 assert_eq!(e.kind(), std::io::ErrorKind::Other);
                 assert_eq!(e.to_string(), "Simulated processing error");
             }
             _ => panic!("Expected Io error"),
-        }
-    }
-
-    #[cfg(feature = "xxhash")]
-    #[test]
-    fn test_checksum_mismatch() {
-        // Write a message with checksum
-        let mut buffer = Vec::new();
-        let checksum = XxHash64::new();
-        let framer = ChecksumFramer::new(checksum);
-        let mut writer = StreamWriter::new(Cursor::new(&mut buffer), framer);
-
-        let mut builder = FlatBufferBuilder::new();
-        let data = builder.create_string("test data");
-        builder.finish(data, None);
-        writer.write_finished(&mut builder).unwrap();
-
-        // Corrupt the data by flipping a bit
-        let mut data = buffer;
-        if data.len() > 20 {
-            data[20] ^= 1; // Flip a bit in the payload
-        }
-
-        // Try to read the corrupted data
-        let checksum = XxHash64::new();
-        let deframer = ChecksumDeframer::new(checksum);
-        let mut reader = StreamReader::new(Cursor::new(data), deframer);
-        let result = reader.read_message();
-
-        // Should get a checksum mismatch error
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            crate::error::Error::ChecksumMismatch { .. } => {} // Expected
-            e => panic!("Expected ChecksumMismatch error, got: {e:?}"),
         }
     }
 }

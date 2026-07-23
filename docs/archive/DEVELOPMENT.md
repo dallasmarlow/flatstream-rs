@@ -1,3 +1,9 @@
+> **ARCHIVED 2026-07-10.** This is the original v0.1.0 implementation runbook,
+> preserved as a historical record. Its dependency listings and API references
+> (CRC32C naming, `Checksum::size()`, tokio/thiserror versions) describe v0.1.0
+> and do NOT match the current library — see the README and
+> `docs/WIRE_FORMAT_SPEC.md` for current facts.
+
 # flatstream-rs Implementation Runbook
 
 **Version:** 0.1.0  

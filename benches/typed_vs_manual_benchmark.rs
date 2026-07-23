@@ -8,7 +8,7 @@ struct StrRoot;
 impl<'a> StreamDeserialize<'a> for StrRoot {
     type Root = &'a str;
     fn from_payload(payload: &'a [u8]) -> Result<Self::Root> {
-        flatbuffers::root::<&'a str>(payload).map_err(Error::FlatbuffersError)
+        flatbuffers::root::<&'a str>(payload).map_err(Error::from)
     }
 }
 
@@ -49,7 +49,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
     // Manual verification path: baseline correctness and performance
     group.bench_function("manual_small", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -62,7 +62,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("manual_medium", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -75,7 +75,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("manual_large", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
             reader
                 .process_all(|payload| {
                     let root = flatbuffers::root::<&str>(payload)?;
@@ -89,7 +89,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
     // Typed, safe path: should be equivalent to manual for valid inputs
     group.bench_function("typed_small", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -101,7 +101,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("typed_medium", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -113,7 +113,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
     group.bench_function("typed_large", |b| {
         b.iter(|| {
-            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
+            let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
             reader
                 .process_typed::<StrRoot, _>(|root| {
                     black_box(root);
@@ -128,7 +128,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
         // Unchecked typed path: skips verification; use only for trusted data
         group.bench_function("typed_unchecked_small", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer);
+                let mut reader = StreamReader::new(Cursor::new(&small), DefaultDeframer::new());
                 reader
                     .process_typed_unchecked::<StrRoot, _>(|root| {
                         black_box(root);
@@ -140,7 +140,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
         group.bench_function("typed_unchecked_medium", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer);
+                let mut reader = StreamReader::new(Cursor::new(&medium), DefaultDeframer::new());
                 reader
                     .process_typed_unchecked::<StrRoot, _>(|root| {
                         black_box(root);
@@ -152,7 +152,7 @@ fn bench_typed_vs_manual(c: &mut Criterion) {
 
         group.bench_function("typed_unchecked_large", |b| {
             b.iter(|| {
-                let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer);
+                let mut reader = StreamReader::new(Cursor::new(&large), DefaultDeframer::new());
                 reader
                     .process_typed_unchecked::<StrRoot, _>(|root| {
                         black_box(root);
