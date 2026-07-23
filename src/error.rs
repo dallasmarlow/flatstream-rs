@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 /// Custom error type for the flatstream-rs library.
@@ -30,7 +31,10 @@ pub enum ErrorKind {
         InvalidFrameContext(declared_len, buffer_len, limit)
     )]
     InvalidFrame {
-        message: &'static str,
+        /// Failure description. `Cow` keeps the library's own static messages
+        /// copy-free (borrowed) while letting custom framers/deframers pass
+        /// owned, formatted text when they need to.
+        message: Cow<'static, str>,
         /// Declared payload length (from header), if known
         declared_len: Option<usize>,
         /// Available bytes or current buffer length, if relevant
@@ -49,7 +53,10 @@ pub enum ErrorKind {
     #[error("Validation failed (validator: {validator}): {reason}")]
     ValidationFailed {
         validator: &'static str,
-        reason: String,
+        /// `Cow` for the same reason as `InvalidFrame::message`: static reasons
+        /// stay copy-free, dynamic ones (verifier output, formatted sizes) are
+        /// owned.
+        reason: Cow<'static, str>,
     },
 
     /// Unexpected end of file while reading stream data.
@@ -94,10 +101,14 @@ impl Error {
     }
 
     /// Create a new `InvalidFrame` error with a descriptive message.
+    ///
+    /// Accepts anything `Into<Cow<'static, str>>`: string literals stay
+    /// borrowed (no copy, no allocation beyond the boxed kind), and owned
+    /// `String`s are taken as-is for callers that need formatted diagnostics.
     #[cold]
-    pub fn invalid_frame(message: &'static str) -> Self {
+    pub fn invalid_frame(message: impl Into<Cow<'static, str>>) -> Self {
         ErrorKind::InvalidFrame {
-            message,
+            message: message.into(),
             declared_len: None,
             buffer_len: None,
             limit: None,
@@ -107,16 +118,20 @@ impl Error {
 
     /// Create a new `InvalidFrame` error with contextual details.
     ///
-    /// Context fields are optional; pass `Some(..)` where known to improve diagnostics.
+    /// Context fields are optional; pass `Some(..)` where known to improve
+    /// diagnostics — prefer them over formatting dynamic values into the
+    /// message, since they render on demand at `Display` time. The message
+    /// itself is `Cow`: literals stay borrowed and copy-free, owned `String`s
+    /// are accepted when a custom framer/deframer genuinely needs one.
     #[cold]
     pub fn invalid_frame_with(
-        message: &'static str,
+        message: impl Into<Cow<'static, str>>,
         declared_len: Option<usize>,
         buffer_len: Option<usize>,
         limit: Option<usize>,
     ) -> Self {
         ErrorKind::InvalidFrame {
-            message,
+            message: message.into(),
             declared_len,
             buffer_len,
             limit,
@@ -135,8 +150,14 @@ impl Error {
     }
 
     /// Create a new `ValidationFailed` error for the named validator.
+    ///
+    /// The reason is `Cow`: static reasons stay borrowed and copy-free,
+    /// dynamic ones (verifier output, formatted sizes) are owned.
     #[cold]
-    pub fn validation_failed(validator: &'static str, reason: impl Into<String>) -> Self {
+    pub fn validation_failed(
+        validator: &'static str,
+        reason: impl Into<Cow<'static, str>>,
+    ) -> Self {
         ErrorKind::ValidationFailed {
             validator,
             reason: reason.into(),

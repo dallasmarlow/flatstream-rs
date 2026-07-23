@@ -182,10 +182,15 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
   `InvalidFlatbuffer`), and the `Error` newtype is `#[error(transparent)]` over
   the box. The size win comes from the `Box`, not from how `Display` is
   implemented — thiserror is build-time only and costs nothing at runtime.
-- `InvalidFrame` carries a `&'static str` message plus optional structured context
-  (`declared_len`/`buffer_len`/`limit`) rendered on demand at `Display` time via a
-  small helper (`InvalidFrameContext`) referenced from the `#[error]` format args —
-  no formatting cost at construction.
+- `InvalidFrame` carries a `Cow<'static, str>` message plus optional structured
+  context (`declared_len`/`buffer_len`/`limit`) rendered on demand at `Display`
+  time via a small helper (`InvalidFrameContext`) referenced from the `#[error]`
+  format args — no formatting cost at construction. `Cow` is the
+  zero-copy-first compromise (owner decision, 2026-07-10): the library's own
+  messages are literals and stay borrowed — no copy, no allocation beyond the
+  boxed kind — while custom framers/deframers may pass owned formatted text.
+  `ValidationFailed::reason` uses the same pattern, which also removed the
+  String allocation its static reasons previously paid.
 - Inspection goes through `kind()` / `into_kind()`.
 - Size and source-chain tests (`error_is_pointer_sized`, `source_chain_preserved`)
   pin the invariants.
