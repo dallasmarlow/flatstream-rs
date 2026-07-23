@@ -1,9 +1,9 @@
 # Design Document: flatstream-rs v2.7 — Hardening and the Single Read Path
 
 **Version:** 1.0
-**Status:** Implemented (uncommitted, pending owner review)
+**Status:** Implemented (release branch, pending merge and tag)
 **Author:** Dallas Marlow
-**Date:** 2026-07-09
+**Date:** 2026-07-09 (updated 2026-07-23)
 
 ## 1. Overview
 
@@ -208,7 +208,8 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
   scripts under `scripts/` (documented in the README "Verification" section):
   - `gate.sh` — fmt, clippy `--all-targets -D warnings`, the three-combo test
     matrix (all_checksums / no-features / crc16-only), rustdoc `-D warnings`,
-    the opt-in `unsafe_typed` integration test, bench compile-checks, and the
+    the opt-in `unsafe_typed` integration test, bench and fuzz-target
+    compile-checks, and the
     MSRV check when the 1.87 toolchain is installed. Run before every review or tag.
   - `fuzz.sh` — a manually invoked, time-bounded local cargo-fuzz run using the
     Rust nightly toolchain (no CI or scheduler) over the root `fuzz/` workspace:
@@ -217,7 +218,8 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
     `deframe_checksum_fuzzer` (raw-bytes robustness plus a write→read roundtrip
     asserting byte-identical recovery). The corpus accumulates under `fuzz/corpus/`
     across runs.
-  - `instruction_counts.sh` — `benches/instruction_count.rs` (iai-callgrind)
+  - `instruction_counts.sh` — `benches/instruction_count.rs` (Gungraun 0.19.4,
+    the maintained iai-callgrind successor)
     measures four end-to-end micro-workloads (write/read × default/xxh64) under
     callgrind. Counts avoid wall-clock scheduler/thermal noise but are comparable
     only within one recorded compiler/dependency/target/tool environment; a
@@ -267,7 +269,7 @@ the roadmap's future milestones:
 
 ## 11. Verification Summary
 
-- Tests: 121 (all_checksums, incl. doctests) / 95 (no features) / 100 (crc16-only),
+- Tests: 125 (all_checksums, incl. doctests) / 98 (no features) / 104 (crc16-only),
   all green; clippy `--all-targets -D warnings` clean; `cargo fmt --check` clean;
   rustdoc `-D warnings` clean. The count is *lower* than mid-pass peaks by design:
   a full test-suite audit before release removed duplicated and vacuous tests and
