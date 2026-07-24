@@ -1,8 +1,8 @@
 # Building on flatstream — Application Onboarding Guide
 
-*Baseline: commit `99c761e` on `main` (2026-07-24). Audience: engineers
-building applications — first up, terminal-output journaling — on the
-flatstream library.*
+*Baseline: immutable tag `v0.2.7` (`0b9f486`, 2026-07-24). Audience:
+engineers building applications — first up, terminal-output journaling — on
+the flatstream library.*
 
 flatstream is a small, fast framing layer around FlatBuffers for streams
 (files, sockets, pipes). It writes and reads sequences of messages as
@@ -21,12 +21,27 @@ path to a correct journaling application.
 
 There are **no default features** — checksums are opt-in:
 
+The crate is not published to a registry. Pin production applications to the
+immutable release tag:
+
 ```toml
 [dependencies]
-flatstream = { version = "0.2.7", features = ["crc32"] }   # terminal-journal profile
-# available: "xxhash" (XXH3-64), "crc32", "crc16", "all_checksums",
-#            "unsafe_typed" (explicitly unsafe verification-skipping reads)
+flatstream = { git = "https://github.com/dallasmarlow/flatstream-rs", tag = "v0.2.7", features = ["crc32"] }
+flatbuffers = "25.9.23"
 ```
+
+For local application development, use a path dependency instead:
+
+```toml
+[dependencies]
+flatstream = { path = "../flatstream-rs", features = ["crc32"] }
+flatbuffers = "25.9.23"
+```
+
+Available FlatStream features include `"xxhash"` (XXH3-64), `"crc32"`,
+`"crc16"`, `"all_checksums"`, and `"unsafe_typed"` (explicitly unsafe
+verification-skipping reads). Generate application schemas with a compatible
+FlatBuffers 25.x `flatc`.
 
 MSRV is Rust 1.97.1. Breaking changes are allowed between releases — there
 are no compatibility shims; read release notes when bumping.
@@ -54,15 +69,26 @@ are no compatibility shims; read release notes when bumping.
 
 ```rust
 use flatstream::{ChecksumFramer, Crc32, StreamWriter, Result};
-use std::fs::OpenOptions;
 use std::io::BufWriter;
 
-fn open_journal(path: &str) -> Result<StreamWriter<BufWriter<std::fs::File>, ChecksumFramer<Crc32>>> {
-    let file = OpenOptions::new().create(true).read(true).write(true).open(path)?;
+fn create_new_journal(
+    path: &str,
+) -> Result<StreamWriter<BufWriter<std::fs::File>, ChecksumFramer<Crc32>>> {
+    let file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
     let framer = ChecksumFramer::new(Crc32::new());
     Ok(StreamWriter::new(BufWriter::new(file), framer))
 }
 ```
+
+`create_new(true)` deliberately refuses to open an existing journal. Never
+wrap an existing read/write file in `StreamWriter` while its cursor is at
+offset zero: that would overwrite the journal. Reopen existing files through
+the recovery flow in §5; `recover_file` leaves the cursor at the verified
+append position before the file is wrapped in `BufWriter`/`StreamWriter`.
 
 Two write styles:
 
@@ -73,9 +99,9 @@ Two write styles:
   you build payloads yourself.
 
 **Durability:** `flush()` flushes the `BufWriter` into the OS — it is *not*
-fsync. At durability points, flush and then sync the file handle
-(`writer.get_mut()` reaches the underlying writer; `File::sync_data`).
-One writer per stream — there is no multi-writer coordination, by design.
+fsync. At durability points, flush and then call
+`writer.get_mut().get_ref().sync_data()` on the underlying file. One writer
+per stream — there is no multi-writer coordination, by design.
 
 ## 4. Reading
 

@@ -1,5 +1,29 @@
 # V2.X: Boxed Framer/Deframer Traits for Greater Flexibility
 
+> **REJECTED AND ARCHIVED (2026-07-24).** This proposal is retained only as a
+> historical design exploration and is not an implementation plan.
+>
+> **Decision:** FlatStream framing and deframing remain statically composed
+> generic types by default. No concrete application has demonstrated a need
+> to select or replace the wire codec dynamically at runtime. Introducing
+> object-safe mirror traits, boxed adapters, and parallel reader/writer aliases
+> would duplicate the public API while adding a vtable call to every frame.
+> That indirect dispatch reduces optimizer visibility and prevents the
+> cross-crate inlining/monomorphization that the hot path is designed around.
+> Payload access would remain zero-copy, but zero-copy alone does not make the
+> dispatch and complexity costs free.
+>
+> The accepted rule is **static by default, measured boxed opt-ins**. Existing
+> deliberate indirection (`MemoryPolicy`, `CompositeValidator`,
+> `TypedValidator`) is explicitly named, opt-in, and measured or documented;
+> it is not precedent for type-erasing the framing kernel. Reconsider boxed
+> framing only when a real application supplies a runtime-composition use case
+> and benchmarks demonstrate that its value outweighs per-frame dispatch,
+> code-size, and API costs. Such a reversal requires a new design proposal.
+>
+> The body below is nonnormative and contains stale pre-v0.2.7 APIs, including
+> removed deframer/adaptor shapes. Do not copy it into current code.
+
 This document proposes optional "boxed" (type-erased) variants of the `Framer` and `Deframer` traits to improve flexibility, reduce generic bloat, and enable runtime composition, while preserving the library's zero-copy guarantees and existing ergonomics.
 
 ## Motivation

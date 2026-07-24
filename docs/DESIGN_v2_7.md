@@ -1,7 +1,7 @@
 # Design Document: flatstream-rs v2.7 — Hardening and the Single Read Path
 
 **Version:** 1.0
-**Status:** Implemented (release branch, pending merge and tag)
+**Status:** Implemented, merged, and tagged `v0.2.7`
 **Author:** Dallas Marlow
 **Date:** 2026-07-09 (updated 2026-07-23)
 
