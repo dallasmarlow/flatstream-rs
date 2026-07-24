@@ -147,14 +147,21 @@ shape of `docs/benchmark/BENCHMARK_COMPARISON.md`:
    If the data is inconclusive, say so; a negative or null result is still a
    result and still gets committed.
 
-Findings docs live in `docs/benchmark/`. Do not update a public performance claim
-(README, a DESIGN doc) until a findings doc backs it.
+To start one, **copy `docs/benchmark/FINDINGS_TEMPLATE.md` to
+`docs/benchmark/FINDINGS_<topic>.md`** and fill it in — it captures the
+environment, the wall-clock-vs-instruction-count distinction, and the
+threats-to-validity honesty the bar requires. Findings docs live in
+`docs/benchmark/`. Do not update a public performance claim (README, a DESIGN doc)
+until a findings doc backs it.
 
 ---
 
 ## 5. Workflow and review
 
-- Branch off `main`; keep each branch to one focused concern.
+- Branch off the **active integration branch** (currently `v0.2.8` — ask the
+  maintainer if unsure), and open your PR back against that same branch, not
+  `main` directly, until it lands on `main`. Keep each branch to one focused
+  concern.
 - **Changes are independently reviewed before merge**, and the reviewer verifies
   every claim against the code — do not take a summary's word for it. The
   maintainer arbitrates. Write your change so that verification is easy: small
