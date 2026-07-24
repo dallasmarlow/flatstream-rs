@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Status:** Implemented, merged, and tagged `v0.2.7`
 **Author:** Dallas Marlow
-**Date:** 2026-07-09 (updated 2026-07-23)
+**Date:** 2026-07-09 (updated 2026-07-24)
 
 ## 1. Overview
 
@@ -23,7 +23,8 @@ The organizing principle for both waves is unchanged from v2.6: zero-copy and
 zero-allocation invariants held at all three layers — dispatch (static generics on
 the framing/checksum/validation paths in their default configurations; deliberate
 opt-in exceptions: `MemoryPolicy` — one boxed call while consulted above its
-baseline, measured in a gate-open benchmark at ~1 ns over the no-policy path —
+baseline, the boxed-call dispatch measured in a gate-open benchmark at ~1 ns over
+the no-policy path (§4 gives the full per-`write()` figures) —
 plus `CompositeValidator`, one boxed call per composed
 validator, and `TypedValidator`, a function-pointer call, both unmeasured), inlining (`#[inline]`
 on thin forwarders, cold paths outlined), and algorithmic residue (no per-frame
@@ -93,10 +94,12 @@ strategy:
 
 ## 5. Phase B: One Bounded Read Path (B1, B2)
 
-v0.2.6 shipped four deframers per checksum mode (`Default`, `SafeTake`, `Unsafe`,
-`Bounded`-wrapped) because the read path zeroed each frame's buffer region before
-reading into it, and the variants existed to dodge that cost. B1 removes the cost
-instead of multiplying implementations:
+By the eve of Phase B the read path had accumulated four deframer shapes per
+checksum mode (`Default`, `SafeTake`, `Unsafe`, and a `Bounded` wrapper) — variants
+that grew up *between* the v0.2.6 and v0.2.7 tags, never in a shipped release, to
+dodge the cost of the read path zeroing each frame's buffer region before reading
+into it. (The v0.2.6 tag itself shipped only two: `DefaultDeframer` and
+`ChecksumDeframer`.) B1 removes the cost instead of multiplying implementations:
 
 - **Trait redesign.** `Deframer::read_and_deframe` returns `Result<Option<usize>>`
   (payload length; `None` = clean EOF). A provided method reads the 4-byte length and
@@ -164,6 +167,12 @@ pub trait Checksum {
   A 3-byte `Sum24` conformance test pins the byte-exact layout, roundtrip, and
   corruption detection for nonstandard widths.
 - Built-in widths: `XxHash64` = 8, `Crc32` = 4, `Crc16` = 2, `NoChecksum` = 0.
+- **Custom widths are wire-incompatible by construction.** Because the width is a
+  compile-time `const`, not a self-describing field on the wire, a stream written
+  with a nonstandard checksum (e.g. `Sum24`) is readable only by a reader compiled
+  with a matching-width `Checksum`; it is not interoperable with the built-ins and
+  falls outside the normative wire format of `docs/WIRE_FORMAT_SPEC.md`. This is the
+  intended trade for the zero-cost const dispatch, not a defect.
 
 ## 7. Phase B: Pointer-Sized Errors (B5)
 
@@ -210,7 +219,17 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
   `rust-version = "1.97.1"` set to match the production toolchain (the library's
   own feature floor is lower — `is_multiple_of` needs 1.87, inline-const asserts
   1.79 — but the declared MSRV tracks where it is deployed); author email fixed;
-  flatbuffers lock bump to 25.12.19 folded in.
+  flatbuffers upgraded across the 24→25 major line (manifest `24.3.25` →
+  `25.9.23`, lockfile `24.12.23` → `25.12.19`) — a breaking dependency bump for
+  any consumer with generated code, which must be regenerated against flatc 25.x
+  (see §10).
+- **Unsafe policy (crate-level).** The crate carries
+  `#![cfg_attr(not(feature = "unsafe_typed"), forbid(unsafe_code))]`: unsafe code
+  is *forbidden* — not merely denied — in every default and feature combination.
+  The lone opt-out is the `unsafe_typed` feature, which unlocks a
+  verification-skipping typed read path for callers who have externally guaranteed
+  their input; the gate (B7) compiles and tests that path explicitly so the
+  opt-in stays honest.
 - **Verification gate (B7):** all verification runs locally by deliberate choice —
   no CI spend for a project developed and deployed from owned machines. Five
   scripts under `scripts/` (documented in the README "Verification" section):
@@ -261,6 +280,27 @@ Smaller strands, listed for completeness:
   before framing.
 - **Reader ergonomics (#21):** `with_capacity`, `reserve`, `buffer_capacity`,
   accessors (`get_ref`/`get_mut`/`deframer`), `into_inner`.
+- **Typed, zero-copy reading.** The `StreamDeserialize` trait plus
+  `process_typed` / `process_typed_with_payload` and the `typed_messages()` →
+  `TypedMessages<T>` iterator let callers pull already-verified typed views
+  straight out of the reader's reusable buffer, no intermediate copy; the untyped
+  `messages()` / `Messages` iterator and `process_all` remain for raw payloads.
+  `TypedValidator` (§3) is the schema-aware verifier this path composes with.
+- **Fluent adapter composition.** `FramerExt` (`bounded`, `observed`,
+  `with_validator`) and `DeframerExt` (`observed`, `with_validator`) are
+  blanket-impl'd extension traits that compose adapters top-down without importing
+  their types — `DefaultFramer.bounded(n).observed(cb)` — at the same static
+  dispatch as manual nesting. The non-copying `ObserverFramer`/`ObserverDeframer`
+  payload taps (metrics/logging) landed with them. (The full `StreamWriter::builder`
+  object proposed alongside this was rejected; see
+  `docs/archive/V2_X_FLUENT_BUILDER.md`.)
+- **Allocator-aware writer construction.** The `A = DefaultAllocator` generic on
+  `StreamWriter` predates v2.7, but the constructors that make it usable are new:
+  `with_builder_alloc` accepts a caller-provided `FlatBufferBuilder<A>` (e.g. a
+  bump/arena allocator), and `with_memory_policy_and_factory` pairs a memory policy
+  with a rebuild closure so the reclaim path (§4) can re-create the builder under a
+  custom allocator. `with_builder`, `with_capacity`, and `with_memory_policy`
+  complete the set.
 - **LOBSTER corpus (#27):** integration tests and benchmarks against real
   NASDAQ ITCH sample data (feature `lobster`), exercising realistic message-size
   distributions.
@@ -283,12 +323,18 @@ the roadmap's future milestones:
 | Torn length header now errors instead of clean EOF | spec conformance; recovery loops see `UnexpectedEof` |
 | `Error` → `Error(Box<ErrorKind>)`, variants matched via `kind()` | every `match err { Error::X .. }` site |
 | `Checksum::size()` → associated `const SIZE` + `write_bytes`/`read_bytes` | custom checksums |
+| Custom (nonstandard-width) checksums are wire-incompatible with the built-ins (§6) | reader and writer must share the exact `Checksum` type |
+| `flatbuffers` `24.3.25` → `25.9.23` (major line 24→25) | consumers regenerate generated code against flatc 25.x |
+| `tokio` optional dependency/feature removed (was unused; no async APIs shipped) | anyone who enabled the `tokio` feature |
 | `rust-version = 1.97.1` | older toolchains |
 
-## 11. Post-Phase-B Baseline Additions (merged pre-tag, `99c761e`)
+## 11. Post-Phase-B Baseline Additions (in the `v0.2.7` tag)
 
-Two additive strands landed between the Phase B merge (PR #31) and the tag,
-after an owner-directed correction round and independent review:
+Two additive strands landed during the pre-tag correction round, after
+owner-directed corrections and independent review. The branch history was
+subsequently squashed, so they hold no distinct commit of their own — they are
+present in the tag commit `0b9f486` ("V0.2.7 polish (#31)"), which `v0.2.7`
+points at:
 
 - **Crash recovery as a contract (E1).** `recover(reader, deframer)` and
   `recover_file(&mut file, deframer)` scan a journal and report

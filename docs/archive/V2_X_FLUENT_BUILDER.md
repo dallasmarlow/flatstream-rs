@@ -1,4 +1,33 @@
-Design Document: A Fluent, Zero-Cost Builder API for Composable Stream Configuration
+# A Fluent, Zero-Cost Builder API for Composable Stream Configuration
+
+> **PARTIALLY ADOPTED / REMAINDER REJECTED AND ARCHIVED (2026-07-24).** This
+> proposal is retained only as a historical design exploration and is not an
+> implementation plan.
+>
+> **Adopted (shipped in v0.2.7):** the fluent *extension methods*, not the
+> builder objects. `FramerExt::{bounded, observed, with_validator}` and
+> `DeframerExt::{observed, with_validator}` (`src/framing.rs`) are blanket-impl'd
+> for every `Framer`/`Deframer`, giving the top-down, discoverable composition
+> this document set out to provide — `DefaultFramer.bounded(1 << 20).observed(cb)`
+> — without importing adapter types or nesting constructors, and at the same
+> zero-cost static dispatch. Read-side length bounding is `DefaultDeframer::new()`
+> plus `with_max_frame_len(..)` rather than a `.bounded()` wrapper.
+>
+> **Rejected:** the `StreamWriterBuilder` / `StreamReaderBuilder` objects and the
+> `StreamWriter::builder()` / `StreamReader::builder()` entry points (§2). They are
+> a second configuration surface layered over an API that the extension methods
+> already made fluent — added generic builder types and API weight for no
+> demonstrated usability or performance gain. Reconsider only when a real
+> application demonstrates an ergonomic gap the extension methods cannot solve;
+> such a reversal requires a new design proposal.
+>
+> **The body below is nonnormative and contains stale pre-v0.2.7 APIs.** It names
+> deframers that were never part of any release and have since been removed
+> (`BoundedDeframer`, `SafeTakeDeframer`, `UnsafeDeframer`), uses the old
+> unit-struct `DefaultDeframer` (now a struct constructed via `::new()` with
+> `with_max_frame_len`), shows an obsolete `StreamWriter<W>` signature (now
+> `StreamWriter<'a, W, F, A = DefaultAllocator>`), and proposes a dropped async
+> (`tokio`) direction and CI. Do not copy it into current code.
 
 Version: 1.0  
 Status: Proposed  
