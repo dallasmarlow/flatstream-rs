@@ -216,6 +216,8 @@ let deframer = DefaultDeframer::new().with_validator(validator);
 
 Validation errors propagate as `ErrorKind::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `ErrorKind::ChecksumMismatch`.
 
+`flatstream::Error` converts both ways with `std::io::Error`: `From<io::Error>` wraps an I/O fault, and `From<flatstream::Error> for io::Error` (kind `Other`, original preserved as the payload) lets code that surfaces `io::Error` at its boundaries `?` on flatstream results without a manual `map_err`.
+
 ### Performance
 
 - `NoValidator` is zero-cost (fully optimized away in hot paths).
@@ -538,6 +540,26 @@ fn write_expert() -> Result<()> {
     Ok(())
 }
 ```
+
+#### Frame offsets for external indexing
+
+To build an external "offset → frame" index (e.g. a random-access journal), use
+the receipt-returning write methods instead of computing offsets by hand:
+
+```rust,ignore
+// Returns a FrameReceipt { frame_start, wire_len } for the frame just written.
+let receipt = stream_writer.write_with_receipt(&event)?;         // simple mode
+let receipt = stream_writer.write_finished_with_receipt(&mut b)?; // expert mode
+index.push((event_id, receipt.frame_start));
+// stream_writer.bytes_written() is the running stream offset.
+```
+
+`wire_len` counts the bytes the frame actually occupies (length prefix + optional
+checksum + payload) for any framer, so callers never duplicate the wire layout.
+Use `with_start_offset(n)` when the writer is positioned over a nonzero region of
+a file. See `examples/external_index.rs` for index construction and seek-based
+random access. Writers that only ever call `write_finished` can spell their type
+as the lifetime-free alias `OwnedStreamWriter<W, F>`.
 
 #### Schema-typed expert-mode example
 

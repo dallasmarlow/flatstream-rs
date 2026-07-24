@@ -20,6 +20,63 @@ struct PolicySlot<'a, A: flatbuffers::Allocator> {
     make_builder: Box<dyn FnMut(usize) -> FlatBufferBuilder<'a, A> + Send + 'a>,
 }
 
+/// Wraps the underlying writer and counts bytes handed to it, so a
+/// `StreamWriter` can report the offset and on-wire length of each frame (see
+/// [`FrameReceipt`]) without the `Framer` trait having to report anything. The
+/// count reflects bytes *actually accepted* by `W`, so it stays correct for any
+/// framer, custom ones included.
+struct CountingWriter<W> {
+    inner: W,
+    count: u64,
+}
+
+impl<W> CountingWriter<W> {
+    #[inline]
+    fn new(inner: W) -> Self {
+        Self { inner, count: 0 }
+    }
+
+    #[inline]
+    fn get_ref(&self) -> &W {
+        &self.inner
+    }
+
+    #[inline]
+    fn get_mut(&mut self) -> &mut W {
+        &mut self.inner
+    }
+
+    #[inline]
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        // Delegate to the inner writer's own (possibly optimized) `write_all`
+        // and count only on success. A mid-frame error tears the frame and the
+        // stream is recovered/truncated per the recovery contract, so a partial
+        // count we cannot observe here does not affect a well-formed stream.
+        self.inner.write_all(buf)?;
+        self.count += buf.len() as u64;
+        Ok(())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// A writer for streaming FlatBuffer messages.
 ///
 /// This writer is generic over a `Framer` strategy, which defines how
@@ -76,10 +133,42 @@ pub struct StreamWriter<'a, W: Write, F: Framer, A = DefaultAllocator>
 where
     A: flatbuffers::Allocator,
 {
-    writer: W,
+    writer: CountingWriter<W>,
     framer: F,
     builder: FlatBufferBuilder<'a, A>,
     policy: Option<PolicySlot<'a, A>>,
+    /// Offset that [`FrameReceipt`] offsets and [`StreamWriter::bytes_written`]
+    /// are measured from. 0 unless set via [`StreamWriter::with_start_offset`].
+    start_offset: u64,
+}
+
+/// A [`StreamWriter`] fixed to the default allocator and a `'static` builder
+/// lifetime.
+///
+/// `StreamWriter`'s `'a` lifetime comes from its internal `FlatBufferBuilder<'a>`
+/// and only bites when the builder borrows external data. Consumers that only
+/// call [`write_finished`](StreamWriter::write_finished) (or otherwise never let
+/// the builder borrow) never exercise that lifetime yet still have to name or
+/// infer it. This alias pins it to `'static`, so such writers read as a plain
+/// `OwnedStreamWriter<W, F>`.
+pub type OwnedStreamWriter<W, F> = StreamWriter<'static, W, F, DefaultAllocator>;
+
+/// The byte position and on-wire size of a single written frame, returned by
+/// the `*_with_receipt` write methods.
+///
+/// `frame_start` is the offset of the frame's first byte; `wire_len` is the
+/// total bytes the frame occupies on the wire (length prefix + optional
+/// checksum + payload). The next frame begins at `frame_start + wire_len`.
+/// Offsets are relative to the writer's start offset (0 by default, or the value
+/// given to [`StreamWriter::with_start_offset`] for a writer positioned over a
+/// nonzero region of a file), so they can be recorded in an external index and
+/// used to seek a reader — no `8 + payload_len` wire arithmetic in caller code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameReceipt {
+    /// Offset of the frame's first byte, relative to the writer's start offset.
+    pub frame_start: u64,
+    /// Total bytes the frame occupies on the wire.
+    pub wire_len: u64,
 }
 
 impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
@@ -93,10 +182,11 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// with external builder management instead of relying on `write()`.
     pub fn new(writer: W, framer: F) -> Self {
         Self {
-            writer,
+            writer: CountingWriter::new(writer),
             framer,
             builder: FlatBufferBuilder::new(),
             policy: None,
+            start_offset: 0,
         }
     }
 
@@ -104,10 +194,11 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// Useful for pre-sizing.
     pub fn with_builder(writer: W, framer: F, builder: FlatBufferBuilder<'a>) -> Self {
         Self {
-            writer,
+            writer: CountingWriter::new(writer),
             framer,
             builder,
             policy: None,
+            start_offset: 0,
         }
     }
 
@@ -116,10 +207,11 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// Useful when you know typical payload sizes and want to avoid early growth.
     pub fn with_capacity(writer: W, framer: F, capacity: usize) -> Self {
         Self {
-            writer,
+            writer: CountingWriter::new(writer),
             framer,
             builder: FlatBufferBuilder::with_capacity(capacity),
             policy: None,
+            start_offset: 0,
         }
     }
 
@@ -165,10 +257,11 @@ where
     /// ```
     pub fn with_builder_alloc(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
         Self {
-            writer,
+            writer: CountingWriter::new(writer),
             framer,
             builder,
             policy: None,
+            start_offset: 0,
         }
     }
 
@@ -209,6 +302,19 @@ where
     /// ```
     #[inline]
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
+        self.write_with_receipt(item).map(|_| ())
+    }
+
+    /// Like [`write`](Self::write), but returns a [`FrameReceipt`] with the byte
+    /// offset and on-wire length of the frame just written — the primitive for
+    /// building an external index (offset → frame) without duplicating the wire
+    /// layout in caller code.
+    ///
+    /// The offset is captured before framing and the length is the count of
+    /// bytes actually accepted by the underlying writer, so the receipt is
+    /// correct for any framer, including custom ones.
+    #[inline]
+    pub fn write_with_receipt<T: StreamSerialize>(&mut self, item: &T) -> Result<FrameReceipt> {
         // Reset the internal builder for reuse
         self.builder.reset();
 
@@ -220,8 +326,11 @@ where
         let payload = self.builder.finished_data();
         let last_message_size = payload.len();
 
-        // Delegate framing and writing to the strategy
+        // Delegate framing and writing to the strategy, bracketing it with the
+        // byte counter so the receipt reflects exactly what reached the wire.
+        let frame_start = self.start_offset + self.writer.count;
         self.framer.frame_and_write(&mut self.writer, payload)?;
+        let wire_len = (self.start_offset + self.writer.count) - frame_start;
 
         // Evaluate the policy only after a successful write, so the payload we
         // just framed is never invalidated. One predictable branch when no
@@ -231,7 +340,10 @@ where
             self.evaluate_memory_policy(last_message_size);
         }
 
-        Ok(())
+        Ok(FrameReceipt {
+            frame_start,
+            wire_len,
+        })
     }
 
     /// Consults the installed policy after a successful `write()`. Outlined
@@ -307,11 +419,31 @@ where
         &mut self,
         builder: &mut FlatBufferBuilder<A2>,
     ) -> Result<()> {
+        self.write_finished_with_receipt(builder).map(|_| ())
+    }
+
+    /// Like [`write_finished`](Self::write_finished), but returns a
+    /// [`FrameReceipt`] with the byte offset and on-wire length of the frame
+    /// just written. See [`write_with_receipt`](Self::write_with_receipt) for
+    /// the external-index use case.
+    #[inline]
+    pub fn write_finished_with_receipt<A2: flatbuffers::Allocator>(
+        &mut self,
+        builder: &mut FlatBufferBuilder<A2>,
+    ) -> Result<FrameReceipt> {
         // Get the finished payload from the builder
         let payload = builder.finished_data();
 
-        // Delegate framing and writing to the strategy
-        self.framer.frame_and_write(&mut self.writer, payload)
+        // Delegate framing and writing to the strategy, bracketing it with the
+        // byte counter so the receipt reflects exactly what reached the wire.
+        let frame_start = self.start_offset + self.writer.count;
+        self.framer.frame_and_write(&mut self.writer, payload)?;
+        let wire_len = (self.start_offset + self.writer.count) - frame_start;
+
+        Ok(FrameReceipt {
+            frame_start,
+            wire_len,
+        })
     }
 
     /// Flushes the underlying writer.
@@ -322,22 +454,45 @@ where
 
     /// Consumes the writer, returning the underlying writer.
     pub fn into_inner(self) -> W {
-        self.writer
+        self.writer.into_inner()
     }
 
     /// Returns a reference to the underlying writer.
     pub fn get_ref(&self) -> &W {
-        &self.writer
+        self.writer.get_ref()
     }
 
     /// Returns a mutable reference to the underlying writer.
+    ///
+    /// Bytes written to the underlying writer through this reference bypass the
+    /// frame counter, so a subsequent [`FrameReceipt`] offset will not account
+    /// for them. Reserved for inspection, not for out-of-band framing.
     pub fn get_mut(&mut self) -> &mut W {
-        &mut self.writer
+        self.writer.get_mut()
     }
 
     /// Returns a reference to the framer strategy.
     pub fn framer(&self) -> &F {
         &self.framer
+    }
+
+    /// The current stream offset: the start offset plus every byte framed and
+    /// written so far. Equivalently, the `frame_start` the next written frame
+    /// will receive. See [`FrameReceipt`].
+    pub fn bytes_written(&self) -> u64 {
+        self.start_offset + self.writer.count
+    }
+
+    /// Sets the offset that [`FrameReceipt`] offsets and
+    /// [`bytes_written`](Self::bytes_written) are measured from.
+    ///
+    /// Use it when the underlying writer is positioned over a nonzero region of
+    /// a file (e.g. appending to an existing journal) and you want receipts to
+    /// carry absolute file offsets. Defaults to 0; set it before writing.
+    #[must_use]
+    pub fn with_start_offset(mut self, offset: u64) -> Self {
+        self.start_offset = offset;
+        self
     }
 }
 
@@ -442,5 +597,92 @@ mod tests {
         let writer =
             StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(NoOpPolicy);
         assert_send(&writer);
+    }
+
+    #[test]
+    fn receipts_match_default_wire_layout() {
+        // Each receipt must name the exact byte range the frame occupies:
+        // frame_start accumulates, wire_len == 4-byte len prefix + payload.
+        let mut wire = Vec::new();
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut expected_start = 0u64;
+        for i in 0..3 {
+            let payload = finished(&mut builder, &format!("message {i}"));
+            let receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
+            assert_eq!(receipt.frame_start, expected_start);
+            assert_eq!(receipt.wire_len, (4 + payload.len()) as u64);
+            assert_eq!(
+                writer.bytes_written(),
+                receipt.frame_start + receipt.wire_len
+            );
+            expected_start += receipt.wire_len;
+        }
+        assert_eq!(writer.bytes_written(), expected_start);
+    }
+
+    #[test]
+    fn receipt_names_the_exact_bytes_written() {
+        // A receipt's [frame_start, frame_start + wire_len) must index exactly
+        // the bytes the writer produced for that frame.
+        let mut wire = Vec::new();
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+        let r0 = writer.write_with_receipt(&"first").unwrap();
+        let r1 = writer.write_with_receipt(&"second").unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+
+        assert_eq!(r0.frame_start, 0);
+        assert_eq!(r1.frame_start, r0.wire_len);
+        assert_eq!((r0.wire_len + r1.wire_len) as usize, wire.len());
+        // The recorded len prefix inside each frame agrees with wire_len.
+        let l0 = u32::from_le_bytes(wire[..4].try_into().unwrap()) as u64;
+        assert_eq!(r0.wire_len, 4 + l0);
+    }
+
+    #[test]
+    fn with_start_offset_shifts_receipts_and_position() {
+        // A writer positioned over a nonzero file region reports absolute
+        // offsets when told its start offset.
+        let mut wire = Vec::new();
+        let mut writer =
+            StreamWriter::new(Cursor::new(&mut wire), DefaultFramer).with_start_offset(1000);
+        assert_eq!(writer.bytes_written(), 1000);
+        let r = writer.write_with_receipt(&"shifted").unwrap();
+        assert_eq!(r.frame_start, 1000);
+        assert_eq!(writer.bytes_written(), 1000 + r.wire_len);
+    }
+
+    #[cfg(feature = "xxhash")]
+    #[test]
+    fn checksummed_receipt_wire_len_includes_checksum() {
+        // wire_len must account for the 8-byte checksum field, not just len +
+        // payload — the receipt reflects the framer's actual output.
+        let mut wire = Vec::new();
+        let mut writer =
+            StreamWriter::new(Cursor::new(&mut wire), ChecksumFramer::new(XxHash64::new()));
+        let mut builder = FlatBufferBuilder::new();
+        let payload = finished(&mut builder, "checked");
+        let r = writer.write_finished_with_receipt(&mut builder).unwrap();
+        assert_eq!(r.wire_len, (4 + XxHash64::SIZE + payload.len()) as u64);
+    }
+
+    #[test]
+    fn owned_stream_writer_alias_hides_lifetime() {
+        // The whole point of the alias: a write_finished-only writer needs no
+        // lifetime annotation. A function returning the alias must accept the
+        // value `new()` produces.
+        fn make<W: Write>(w: W) -> OwnedStreamWriter<W, DefaultFramer> {
+            StreamWriter::new(w, DefaultFramer)
+        }
+        let mut wire = Vec::new();
+        let mut writer = make(Cursor::new(&mut wire));
+        let mut builder = FlatBufferBuilder::new();
+        let _ = finished(&mut builder, "aliased");
+        writer.write_finished(&mut builder).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        assert!(!wire.is_empty());
     }
 }

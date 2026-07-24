@@ -139,7 +139,7 @@ pub use traits::StreamSerialize;
 pub use validation::{
     CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };
-pub use writer::StreamWriter;
+pub use writer::{FrameReceipt, OwnedStreamWriter, StreamWriter};
 
 #[cfg(feature = "xxhash")]
 pub use checksum::XxHash64;

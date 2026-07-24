@@ -193,6 +193,23 @@ impl From<flatbuffers::InvalidFlatbuffer> for Error {
     }
 }
 
+/// The reverse of the `From<std::io::Error>` conversion above: normalizes a
+/// flatstream [`Error`] into a [`std::io::Error`] so application code that
+/// surfaces `io::Error` at its boundaries can use `?` on flatstream results
+/// without a manual `map_err(io::Error::other)`.
+///
+/// The flatstream error becomes the I/O error's inner payload — recoverable via
+/// [`std::io::Error::get_ref`] / [`into_inner`](std::io::Error::into_inner), and
+/// forwarded by the I/O error's `Display` — and the kind is
+/// [`Other`](std::io::ErrorKind::Other). Code that must branch on an original
+/// I/O kind should match on [`Error::kind`] before converting.
+impl From<Error> for std::io::Error {
+    #[cold]
+    fn from(e: Error) -> Self {
+        std::io::Error::other(e)
+    }
+}
+
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
@@ -236,5 +253,33 @@ mod tests {
         let err = Error::from(std::io::Error::other("disk fault"));
         let source = std::error::Error::source(&err).expect("io source");
         assert_eq!(source.to_string(), "disk fault");
+    }
+
+    #[test]
+    fn converts_into_io_error_preserving_the_error() {
+        // App boundaries that surface io::Error can `?` on flatstream results.
+        // The flatstream error is preserved as the io::Error's inner payload
+        // (downcastable), its Display is forwarded, and the kind is Other.
+        let flat = Error::invalid_frame("bad frame");
+        let display = flat.to_string();
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::Other);
+        assert_eq!(io.to_string(), display);
+        let inner = io.get_ref().expect("inner payload");
+        assert!(
+            inner.downcast_ref::<Error>().is_some(),
+            "payload should be the original flatstream::Error"
+        );
+    }
+
+    #[test]
+    fn io_error_conversion_round_trips_through_question_mark() {
+        // The reverse direction still works, so both conversions coexist.
+        fn boundary() -> std::result::Result<(), std::io::Error> {
+            let flat: Result<()> = Err(Error::unexpected_eof());
+            flat?; // uses From<Error> for io::Error
+            Ok(())
+        }
+        assert!(boundary().is_err());
     }
 }
