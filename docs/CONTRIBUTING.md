@@ -11,6 +11,27 @@ planned and maintainer-directed; it is intentionally **not** detailed here, and
 you should not start on it without explicit direction. Everything in the backlog
 below is additive to the current 0.2.x line and does not depend on it.
 
+## Why this bar
+
+flatstream is not a throwaway utility. It runs in production today under real
+load, and it is the foundation for what I am building next — so its quality is not
+cosmetic, it is the point. I have put a great deal of myself into it, and I hold it
+to a near-perfect standard. I am asking you to hold it there too.
+
+"Near-perfect" is deliberately high, but it is not a mood you have to guess at — it
+is *defined*, and you can always tell whether you are meeting it. §1 is that
+definition: claims are measured, not asserted; the gate is green before review;
+every claim is checked against the source; and you self-review with fresh eyes
+before handing work over. Because the bar is objective, it is a target you can hit
+rather than a threat.
+
+What I want is care, not fear. Ask anything. Raise uncertainty early — that is
+strength here, not weakness — and a benchmark that disproves your own idea is a good
+result, not a failure. The bar applies to what we ship; the work of getting there is
+allowed to be messy and iterative. Treat the code and docs already in this repo as
+the reference for what "done" looks like. I would be glad to have someone who comes
+to care about this the way I do.
+
 ---
 
 ## 1. The bar
