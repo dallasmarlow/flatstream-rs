@@ -6,7 +6,7 @@ use flatstream::{
 use libfuzzer_sys::fuzz_target;
 use std::io::Cursor;
 
-// The deframers default to the wire format's ~4 GiB ceiling, so untrusted input
+// The deframers default to the FlatBuffers maximum (2 GiB), so untrusted input
 // is read through an explicitly tightened bound (the recommended setup).
 const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 

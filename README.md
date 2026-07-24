@@ -130,7 +130,7 @@ sequenceDiagram
 | `Framer` | Defines how to encode `[len][opt checksum][payload]` |
 | `Deframer` | Defines how to decode `[len][opt checksum][payload]` |
 | `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
-| `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read defaults to the wire format's ~4 GiB ceiling; tighten with `with_max_frame_len`) |
+| `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read defaults to the FlatBuffers maximum, 2 GiB; tighten with `with_max_frame_len`, or raise it toward the `u32` wire ceiling for raw non-FlatBuffer formats) |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
 | `MemoryPolicy` | Opt-in buffer reclamation for long-running processes (`with_memory_policy`) |
@@ -376,6 +376,9 @@ scripts/gate.sh                  # fmt, clippy -D warnings, feature test matrix
 scripts/fuzz.sh [secs/target]    # manual local cargo-fuzz of the deframers
                                  # (rustup nightly if present, else a Docker
                                  # nightly container; no CI/scheduler)
+scripts/miri.sh                  # manual Miri run over in-src unit tests
+                                 # (rustup nightly if present, else Docker;
+                                 # expand coverage when E2 adds slice/mmap paths)
 scripts/instruction_counts.sh    # pinned-environment instruction counts
                                  # via Gungraun/Callgrind (valgrind/Linux; falls
                                  # back to a Docker container on macOS)
@@ -655,11 +658,9 @@ fn read_structurally_valid(data: Vec<u8>) -> Result<()> {
 
 A frame's length prefix is attacker-controlled input: a corrupt or malicious header can declare an extremely large payload (e.g., 2 GB) and, without protection, the reader would try to allocate it — an Out-Of-Memory crash on demand.
 
-By default the deframers accept any length a 32-bit header can declare (`DEFAULT_MAX_FRAME_LEN`, ~4 GiB — the full wire-format range), so FlatBuffers' maximum frame works out of the box. When reading from an untrusted source, set an explicit ceiling with `with_max_frame_len`: frames declaring more than the configured limit are then rejected with `ErrorKind::InvalidFrame` *before* any allocation is sized from the header. The check is a single integer compare.
+Two constants define the envelope. `DEFAULT_MAX_FRAME_LEN` is the FlatBuffers maximum buffer size (2 GiB — bound to `flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE` by construction), so every valid FlatBuffer reads out of the box; `MAX_WIRE_FRAME_LEN` is the absolute framing ceiling the 4-byte `u32` length prefix can express (~4 GiB). Neither constrains file size — a stream may hold any number of maximum-size frames, and file-level offsets are `u64` values.
 
-The default framers enforce only the wire format's `u32` length ceiling, so
-they write any valid frame up to ~4 GiB. Tightening is a read-side, application-layer
-decision: pick the limit that matches the payloads you actually expect.
+When reading from an untrusted source — or to enforce an operational limit — set an explicit ceiling with `with_max_frame_len`: frames declaring more than the configured limit are rejected with `ErrorKind::InvalidFrame` *before* any allocation is sized from the header. The check is a single integer compare. Raw or custom non-FlatBuffer framing may deliberately raise the bound up to `MAX_WIRE_FRAME_LEN`; the range above 2 GiB is never accepted by default.
 
 ```rust
 use flatstream::{StreamReader, DefaultDeframer, Result};
@@ -680,6 +681,30 @@ fn read_safely(data: Vec<u8>) -> Result<()> {
     Ok(())
 }
 ```
+
+### Crash recovery for journals
+
+A journal that stopped mid-append — crash, kill, full disk — ends in a torn frame: a partial length header, checksum field, or payload. `recover_file()` makes the repair a contract instead of a convention: it seeks to the stream's start, scans with the same deframer normal reads use, and reports how many frames are intact, the exact absolute offset to truncate to, and how the scan ended.
+
+```rust
+use flatstream::{recover_file, DefaultDeframer, RecoveryEnd, Result};
+use std::fs::OpenOptions;
+
+fn reopen_journal(path: &str) -> Result<std::fs::File> {
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    let report = recover_file(&mut file, DefaultDeframer::new())?;
+    if report.end == RecoveryEnd::TornTail {
+        file.set_len(report.last_good_offset)?; // drop the torn tail
+    }
+    // recover_file leaves the cursor at last_good_offset — the repaired end —
+    // so the file is ready to hand to a StreamWriter to resume appending.
+    Ok(file)
+}
+```
+
+The contract is deliberately strict: **only `UnexpectedEof` — the crash-mid-append signature — is a torn tail** with a safe truncation point for an append-only journal whose expected failure mode is a crash during the final write. `ChecksumMismatch` is corruption inside a fully present frame (or a mismatched checksum configuration), `InvalidFrame` can mean a wrong format or a too-small configured bound, and `ValidationFailed` can mean validator drift — all of those return `Err` with the stop reason intact, because corruption and misconfiguration must never authorize truncating data a caller might still want. Run recovery with the deframer that matches the wire format (plain, matching checksum, no validators). Genuine device faults also return `Err`. The exhaustive truncation sweep in `tests/recovery_tests.rs` pins this behavior at every possible byte offset.
+
+A complete but corrupted length header can still declare a large in-bounds payload before EOF is observed; a genuinely torn 1–3 byte length header is rejected before a length is parsed. Pass a deframer tightened with `with_max_frame_len` to the largest frame the application actually writes. Raw/custom journals that deliberately write frames above 2 GiB must use the same raised bound (up to `MAX_WIRE_FRAME_LEN`) for normal reads and recovery.
 
 ### Advanced: Manual Iteration Control
 

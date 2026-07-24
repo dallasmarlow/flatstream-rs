@@ -5,19 +5,32 @@ use crate::error::{Error, Result};
 use crate::validation::Validator;
 use std::io::{Read, Write};
 
-/// Default maximum accepted payload length for the core deframers: the full
-/// range a 32-bit length header can address (`u32::MAX`, ~4 GiB).
+/// Default maximum accepted payload length for the core deframers: the
+/// FlatBuffers maximum buffer size (2 GiB), so every valid FlatBuffer reads
+/// out of the box.
 ///
-/// The wire format's `u32` length prefix caps every frame at this size, so the
-/// default reads any valid frame out of the box (comfortably above FlatBuffers'
-/// own 2 GiB buffer ceiling). A length header is nonetheless
-/// attacker-controlled input (a torn or corrupt frame is the *expected* input
-/// for a journal after a crash), so when reading from an untrusted source,
-/// tighten the accepted length with
-/// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len): a single integer
-/// compare then rejects an oversized declared length before any allocation is
-/// sized from it.
-pub const DEFAULT_MAX_FRAME_LEN: usize = u32::MAX as usize;
+/// Bound to the runtime's own limit by construction
+/// (`flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE`): FlatBuffers' signed 32-bit
+/// offsets cap a buffer at 2 GiB, so nothing standard is excluded. A length
+/// header is nonetheless attacker-controlled input (a torn or corrupt frame
+/// is the *expected* input for a journal after a crash), so tighten the
+/// accepted length to your workload's real ceiling with
+/// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len): a single
+/// integer compare rejects an oversized declared length before any allocation
+/// is sized from it. Raw or custom non-FlatBuffer framing may deliberately
+/// raise the bound, up to [`MAX_WIRE_FRAME_LEN`].
+pub const DEFAULT_MAX_FRAME_LEN: usize = flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE;
+
+/// The absolute framing ceiling: the largest payload length the wire format's
+/// 4-byte `u32` length prefix can express (~4 GiB).
+///
+/// This bounds one frame's payload, never a file — a stream may hold any
+/// number of maximum-size frames, and file-level offsets (e.g. a container's
+/// index) are `u64` values independent of this constant. Standard FlatBuffers
+/// stop at [`DEFAULT_MAX_FRAME_LEN`] (2 GiB); the range above it is available
+/// only to explicitly configured raw/custom formats via
+/// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len).
+pub const MAX_WIRE_FRAME_LEN: usize = u32::MAX as usize;
 
 //--- Framer Trait and Implementations ---
 
@@ -182,6 +195,10 @@ fn read_payload<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, payload_len: usiz
 /// buffer is a high-water mark — implementations grow it as needed (zeroing
 /// only the growth) and never shrink it, so steady-state reads touch memory
 /// exactly once, in `read_exact`.
+///
+/// Implementations must consume exactly one frame per successful call and
+/// must not read ahead into the next frame. `recover()` relies on this
+/// contract to report the exact end offset of the last intact frame.
 pub trait Deframer {
     /// Reads one frame. Returns `Ok(Some(n))` with the payload length on
     /// success (payload in `buffer[..n]`), `Ok(None)` on clean EOF at a frame
@@ -219,11 +236,12 @@ pub trait Deframer {
 /// The default deframing strategy for `[4-byte length | payload]` streams.
 ///
 /// When to use: The general-purpose parser for almost all cases. By default it
-/// accepts any length a 32-bit header can declare ([`DEFAULT_MAX_FRAME_LEN`],
-/// ~4 GiB) — the wire format's own ceiling. When reading from an untrusted
-/// source, tighten the accepted length with
+/// accepts up to the FlatBuffers maximum buffer size
+/// ([`DEFAULT_MAX_FRAME_LEN`], 2 GiB) — every valid FlatBuffer, nothing more.
+/// When reading from an untrusted source, tighten the accepted length with
 /// [`with_max_frame_len`](Self::with_max_frame_len) so a corrupt header can't
-/// demand a huge allocation.
+/// demand a huge allocation; raw non-FlatBuffer framing may raise it up to
+/// [`MAX_WIRE_FRAME_LEN`].
 #[derive(Clone, Copy)]
 pub struct DefaultDeframer {
     max_frame_len: usize,
@@ -266,8 +284,8 @@ impl Deframer for DefaultDeframer {
 /// A deframing strategy that verifies a checksum.
 ///
 /// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
-/// Applies the same length policy as [`DefaultDeframer`]: the wire format's
-/// ~4 GiB ceiling by default ([`DEFAULT_MAX_FRAME_LEN`]), tightened for
+/// Applies the same length policy as [`DefaultDeframer`]: the FlatBuffers
+/// maximum ([`DEFAULT_MAX_FRAME_LEN`], 2 GiB) by default, tightened for
 /// untrusted input with [`with_max_frame_len`](Self::with_max_frame_len).
 #[derive(Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {

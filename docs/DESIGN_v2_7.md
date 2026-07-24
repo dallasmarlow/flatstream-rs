@@ -107,15 +107,17 @@ instead of multiplying implementations:
   `&buffer[..n]`. Steady state performs no per-frame zeroing in fully safe code —
   `UnsafeDeframer`, `SafeTakeDeframer`, and their equivalence/edge-case test files
   are deleted, and `BoundedDeframer` with them.
-- **Bounded by the wire format; tighten at the reader.** `DefaultDeframer::new()` /
-  `ChecksumDeframer::new(alg)` accept any length a 32-bit header can declare
-  (`DEFAULT_MAX_FRAME_LEN` = `u32::MAX`, ~4 GiB — the wire format's own ceiling,
-  comfortably above FlatBuffers' 2 GiB buffer cap), so every valid frame reads
-  out of the box.
-  `with_max_frame_len(..)` sets the untrusted-input ceiling: a declared length
-  over the limit is rejected with `ErrorKind::InvalidFrame` carrying
-  `declared_len` and `limit` — before any allocation is sized from it, in one
-  integer compare. (Write-side `BoundedFramer` remains an adapter.)
+- **Bounded to the FlatBuffers maximum; tighten at the reader.**
+  `DefaultDeframer::new()` / `ChecksumDeframer::new(alg)` accept up to
+  `DEFAULT_MAX_FRAME_LEN` = `flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE` (2 GiB,
+  bound to the runtime's own limit by construction), so every valid FlatBuffer
+  reads out of the box. `MAX_WIRE_FRAME_LEN` (`u32::MAX`, ~4 GiB) names the
+  absolute wire envelope, available only to explicitly configured raw
+  non-FlatBuffer formats; neither constant constrains file size.
+  `with_max_frame_len(..)` sets the untrusted-input/operational ceiling: a
+  declared length over the limit is rejected with `ErrorKind::InvalidFrame`
+  carrying `declared_len` and `limit` — before any allocation is sized from
+  it, in one integer compare. (Write-side `BoundedFramer` remains an adapter.)
 - **Torn-header conformance with static-size reads.** The spec fix (§2) requires
   distinguishing "zero bytes at a boundary" from "partial header". The obvious
   implementation — one dynamic-length `read()` loop — compiles to a real `memcpy`
@@ -272,7 +274,7 @@ the roadmap's future milestones:
 |---|---|
 | `Deframer` trait signature (`Result<Option<usize>>`, `read_after_length`) | custom deframers must be ported |
 | `UnsafeDeframer`, `SafeTakeDeframer`, `BoundedDeframer`, `DeframerExt::bounded` deleted | callers move to `new()`/`with_max_frame_len` |
-| Deframer default accepts the wire format's full range (~4 GiB) | untrusted readers must set `with_max_frame_len` |
+| Deframer default accepts up to the FlatBuffers maximum (2 GiB); the `u32` wire range above it is explicit opt-in | untrusted readers must set `with_max_frame_len` |
 | Torn length header now errors instead of clean EOF | spec conformance; recovery loops see `UnexpectedEof` |
 | `Error` → `Error(Box<ErrorKind>)`, variants matched via `kind()` | every `match err { Error::X .. }` site |
 | `Checksum::size()` → associated `const SIZE` + `write_bytes`/`read_bytes` | custom checksums |

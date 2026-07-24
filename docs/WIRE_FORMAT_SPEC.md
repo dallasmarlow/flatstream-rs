@@ -111,8 +111,9 @@ stateDiagram-v2
 The following compact Go function reads a single frame from a `bufio.Reader`.
 Set `withCRC32=false` to read a stream without checksums. It applies an
 application-level 16 MiB bound before allocating the payload buffer — the Rust
-reader accepts the full `u32` range by default and expects callers to set their
-own bound the same way (§8); pick the limit that matches your payloads.
+reader defaults to the FlatBuffers maximum buffer size (2 GiB) and expects
+callers to tighten the bound the same way (§8); pick the limit that matches
+your payloads.
 
 ```go
 package wirefmt

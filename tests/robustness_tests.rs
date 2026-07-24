@@ -1,9 +1,11 @@
 use flatstream::*;
 
 #[test]
-fn oversized_length_returns_invalid_frame_or_eof() {
-    // Purpose: Increasing the length prefix beyond the actual payload should cause
-    // a read failure (commonly UnexpectedEof when attempting to read past the end).
+fn oversized_length_returns_unexpected_eof() {
+    // Purpose: An in-bounds length prefix that overstates the payload makes the
+    // payload read hit EOF inside the frame — exactly `UnexpectedEof`, the torn
+    // signature `recover()` relies on (an over-bound length is `InvalidFrame`
+    // instead; see default_bound_is_flatbuffers_max_and_wire_ceiling_is_opt_in).
     // Build a frame with claimed length larger than actual payload, using default framing
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, b"hello").unwrap();
@@ -72,10 +74,11 @@ fn truncation_sweep_checksummed() {
 
 #[test]
 fn configured_bound_rejects_hostile_length_before_allocation() {
-    // Purpose: The default deframer accepts the wire format's full range (any
-    // 32-bit length), so untrusted readers tighten it with `with_max_frame_len`.
-    // A corrupt header demanding ~4 GiB must then be rejected with InvalidFrame
-    // — before any allocation is sized from attacker-controlled input.
+    // Purpose: The default accepts every valid FlatBuffer (up to 2 GiB), while
+    // untrusted readers normally tighten that further with
+    // `with_max_frame_len`. A corrupt header demanding ~4 GiB must be rejected
+    // by the configured operational bound before any allocation is sized from
+    // attacker-controlled input.
     const LIMIT: usize = 64 * 1024;
     let mut data = u32::MAX.to_le_bytes().to_vec();
     data.extend_from_slice(b"short");
@@ -138,18 +141,43 @@ fn checksum_configured_bound_rejects_hostile_length_before_allocation() {
 }
 
 #[test]
-fn default_accepts_wire_format_ceiling_and_bound_is_opt_in() {
-    // Purpose: `new()` accepts any length a 32-bit header can declare — the wire
-    // format's ~4 GiB ceiling — so a multi-MiB frame over a typical tightened
-    // bound (16 MiB here) reads back byte-identically through the default,
-    // while an explicit `with_max_frame_len` rejects it before allocation.
-    assert_eq!(DEFAULT_MAX_FRAME_LEN, u32::MAX as usize);
+fn default_bound_is_flatbuffers_max_and_wire_ceiling_is_opt_in() {
+    // Purpose: the default accepts every valid FlatBuffer — the runtime's own
+    // 2 GiB ceiling, bound by construction — and rejects declared lengths
+    // above it before allocation; the wire format's full u32 envelope exists
+    // only behind an explicit `with_max_frame_len(MAX_WIRE_FRAME_LEN)`.
+    assert_eq!(
+        DEFAULT_MAX_FRAME_LEN,
+        flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE
+    );
+    assert_eq!(MAX_WIRE_FRAME_LEN, u32::MAX as usize);
+    const { assert!(DEFAULT_MAX_FRAME_LEN < MAX_WIRE_FRAME_LEN) }
+
+    // A declared length above the FlatBuffers maximum is rejected by the
+    // default before any allocation is sized from it...
+    let mut hostile = u32::MAX.to_le_bytes().to_vec();
+    hostile.extend_from_slice(b"short");
+    let mut reader = StreamReader::new(std::io::Cursor::new(hostile), DefaultDeframer::new());
+    let err = reader.read_message().unwrap_err();
+    match err.into_kind() {
+        ErrorKind::InvalidFrame {
+            declared_len,
+            limit,
+            ..
+        } => {
+            assert_eq!(declared_len, Some(u32::MAX as usize));
+            assert_eq!(limit, Some(DEFAULT_MAX_FRAME_LEN));
+        }
+        other => panic!("expected InvalidFrame, got {other:?}"),
+    }
+
+    // ...while a multi-MiB frame over a typical operational bound (16 MiB)
+    // reads back byte-identically through the default.
     const TIGHT: usize = 16 * 1024 * 1024;
     let payload = vec![0x5Au8; TIGHT + 1];
     let mut out = Vec::new();
     DefaultFramer.frame_and_write(&mut out, &payload).unwrap();
 
-    // A tightened bound rejects it before allocation...
     let mut bounded = StreamReader::new(
         std::io::Cursor::new(&out),
         DefaultDeframer::new().with_max_frame_len(TIGHT),
@@ -157,7 +185,6 @@ fn default_accepts_wire_format_ceiling_and_bound_is_opt_in() {
     let err = bounded.read_message().unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::InvalidFrame { .. }));
 
-    // ...the default accepts the full wire-format range and reads it back exactly.
     let mut default = StreamReader::new(std::io::Cursor::new(&out), DefaultDeframer::new());
     assert_eq!(default.read_message().unwrap().unwrap(), payload);
 }

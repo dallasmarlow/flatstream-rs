@@ -16,6 +16,7 @@
 //! * **Borrowed Payload Access**: Direct `&[u8]` access through the Processor API
 //! * **Memory Efficient**: Reusable buffers and minimal allocations
 //! * **Type Safe**: Generic over I/O types and framing strategies
+//! * **Journal Recovery**: Strict torn-tail detection with exact truncation offsets
 //!
 //! ## Quick Start
 //!
@@ -115,6 +116,7 @@ pub mod error;
 pub mod framing;
 pub mod policy;
 pub mod reader;
+pub mod recover;
 pub mod traits;
 pub mod validation;
 pub mod writer;
@@ -124,13 +126,14 @@ pub use checksum::NoChecksum;
 pub use error::{Error, ErrorKind, Result};
 pub use framing::{
     BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer, FramerExt,
-    ValidatingDeframer, ValidatingFramer, DEFAULT_MAX_FRAME_LEN,
+    ValidatingDeframer, ValidatingFramer, DEFAULT_MAX_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{
     AdaptiveWatermarkPolicy, Clock, MemoryPolicy, MonotonicClock, NoOpPolicy, ReclamationInfo,
     ReclamationReason, SizeThresholdPolicy,
 };
 pub use reader::{Messages, StreamReader, TypedMessages};
+pub use recover::{recover, recover_file, RecoveryEnd, RecoveryReport};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{

@@ -2,7 +2,7 @@ use flatstream::{Deframer, Error, Framer, Result, StreamReader, StreamWriter};
 use std::io::{Cursor, Read, Write};
 
 /// A custom deframer must pick its own allocation bound: the core deframers
-/// default to the wire format's ~4 GiB ceiling, and this one bypasses them
+/// default to the FlatBuffers maximum (2 GiB), and this one bypasses them
 /// entirely. 16 MiB is a sensible ceiling for this example's payloads.
 const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
