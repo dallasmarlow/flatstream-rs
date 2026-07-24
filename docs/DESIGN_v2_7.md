@@ -212,7 +212,7 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
   1.79 — but the declared MSRV tracks where it is deployed); author email fixed;
   flatbuffers lock bump to 25.12.19 folded in.
 - **Verification gate (B7):** all verification runs locally by deliberate choice —
-  no CI spend for a project developed and deployed from owned machines. Four
+  no CI spend for a project developed and deployed from owned machines. Five
   scripts under `scripts/` (documented in the README "Verification" section):
   - `gate.sh` — fmt, clippy `--all-targets -D warnings`, the three-combo test
     matrix (all_checksums / no-features / crc16-only), rustdoc `-D warnings`,
@@ -241,6 +241,11 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
     `instruction_bench` feature so a plain `cargo bench` skips it.
   - `examples.sh` — runs every maintained example, including their executable
     assertions; the LOBSTER ingest example exits cleanly when no corpus is present.
+  - `miri.sh` — Miri (nightly) over the in-src unit tests: UB detection at the
+    zero-copy buffer boundaries. Same no-rustup pattern as `fuzz.sh`: a rustup
+    nightly when installed, else the official nightly Linux container. `--lib`
+    scope by design; coverage expands with the slice-reader work, where the
+    offset arithmetic will concentrate.
 - **Inline audit:** `Messages::{next_message, next}` and
   `TypedMessages::{next_typed, next}` carry `#[inline]` so the iterator facade
   costs nothing cross-crate.
@@ -280,14 +285,42 @@ the roadmap's future milestones:
 | `Checksum::size()` → associated `const SIZE` + `write_bytes`/`read_bytes` | custom checksums |
 | `rust-version = 1.97.1` | older toolchains |
 
-## 11. Verification Summary
+## 11. Post-Phase-B Baseline Additions (merged pre-tag, `99c761e`)
 
-- Tests: 125 (all_checksums, incl. doctests) / 98 (no features) / 104 (crc16-only),
-  all green; clippy `--all-targets -D warnings` clean; `cargo fmt --check` clean;
-  rustdoc `-D warnings` clean. The count is *lower* than mid-pass peaks by design:
-  a full test-suite audit before release removed duplicated and vacuous tests and
-  strengthened the survivors from count-assertions to byte-exact content
-  assertions (record: planning notes, 2026-07-09).
+Two additive strands landed between the Phase B merge (PR #31) and the tag,
+after an owner-directed correction round and independent review:
+
+- **Crash recovery as a contract (E1).** `recover(reader, deframer)` and
+  `recover_file(&mut file, deframer)` scan a journal and report
+  `RecoveryReport { frames, last_good_offset, end: RecoveryEnd }`. The
+  contract is strict: only `UnexpectedEof` — the crash-mid-append signature
+  (partial length header, checksum field, or payload) — is a
+  `RecoveryEnd::TornTail` with a safe truncation point; `ChecksumMismatch`,
+  `InvalidFrame`, `ValidationFailed`, and device faults return `Err` with
+  the stop reason intact, because corruption and misconfiguration never
+  authorize truncation. `recover_file` seeks to the start, reports absolute
+  offsets, and leaves the cursor at `last_good_offset`; `recover` scans from
+  the current position with relative offsets. Scope: append-only journals.
+  Tests: an every-byte-offset recovery sweep (plain + all checksums),
+  corruption/validation/bound/wrong-config → `Err`, short-read and
+  interrupted-read parity, cursor contracts, device-fault propagation, and a
+  truncate-and-resume byte-exact roundtrip.
+- **Frame-bound constants, made precise.** `DEFAULT_MAX_FRAME_LEN` is now
+  `flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZE` (2 GiB — every valid FlatBuffer
+  reads out of the box, bound to the runtime's own limit by construction),
+  and the new `MAX_WIRE_FRAME_LEN` (`u32::MAX`, ~4 GiB) names the absolute
+  wire envelope, reachable only by explicit configuration for raw
+  non-FlatBuffer framing (§5's bullet and §10's table reflect this).
+  Neither constant constrains file size.
+
+## 12. Verification Summary
+
+- Tests: 140 (all_checksums, incl. doctests) / 110 (no features) /
+  117 (crc16-only), all green; clippy `--all-targets -D warnings` clean;
+  `cargo fmt --check` clean; rustdoc `-D warnings` clean. (The Phase B cut
+  measured 125/98/104 after the test-suite audit that removed duplicated and
+  vacuous tests — record: planning notes, 2026-07-09; the increase since is
+  the §11 recovery suite and frame-constant tests.)
 - Wire-format conformance: byte-golden corpus tests against committed frame files
   (the format's bytes, not just its behavior, are pinned); an exhaustive
   truncation sweep asserting the spec §6 reader state machine at every byte
