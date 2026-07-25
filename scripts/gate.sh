@@ -8,6 +8,12 @@
 #               single-feature build (crc16) that catches #[cfg] gaps; plus
 #               the opt-in unsafe_typed integration test so that public feature
 #               cannot bit-rot outside the default unsafe-free build
+#   examples    examples self-assert (§1), which is only worth anything if they
+#               actually execute — compiling them under clippy proves nothing
+#               about their assertions; see scripts/examples.sh
+#   README      the README's Rust snippets are the code consumers copy first,
+#               and rustdoc only tests snippets under src/ — see
+#               scripts/readme_doctests.sh
 #   rustdoc     broken intra-doc links and doc warnings, as errors
 #   bench check benches are compile-checked so they can't bit-rot between runs
 #               (actually *running* benches is a separate, deliberate act — see
@@ -50,6 +56,12 @@ cargo test --locked --no-default-features --features crc16
 
 echo "== test: unsafe_typed opt-in"
 cargo test --locked --features all_checksums,unsafe_typed --test stream_deserialize_integration_tests
+
+echo "== examples: run (their assertions are the point)"
+./scripts/examples.sh
+
+echo "== README snippets compile and run"
+./scripts/readme_doctests.sh
 
 echo "== rustdoc (-D warnings)"
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features all_checksums

@@ -133,6 +133,15 @@ name = "memory_policy_benchmarks"
 harness = false
 
 [[bench]]
+name = "vectored_framing"
+harness = false
+
+[[bench]]
+name = "write_pipeline_decomposition"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
 name = "instruction_count"
 harness = false
 required-features = ["instruction_bench", "all_checksums"]

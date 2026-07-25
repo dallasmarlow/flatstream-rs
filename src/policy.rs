@@ -239,6 +239,7 @@ impl<C: Clock> AdaptiveWatermarkPolicy<C> {
 
     /// Adds a time-based trigger: reset once the over-provisioned signal has
     /// persisted for `cooldown`, even if the message count has not been reached.
+    #[must_use]
     pub fn with_cooldown(mut self, cooldown: Duration) -> Self {
         self.cooldown = Some(cooldown);
         self
@@ -246,6 +247,7 @@ impl<C: Clock> AdaptiveWatermarkPolicy<C> {
 
     /// Sets the capacity the buffer is reclaimed to when this policy fires
     /// (default 16 KiB).
+    #[must_use]
     pub fn with_baseline(mut self, bytes: usize) -> Self {
         self.baseline_capacity = bytes;
         self
@@ -363,6 +365,7 @@ impl SizeThresholdPolicy {
 
     /// Sets the capacity the buffer is reclaimed to when this policy fires
     /// (default 16 KiB).
+    #[must_use]
     pub fn with_baseline(mut self, bytes: usize) -> Self {
         self.baseline_capacity = bytes;
         self

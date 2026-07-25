@@ -224,11 +224,20 @@ impl TypedValidator {
     /// non-capturing closure around the generated `root_as_*_with_opts`
     /// function:
     ///
-    /// ```ignore
-    /// TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
-    ///     telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
-    /// })
     /// ```
+    /// use flatstream::TypedValidator;
+    ///
+    /// // With generated code this closure would call
+    /// // `telemetry::root_as_telemetry_event_with_opts`; a string root stands
+    /// // in here so the snippet compiles without a schema. The shape is the
+    /// // same either way.
+    /// let validator = TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
+    ///     flatbuffers::root_with_opts::<&str>(opts, payload).map(|_| ())
+    /// });
+    /// # let _ = validator;
+    /// ```
+    ///
+    /// `tests/validation_integration.rs` uses the real generated verifier.
     pub fn from_verify_named(
         name: &'static str,
         verify: fn(

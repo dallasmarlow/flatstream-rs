@@ -1,0 +1,4 @@
+# e1_bufwriter
+# date:    2026-07-25T00:56:02Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64

@@ -6,7 +6,7 @@ FlatStream provides a trait-based architecture for efficiently writing and readi
 
 FlatStream is a small framing layer that adds stream boundaries and optional integrity to ordinary (non–size-prefixed) FlatBuffer payloads. Each frame is: 4-byte little-endian payload length, optional checksum, then payload bytes. The library does not change how FlatBuffers are encoded; it provides ergonomic streaming APIs (e.g., zero-copy reading via process_all()/messages()), configurable frame-length bounds, and composable adapters (checksums, bounds, observers). It integrates cleanly with standard Rust Read/Write and can be used over network transports (e.g., TCP), but networking has not been the primary focus of development or testing.
 
-    Note on Performance: The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
+> **Note on Performance:** The performance figures and experimental results cited in the documentation were generated on a modern ARM-based MacBook Pro. Actual performance will vary based on the specific hardware and workload.
 
 ## TL;DR
 
@@ -16,7 +16,7 @@ Two claims, scoped precisely: **"zero-copy" refers to payload access** — paylo
 
 ## Wire format (at a glance)
 
-```
+```text
 [4-byte LE: payload length (u32)] [N-byte checksum (optional)] [FlatBuffer payload...]
 ```
 
@@ -109,7 +109,7 @@ sequenceDiagram
   end
 ```
 
-```
+```text
    StreamWriter             Framer (+ adapters)                 Stream
         |                         |                          [len][opt checksum][payload] ...
         v                         v                                   |
@@ -163,33 +163,38 @@ use flatbuffers::FlatBufferBuilder;
 use std::io::Cursor;
 
 // Write path: prevent malformed data from ever being written.
-let mut bytes = Vec::new();
-let framer = DefaultFramer.with_validator(TableRootValidator::new());
-let mut stream = StreamWriter::new(Cursor::new(&mut bytes), framer);
+fn write_validated() -> Result<()> {
+    let mut bytes = Vec::new();
+    let framer = DefaultFramer.with_validator(TableRootValidator::new());
+    let mut stream = StreamWriter::new(Cursor::new(&mut bytes), framer);
 
-// This valid FlatBuffer payload (an empty table) will be written successfully.
-let mut b = FlatBufferBuilder::new();
-let start = b.start_table();
-let table_root = b.end_table(start);
-b.finish(table_root, None);
-stream.write_finished(&mut b)?;
+    // This valid FlatBuffer payload (an empty table) will be written successfully.
+    let mut b = FlatBufferBuilder::new();
+    let start = b.start_table();
+    let table_root = b.end_table(start);
+    b.finish(table_root, None);
+    stream.write_finished(&mut b)?;
 
-// Attempting to write a malformed payload would fail here with ErrorKind::ValidationFailed.
-// For example: stream.write_payload(b"a string that is not a valid flatbuffer root")?;
+    // A malformed payload would fail here with ErrorKind::ValidationFailed —
+    // see examples/validation_example.rs, which asserts exactly that.
+    Ok(())
+}
 ```
 
 ```rust
-use flatstream::{DefaultDeframer, DeframerExt, TableRootValidator};
+use flatstream::{DefaultDeframer, DeframerExt, Result, TableRootValidator};
 use std::io::Cursor;
 
 // Read path: structural safety before your code sees any payload.
-let data: Vec<u8> = vec![]; // framed bytes
-let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
-let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
-reader.process_all(|payload| {
-    // payload: &[u8] (in-place, zero-copy)
-    Ok(())
-})?;
+fn read_validated(data: Vec<u8>) -> Result<()> {
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
+    let mut reader = flatstream::StreamReader::new(Cursor::new(data), deframer);
+    reader.process_all(|payload| {
+        // payload: &[u8] (in-place, zero-copy)
+        let _ = payload;
+        Ok(())
+    })
+}
 ```
 
 ```rust
@@ -202,7 +207,7 @@ let validator = CompositeValidator::new()
 let deframer = DefaultDeframer::new().with_validator(validator);
 ```
 
-```rust
+```rust,ignore
 use flatstream::{DefaultDeframer, DeframerExt, TypedValidator};
 
 // Example using the verifier generated for `my_schema::MyMessage`.
@@ -291,8 +296,13 @@ FlatStream provides two modes for writing data, allowing you to choose based on 
 Best for: Convenience, smaller number of messages per-stream and uniform/consistent message sizes
 
 ```rust
-let mut writer = StreamWriter::new(file, DefaultFramer);
-writer.write(&"Hello, world!")?;  // Internal builder management
+use flatstream::{DefaultFramer, Result, StreamWriter};
+
+fn write_simple<W: std::io::Write>(file: W) -> Result<()> {
+    let mut writer = StreamWriter::new(file, DefaultFramer);
+    writer.write(&"Hello, world!")?; // Internal builder management
+    Ok(())
+}
 ```
 
 - **Pros**: Zero configuration, automatic optimized builder reuse to avoid unnecessary heap allocations and memory copy operations, easy to use
@@ -303,13 +313,19 @@ writer.write(&"Hello, world!")?;  // Internal builder management
 Best for: Mixed message sizes, large messages, memory-constrained systems
 
 ```rust
-let mut builder = FlatBufferBuilder::new();
-let mut writer = StreamWriter::new(file, DefaultFramer);
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultFramer, Result, StreamSerialize, StreamWriter};
 
-// Self managed builder for zero-allocation writes
-builder.reset();
-event.serialize(&mut builder)?;
-writer.write_finished(&mut builder)?;
+fn write_expert<W: std::io::Write, T: StreamSerialize>(file: W, event: &T) -> Result<()> {
+    let mut builder = FlatBufferBuilder::new();
+    let mut writer = StreamWriter::new(file, DefaultFramer);
+
+    // Self managed builder for zero-allocation writes
+    builder.reset();
+    event.serialize(&mut builder)?;
+    writer.write_finished(&mut builder)?;
+    Ok(())
+}
 ```
 
 - **Pros**: Multiple builders for different message types or size groups, better memory control, better performance for larger streams in length and message size
@@ -336,7 +352,7 @@ Add `flatstream` and the `flatbuffers` dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
 flatbuffers = "25.9.23" # Use the appropriate version
-flatstream = "0.2.7"
+flatstream = "0.2.8"
 ```
 
 ### Feature Flags
@@ -355,7 +371,7 @@ Data integrity checks (checksums) are optional and managed via feature flags.
 ```toml
 [dependencies]
 # Example: Installing with XxHash support
-flatstream = { version = "0.2.7", features = ["xxhash"] }
+flatstream = { version = "0.2.8", features = ["xxhash"] }
 ```
 
 For comprehensive testing with all checksums enabled:
@@ -482,13 +498,21 @@ Choose between simple mode (easy) or expert mode (fast) based on your needs:
 
 #### Simple Mode
 ```rust
-use flatstream::{StreamWriter, DefaultFramer, Result};
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultFramer, Result, StreamSerialize, StreamWriter};
 use std::io::BufWriter;
 use std::fs::File;
 
-// Assuming TelemetryData from the previous example
-# struct TelemetryData { timestamp: u64, label: String };
-# impl StreamSerialize for TelemetryData { fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> { Ok(()) } }
+// TelemetryData from the previous example
+struct TelemetryData { timestamp: u64, label: String }
+
+impl StreamSerialize for TelemetryData {
+    fn serialize<A: flatbuffers::Allocator>(&self, builder: &mut FlatBufferBuilder<A>) -> Result<()> {
+        let label = builder.create_string(&self.label);
+        builder.finish(label, None);
+        Ok(())
+    }
+}
 
 fn write_simple() -> Result<()> {
     let file = File::create("telemetry.bin")?;
@@ -556,14 +580,43 @@ index.push((event_id, receipt.frame_start));
 
 `wire_len` counts the bytes the frame actually occupies (length prefix + optional
 checksum + payload) for any framer, so callers never duplicate the wire layout.
-Use `with_start_offset(n)` when the writer is positioned over a nonzero region of
-a file. See `examples/external_index.rs` for index construction and seek-based
-random access. Writers that only ever call `write_finished` can spell their type
-as the lifetime-free alias `OwnedStreamWriter<W, F>`.
+Writers that only ever call `write_finished` can spell their type as the
+lifetime-free alias `OwnedStreamWriter<W, F>`.
+
+Reading a frame back is a seek to `frame_start` followed by a single
+`read_message` — the recorded offset is the first byte of the length prefix, so a
+fresh reader lands on a frame boundary:
+
+```rust,ignore
+use std::io::{Seek, SeekFrom};
+
+let mut file = File::open("journal.bin")?;
+file.seek(SeekFrom::Start(frame_start))?;
+let mut reader = StreamReader::new(file, DefaultDeframer::new());
+let payload = reader.read_message()?.expect("a frame begins at the indexed offset");
+```
+
+Three properties make the index trustworthy, each pinned by
+`tests/external_index.rs`:
+
+- **Contiguity.** `frame_start + wire_len` of frame *i* equals `frame_start` of
+  frame *i + 1*, so consecutive receipts tile the stream with no gaps. Summing
+  `wire_len` reproduces `bytes_written()`.
+- **Absolute offsets on append.** A writer opened over an existing journal must
+  be built with `with_start_offset(existing_len)`; otherwise receipts are
+  relative to the current session and the index silently points into the wrong
+  frames.
+- **Torn-tail safety.** After a crash, `recover_stream` reports a truncation
+  point; every index entry whose `frame_start + wire_len` is at or below that
+  point still resolves. Drop the entries above it and the index remains valid.
+
+Bytes written through `get_mut()` bypass the counter, so a receipt taken after
+such a write is wrong. Keep raw writes out of a stream you are indexing.
+`examples/external_index.rs` runs the whole loop end to end.
 
 #### Schema-typed expert-mode example
 
-```rust
+```rust,ignore
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{StreamWriter, DefaultFramer, Result};
 use std::io::BufWriter;
@@ -623,7 +676,7 @@ Because the payload is a normal (non–size-prefixed) FlatBuffer, use the FlatBu
 
 #### Typed verification (preferred)
 
-```rust
+```rust,ignore
 use flatstream::{
     DefaultDeframer, Error, Result, StreamDeserialize, StreamReader,
 };
@@ -733,12 +786,21 @@ A complete but corrupted length header can still declare a large in-bounds paylo
 For cases requiring early termination or custom control flow:
 
 ```rust
-let mut messages = reader.messages();
-while let Some(payload) = messages.next()? {
-    // Process message with zero-copy access
-    if should_stop_early(payload) {
-        break;
+use flatstream::{DefaultDeframer, Result, StreamReader};
+
+fn should_stop_early(payload: &[u8]) -> bool {
+    payload.is_empty()
+}
+
+fn read_until<R: std::io::Read>(reader: &mut StreamReader<R, DefaultDeframer>) -> Result<()> {
+    let mut messages = reader.messages();
+    while let Some(payload) = messages.next()? {
+        // Process message with zero-copy access
+        if should_stop_early(payload) {
+            break;
+        }
     }
+    Ok(())
 }
 ```
 
@@ -807,10 +869,12 @@ For long-running applications handling mixed message sizes, `StreamWriter` and `
 By default, no policy is installed and the writer retains the largest buffer capacity seen. To prevent memory bloat after large message bursts, install an `AdaptiveWatermarkPolicy` to reset the internal builder once high capacity is no longer needed. The baseline capacity is policy configuration — a policy decides both *when* to reclaim and *what* to shrink back to. The policy is consulted once per message, and only while capacity exceeds its baseline; the machinery is outlined off the hot paths, so without a policy the residual cost is a predictable, never-taken branch.
 
 ```rust
-use flatstream::{StreamWriter, DefaultFramer, AdaptiveWatermarkPolicy};
+use flatstream::{AdaptiveWatermarkPolicy, DefaultFramer, OwnedStreamWriter, StreamWriter};
 
-let policy = AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024);
-let mut writer = StreamWriter::new(file, DefaultFramer).with_memory_policy(policy);
+fn with_policy<W: std::io::Write>(file: W) -> OwnedStreamWriter<W, DefaultFramer> {
+    let policy = AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024);
+    StreamWriter::new(file, DefaultFramer).with_memory_policy(policy)
+}
 ```
 
 Policies apply to buffers the library owns — the writer's simple mode (`write()`) and the reader's internal buffer. In expert mode (`write_finished()`) you own the builder, so reclamation is your call. For custom allocators, see `with_memory_policy_and_factory`.
@@ -835,7 +899,7 @@ The format written to the stream is determined by the `Framer` implementation. F
 
 A simple, low-overhead format (4 bytes overhead).
 
-```
+```text
 [4 bytes LE: Payload Length (u32)] [Payload...]
 ```
 
@@ -843,7 +907,7 @@ A simple, low-overhead format (4 bytes overhead).
 
 A robust format including data integrity validation. The overhead depends on the checksum algorithm (e.g., 4 bytes length + 8 bytes checksum for XxHash64).
 
-```
+```text
 [4 bytes LE: Payload Length (u32)] [N bytes LE: Checksum] [Payload...]
 ```
 
@@ -902,49 +966,80 @@ This library currently uses synchronous I/O based on standard Rust `Read`/`Write
 
 When handling different message types or sizes, maintain separate builders:
 
-```rust
-// For a system handling control messages, telemetry, and file transfers
-let mut control_builder = FlatBufferBuilder::new();     // Small, frequent
-let mut telemetry_builder = FlatBufferBuilder::new();   // Medium, periodic  
-let mut file_builder = FlatBufferBuilder::new();        // Huge, rare
+`examples/multiple_builders_example.rs` runs this pattern end to end and
+measures the payoff: after a 1 MB chunk, the control builder is still 32 bytes
+while the file builder holds 2 MB.
 
-// Use the appropriate builder for each message type
-match message {
-    Message::Control(msg) => {
-        control_builder.reset();
-        msg.serialize(&mut control_builder)?;
-        writer.write_finished(&mut control_builder)?;
+```rust
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultFramer, OwnedStreamWriter, Result, StreamSerialize};
+
+enum Message<T> {
+    Control(T),
+    Telemetry(T),
+    FileTransfer(T),
+}
+
+// For a system handling control messages, telemetry, and file transfers
+fn write_mixed<W: std::io::Write, T: StreamSerialize>(
+    writer: &mut OwnedStreamWriter<W, DefaultFramer>,
+    message: &Message<T>,
+) -> Result<()> {
+    let mut control_builder = FlatBufferBuilder::new(); // Small, frequent
+    let mut telemetry_builder = FlatBufferBuilder::new(); // Medium, periodic
+    let mut file_builder = FlatBufferBuilder::new(); // Huge, rare
+
+    // Use the appropriate builder for each message type
+    match message {
+        Message::Control(msg) => {
+            control_builder.reset();
+            msg.serialize(&mut control_builder)?;
+            writer.write_finished(&mut control_builder)?;
+        }
+        Message::Telemetry(msg) => {
+            telemetry_builder.reset();
+            msg.serialize(&mut telemetry_builder)?;
+            writer.write_finished(&mut telemetry_builder)?;
+        }
+        Message::FileTransfer(msg) => {
+            file_builder.reset();
+            msg.serialize(&mut file_builder)?;
+            writer.write_finished(&mut file_builder)?;
+            // Could even drop file_builder here to free memory
+        }
     }
-    Message::Telemetry(msg) => {
-        telemetry_builder.reset();
-        msg.serialize(&mut telemetry_builder)?;
-        writer.write_finished(&mut telemetry_builder)?;
-    }
-    Message::FileTransfer(msg) => {
-        file_builder.reset();
-        msg.serialize(&mut file_builder)?;
-        writer.write_finished(&mut file_builder)?;
-        // Could even drop file_builder here to free memory
-    }
+    Ok(())
 }
 ```
+
+In real use the builders are owned by the caller across many messages rather
+than created per call, as the example shows.
 
 ### Migration Path
 
 Start with simple mode and migrate to expert mode when you need more control:
 
 ```rust
-// Step 1: Start simple
-writer.write(&event)?;
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultFramer, OwnedStreamWriter, Result, StreamSerialize};
 
-// Step 2: Profile and identify bottlenecks
-// If write performance is limiting...
+fn migrate<W: std::io::Write, T: StreamSerialize>(
+    writer: &mut OwnedStreamWriter<W, DefaultFramer>,
+    event: &T,
+) -> Result<()> {
+    // Step 1: Start simple
+    writer.write(event)?;
 
-// Step 3: Migrate to expert mode
-let mut builder = FlatBufferBuilder::new();
-builder.reset();
-event.serialize(&mut builder)?;
-writer.write_finished(&mut builder)?;
+    // Step 2: Profile and identify bottlenecks
+    // If write performance is limiting...
+
+    // Step 3: Migrate to expert mode
+    let mut builder = FlatBufferBuilder::new();
+    builder.reset();
+    event.serialize(&mut builder)?;
+    writer.write_finished(&mut builder)?;
+    Ok(())
+}
 ```
 
 ### Performance Checklist

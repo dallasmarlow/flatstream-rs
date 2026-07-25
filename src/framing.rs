@@ -3,7 +3,7 @@
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};
 use crate::validation::Validator;
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 
 /// Default maximum accepted payload length for the core deframers: the
 /// FlatBuffers maximum buffer size (2 GiB), so every valid FlatBuffer reads
@@ -32,6 +32,85 @@ pub const DEFAULT_MAX_FRAME_LEN: usize = flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZ
 /// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len).
 pub const MAX_WIRE_FRAME_LEN: usize = u32::MAX as usize;
 
+/// Writes every byte of `slices`, in order, with a single `write_vectored`
+/// call per attempt — the header and the payload reach the sink together
+/// instead of as two separate `write_all`s. On a sink that implements
+/// `writev` (`File`, `TcpStream`) this halves the syscalls per frame; on one
+/// that does not, the standard-library fallback writes the first non-empty
+/// slice per call, so the behavior degrades to exactly the two-call shape it
+/// replaces.
+///
+/// Hand-rolled because [`Write::write_all_vectored`] is still unstable on the
+/// MSRV (rust-lang/rust#70436). Three properties this loop must have, each of
+/// which has burned someone:
+///
+/// - **`writev` is not atomic across slices.** A call may accept any prefix of
+///   the total — including a partial slice — so the loop re-slices with
+///   [`IoSlice::advance_slices`] and continues. No all-or-nothing guarantee is
+///   claimed or relied on.
+/// - **`Ok(0)` with bytes outstanding means the sink stopped accepting**, and
+///   must become `WriteZero` rather than an infinite loop.
+/// - **Leading empty slices are dropped before the loop**, so a zero-length
+///   payload cannot make an `Ok(0)` look like a stall.
+///
+/// `Interrupted` is retried, matching [`Write::write_all`].
+///
+/// The single-call case is peeled out of the loop deliberately: every sink
+/// that matters (`File`, `TcpStream`, `BufWriter`, `Vec`) accepts a whole
+/// small frame in one call, and routing that case through
+/// `IoSlice::advance_slices` — which rescans the slice list and asserts —
+/// costs measurably more than the vectored write saves on an already-buffered
+/// sink. Measured: `docs/benchmark/FINDINGS_VECTORED_FRAMING.md` §F2.
+#[inline]
+fn write_all_vectored<W: Write>(writer: &mut W, slices: &mut [IoSlice<'_>]) -> Result<()> {
+    let total: usize = slices.iter().map(|s| s.len()).sum();
+    match writer.write_vectored(slices) {
+        Ok(n) if n == total => Ok(()),
+        Ok(n) => write_remainder(writer, slices, n, total),
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+            write_remainder(writer, slices, 0, total)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The partial-write continuation: `written` bytes of `total` have been
+/// accepted, so re-slice and keep going. Outlined and `#[cold]` because a sink
+/// that splits a frame is the exception, and keeping it out of line leaves the
+/// common path in §`write_all_vectored` small enough to inline.
+#[cold]
+#[inline(never)]
+fn write_remainder<W: Write>(
+    writer: &mut W,
+    slices: &mut [IoSlice<'_>],
+    written: usize,
+    total: usize,
+) -> Result<()> {
+    let mut rest = slices;
+    let mut done = written;
+    // `advance_slices` also drops leading empty slices, so a zero-length
+    // payload cannot leave a stray empty slice that reads as a stall.
+    IoSlice::advance_slices(&mut rest, done);
+    while done < total {
+        match writer.write_vectored(rest) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "sink accepted no bytes while a frame was outstanding",
+                )
+                .into())
+            }
+            Ok(n) => {
+                done += n;
+                IoSlice::advance_slices(&mut rest, n);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 //--- Framer Trait and Implementations ---
 
 /// A trait that defines how a raw payload is framed and written to a stream.
@@ -59,9 +138,13 @@ impl Framer for DefaultFramer {
             ));
         }
         let payload_len = payload.len() as u32;
-        writer.write_all(&payload_len.to_le_bytes())?;
-        writer.write_all(payload)?;
-        Ok(())
+        // One vectored call puts `[len][payload]` on the wire together. The
+        // bytes are identical to the two-`write_all` form this replaces
+        // (pinned by the wire-format corpus tests); only the call count
+        // changes.
+        let len_bytes = payload_len.to_le_bytes();
+        let mut bufs = [IoSlice::new(&len_bytes), IoSlice::new(payload)];
+        write_all_vectored(writer, &mut bufs)
     }
 }
 
@@ -102,11 +185,12 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum = self.checksum_alg.calculate(payload);
 
         // Assemble the full header ([4-byte length | checksum bytes]) in a
-        // 12-byte stack scratch and issue a single write_all — halves the call
-        // count on this path versus writing length and checksum separately.
-        // The bytes on the wire are identical (wire-format corpus tests).
-        // `C::SIZE` is an associated const, so the header length and the
-        // serialization width constant-fold by construction.
+        // 12-byte stack scratch, then hand header and payload to the sink in
+        // one vectored call — one call per frame instead of the three this
+        // path would otherwise need. The bytes on the wire are identical
+        // (wire-format corpus tests). `C::SIZE` is an associated const, so the
+        // header length and the serialization width constant-fold by
+        // construction.
         //
         // On "copying" here: only header *metadata* is materialized — integers
         // must become little-endian bytes somewhere, and previously each
@@ -120,9 +204,8 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum_field: &mut [u8; 8] = (&mut header[4..12]).try_into().unwrap();
         self.checksum_alg.write_bytes(checksum, checksum_field);
 
-        writer.write_all(&header[..4 + C::SIZE])?;
-        writer.write_all(payload)?;
-        Ok(())
+        let mut bufs = [IoSlice::new(&header[..4 + C::SIZE]), IoSlice::new(payload)];
+        write_all_vectored(writer, &mut bufs)
     }
 }
 
@@ -255,6 +338,18 @@ impl DefaultDeframer {
     }
 
     /// Sets the maximum accepted payload length (enforced before allocation).
+    ///
+    /// Consumes and returns `self`, so the result must be used. Dropping it
+    /// leaves the default bound in force — a silent no-op on the one knob that
+    /// stands between a corrupt length header and a huge allocation:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use flatstream::DefaultDeframer;
+    /// let deframer = DefaultDeframer::new();
+    /// deframer.with_max_frame_len(1024); // bound discarded; does not compile
+    /// ```
+    #[must_use]
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
@@ -308,6 +403,7 @@ impl<C: Checksum> ChecksumDeframer<C> {
     }
 
     /// Sets the maximum accepted payload length (enforced before allocation).
+    #[must_use]
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
@@ -539,16 +635,19 @@ impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
 /// Extension methods for framers to enable fluent composition without importing adapter types.
 pub trait FramerExt: Framer + Sized {
     /// Enforce a maximum payload length.
+    #[must_use]
     fn bounded(self, max: usize) -> BoundedFramer<Self> {
         BoundedFramer::new(self, max)
     }
 
     /// Observe payloads on the write path without copying. Useful for metrics/logging.
+    #[must_use]
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
         ObserverFramer::new(self, callback)
     }
 
     /// Adds a validation layer to this framer.
+    #[must_use]
     #[inline]
     fn with_validator<V: Validator>(self, validator: V) -> ValidatingFramer<Self, V> {
         ValidatingFramer::new(self, validator)
@@ -560,11 +659,13 @@ impl<T: Framer> FramerExt for T {}
 /// Extension methods for deframers to enable fluent composition without importing adapter types.
 pub trait DeframerExt: Deframer + Sized {
     /// Observe payloads on the read path without copying. Useful for metrics/logging.
+    #[must_use]
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
         ObserverDeframer::new(self, callback)
     }
 
     /// Adds a validation layer to this deframer.
+    #[must_use]
     #[inline]
     fn with_validator<V: Validator>(self, validator: V) -> ValidatingDeframer<Self, V> {
         ValidatingDeframer::new(self, validator)
@@ -572,3 +673,254 @@ pub trait DeframerExt: Deframer + Sized {
 }
 
 impl<T: Deframer> DeframerExt for T {}
+
+#[cfg(test)]
+mod vectored_tests {
+    use super::*;
+
+    /// The canonical bytes a default frame must occupy, computed independently
+    /// of the framer.
+    fn expected_default(payload: &[u8]) -> Vec<u8> {
+        let mut v = (payload.len() as u32).to_le_bytes().to_vec();
+        v.extend_from_slice(payload);
+        v
+    }
+
+    /// A sink that never overrides `write_vectored` and accepts **one byte per
+    /// call**. It therefore exercises the standard library's vectored
+    /// fallback (first non-empty slice only) *and* the partial-write loop at
+    /// its most hostile: every frame takes `4 + payload.len()` calls.
+    #[derive(Default)]
+    struct OneByteAtATime {
+        written: Vec<u8>,
+        calls: usize,
+    }
+
+    impl Write for OneByteAtATime {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            self.written.push(buf[0]);
+            Ok(1)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A sink that *does* implement `write_vectored` but accepts at most
+    /// `limit` bytes per call, consuming across slice boundaries. This is the
+    /// case the fallback sink cannot reach: it forces
+    /// `IoSlice::advance_slices` to re-slice a *partially consumed* slice.
+    struct PartialVectored {
+        written: Vec<u8>,
+        limit: usize,
+        calls: usize,
+    }
+
+    impl Write for PartialVectored {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.limit);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            self.calls += 1;
+            let mut budget = self.limit;
+            let mut total = 0;
+            for buf in bufs {
+                if budget == 0 {
+                    break;
+                }
+                let n = buf.len().min(budget);
+                self.written.extend_from_slice(&buf[..n]);
+                budget -= n;
+                total += n;
+            }
+            Ok(total)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A sink that accepts nothing. The loop must surface `WriteZero` rather
+    /// than spin forever.
+    struct Stalled;
+
+    impl Write for Stalled {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+        fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn vectored_output_is_byte_exact_on_a_dribbling_sink() {
+        // The whole point of the partial-write loop: the bytes must be
+        // identical no matter how the sink chops the write up.
+        for payload in [b"".as_slice(), b"x", b"hello frame", &[7u8; 300]] {
+            let mut sink = OneByteAtATime::default();
+            DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+            assert_eq!(
+                sink.written,
+                expected_default(payload),
+                "payload len {}",
+                payload.len()
+            );
+            // One call per byte, plus the call that reports the empty tail
+            // slice as consumed for a zero-length payload.
+            assert!(sink.calls >= 4 + payload.len());
+        }
+    }
+
+    #[test]
+    fn advance_slices_re_slices_a_partially_consumed_slice() {
+        // A 3-byte budget lands mid-header on the first call and mid-payload
+        // later, so the loop must resume inside a slice, not just drop whole
+        // ones. If `advance_slices` were mishandled, the output would be
+        // duplicated or truncated here rather than merely slow.
+        let payload: Vec<u8> = (0..=200u8).collect();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 3,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+        assert_eq!(sink.written, expected_default(&payload));
+        // 205 bytes at 3 per call: the frame genuinely spanned many calls.
+        assert_eq!(sink.calls, (4 + payload.len()).div_ceil(3));
+    }
+
+    #[test]
+    fn one_vectored_call_suffices_when_the_sink_takes_everything() {
+        // The win E1 exists for: a sink that accepts the whole frame gets
+        // exactly one call for header + payload.
+        let payload = [9u8; 512];
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+        assert_eq!(sink.calls, 1);
+        assert_eq!(sink.written, expected_default(&payload));
+    }
+
+    #[test]
+    fn a_non_vectoring_sink_costs_the_same_two_calls_it_did_before() {
+        // The regression E1 could plausibly have introduced. Most user-written
+        // `Write` impls never override `write_vectored`, and
+        // `is_write_vectored()` is unstable on the MSRV (rust-lang/rust#69941),
+        // so we cannot detect them and route around the vectored path.
+        //
+        // We do not need to. The provided `write_vectored` forwards the first
+        // non-empty slice to `write`, and the partial-write loop supplies the
+        // rest — so such a sink sees exactly the header-then-payload pair of
+        // calls it saw before this change, with the same bytes. No detection,
+        // no regression, no `cfg` branch.
+        #[derive(Default)]
+        struct AcceptsEverythingUnvectored {
+            written: Vec<u8>,
+            calls: usize,
+        }
+
+        impl Write for AcceptsEverythingUnvectored {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                self.written.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let payload = [3u8; 256];
+        let mut sink = AcceptsEverythingUnvectored::default();
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+
+        assert_eq!(sink.written, expected_default(&payload));
+        assert_eq!(sink.calls, 2, "header and payload, exactly as before E1");
+    }
+
+    #[cfg(feature = "xxhash")]
+    #[test]
+    fn checksummed_frame_is_one_call_and_byte_exact() {
+        use crate::checksum::Checksum;
+        use crate::XxHash64;
+
+        let payload = b"checksummed payload".as_slice();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        ChecksumFramer::new(XxHash64::new())
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+        // [len|checksum] and payload travel together: one call, not three.
+        assert_eq!(sink.calls, 1);
+    }
+
+    #[cfg(feature = "xxhash")]
+    #[test]
+    fn checksummed_frame_survives_a_dribbling_sink() {
+        use crate::checksum::Checksum;
+        use crate::XxHash64;
+
+        let payload = b"checksummed payload".as_slice();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 5,
+            calls: 0,
+        };
+        ChecksumFramer::new(XxHash64::new())
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+    }
+
+    #[test]
+    fn a_stalled_sink_becomes_write_zero_not_a_hang() {
+        let err = DefaultFramer
+            .frame_and_write(&mut Stalled, b"payload")
+            .unwrap_err();
+        match err.into_kind() {
+            crate::error::ErrorKind::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::WriteZero)
+            }
+            other => panic!("expected Io(WriteZero), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_payload_terminates() {
+        // A zero-length payload leaves a trailing empty slice; the loop must
+        // recognize the frame as complete instead of reading `Ok(0)` as a
+        // stall. Regression guard for the `advance_slices(.., 0)` prologue.
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, b"").unwrap();
+        assert_eq!(sink.written, vec![0, 0, 0, 0]);
+    }
+}

@@ -3,7 +3,9 @@
 //! with your custom allocator that implements `flatbuffers::Allocator`.
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{DefaultFramer, Result, StreamSerialize, StreamWriter};
+use flatstream::{
+    DefaultDeframer, DefaultFramer, Result, StreamReader, StreamSerialize, StreamWriter,
+};
 use std::io::Cursor;
 
 #[derive(Clone)]
@@ -50,9 +52,37 @@ fn main() -> Result<()> {
     sw.write_finished(&mut b2)?;
 
     sw.flush()?;
+    let reported = sw.bytes_written();
+    drop(sw);
+
+    // The point of the example is that the allocator choice is invisible on the
+    // wire: both paths must produce ordinary frames a plain reader can consume.
+    assert_eq!(
+        reported as usize,
+        out.len(),
+        "bytes_written() must agree with what actually landed in the sink"
+    );
+
+    let mut reader = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let mut round_tripped = Vec::new();
+    reader.process_all(|payload| {
+        round_tripped.push(
+            flatbuffers::root::<&str>(payload)
+                .expect("payload is a valid FlatBuffers string")
+                .to_string(),
+        );
+        Ok(())
+    })?;
+    assert_eq!(
+        round_tripped,
+        vec!["hello alloc".to_string(), "goodbye alloc".to_string()],
+        "both the simple-mode and expert-mode writes must round-trip in order"
+    );
+
     println!(
-        "Wrote {} framed bytes using an explicit allocator",
-        out.len()
+        "Wrote {} framed bytes using an explicit allocator; {} messages round-tripped",
+        out.len(),
+        round_tripped.len()
     );
     Ok(())
 }

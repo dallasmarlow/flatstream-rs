@@ -162,14 +162,46 @@ fn main() -> Result<()> {
 
     println!("\n✅ Messages written successfully!");
 
-    // Memory efficiency analysis
-    println!("\nMemory Efficiency:");
-    println!("- Control messages: Small, frequent messages");
-    println!("- Telemetry messages: Medium-sized batches");
-    println!("- File transfer: Large 1MB chunks");
-    println!("\nNote: After large messages, builders retain their expanded capacity");
-    println!("Using separate builders prevents small messages from using oversized buffers.");
-    println!("This pattern is especially important for mixed message size workloads.");
+    // Memory efficiency: this is the actual thesis of the example, so measure
+    // it rather than asserting it in prose. A builder never shrinks on
+    // `reset()`, so the one that served the 1MB chunk stays 1MB-sized while
+    // the control builder — the hot path — stays tiny.
+    let control_cap = capacity_of(&mut control_builder);
+    let telemetry_cap = capacity_of(&mut telemetry_builder);
+    let file_cap = capacity_of(&mut file_builder);
+
+    println!("\nMemory Efficiency (backing buffer after the run):");
+    println!("- control_builder:   {control_cap:>9} bytes");
+    println!("- telemetry_builder: {telemetry_cap:>9} bytes");
+    println!("- file_builder:      {file_cap:>9} bytes");
+
+    assert!(
+        file_cap >= 1024 * 1024,
+        "the file builder should have grown to hold the 1MB chunk, was {file_cap}"
+    );
+    assert!(
+        control_cap * 64 < file_cap,
+        "the whole point of separate builders: the control builder ({control_cap} bytes) \
+         must not have been dragged up to the file builder's size ({file_cap} bytes)"
+    );
+    assert!(
+        telemetry_cap < file_cap,
+        "the telemetry builder ({telemetry_cap}) should also be unaffected by the 1MB chunk"
+    );
+
+    println!(
+        "\nThe control builder stayed {}x smaller than the file builder — a single",
+        file_cap / control_cap.max(1)
+    );
+    println!("shared builder would have left every small write on a 1MB buffer.");
 
     Ok(())
+}
+
+/// The builder's backing-buffer size, read the same way `StreamWriter`'s memory
+/// policy reads it: `FlatBufferBuilder` exposes no `capacity()` getter, but
+/// `mut_finished_buffer()` hands back the backing buffer, whose length is the
+/// effective capacity. Valid only on a finished builder.
+fn capacity_of(builder: &mut FlatBufferBuilder<'_>) -> usize {
+    builder.mut_finished_buffer().0.len()
 }

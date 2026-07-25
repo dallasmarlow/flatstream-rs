@@ -110,13 +110,19 @@ is the contract. It runs, and a change is not done until it is green:
 - `cargo clippy --all-targets -D warnings` across the three-combo feature matrix
   (`all_checksums` full suite incl. doctests / no-features / `crc16`-only), which
   catches `#[cfg]` gaps, plus the opt-in `unsafe_typed` integration test
+- every maintained example, **executed** (`scripts/examples.sh`) — compiling them
+  proves nothing about the assertions §1 requires them to make
+- the README's Rust snippets, compiled and run (`scripts/readme_doctests.sh`) —
+  rustdoc only tests snippets under `src/`, so this is the one body of example
+  code nothing else covers
 - `rustdoc -D warnings` (broken intra-doc links are errors)
 - bench and fuzz **compile-checks** (targets must not bit-rot)
 - an MSRV check of the active toolchain against the `Cargo.toml` floor
 
 Auxiliary scripts (run as appropriate to what you changed):
 
-- `scripts/examples.sh` — runs every maintained example, including its assertions
+- `scripts/bench_isolated.sh` — one benchmark group at a time, raw output
+  stamped and written to `docs/benchmark/raw/`; see §4
 - `scripts/fuzz.sh` — time-bounded cargo-fuzz run (nightly or Docker); corpus
   accumulates under `fuzz/corpus/`
 - `scripts/instruction_counts.sh` — Gungraun/callgrind instruction counts
@@ -134,6 +140,22 @@ the baseline flow, and the committed `bench_results*.txt` snapshots for the
 recorded record. Criterion baselines are machine-local (gitignored, destroyed by
 `cargo clean`); compare against a baseline you saved on the same machine with the
 same feature flags, since feature flags change codegen.
+
+**Collect one benchmark group at a time, on an otherwise idle machine.** Use
+`scripts/bench_isolated.sh`, which does that and writes stamped raw output to
+`docs/benchmark/raw/` for a findings doc to cite. This is not fastidiousness: on
+the development laptop, *unchanged* code moved −24% and +57% between consecutive
+full-suite runs, and that drift manufactured a 34% "win" that vanished under
+isolation (`FINDINGS_VECTORED_FRAMING.md` threat T1). Criterion will call such a
+delta statistically significant, because it compares against its own saved
+baseline and cannot know the machine rather than the code changed. Two rules
+follow:
+
+- Only **A-vs-B pairs collected inside a single isolated run** are admissible.
+  Never compare a number from today's run against one written down last week.
+- **Re-collect any surprising delta before writing it down.** A result that
+  contradicts the mechanism you expected is far more likely to be drift than
+  discovery.
 
 **Experiment deliverables take the form of a committed findings document**, in the
 shape of `docs/benchmark/BENCHMARK_COMPARISON.md`:
@@ -188,9 +210,18 @@ E1 → B → C → A2/A3 → D/E2, but coordinate with the maintainer. (A1 first
 it tells you where the write cost actually is, which is what decides whether E1's
 vectored write is worth shipping.)
 
+> **Done as of 2026-07-24:** A1 (`docs/benchmark/FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md`),
+> E1 (`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`), B1 (`tests/external_index.rs` +
+> README recipe). Their entries are kept below for the rationale and method;
+> each is marked with its outcome.
+
 ### A. Experiments (produce committed findings docs)
 
-**A1 — Write-pipeline decomposition** *(highest value)*
+**A1 — Write-pipeline decomposition** — **DONE**, `docs/benchmark/FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md`
+- **Outcome:** at 64 B, flatstream's framing + CRC-32 is 14.1% of a non-durable
+  record (framing alone 0.6%); the application's own harvest/build is 65.7%. With
+  `fsync`, everything else is 1.6% of the record. The consumer's attribution was
+  correct, and is now measured.
 - **Goal:** In a realistic end-to-end write (the terminal-journaling shape is a
   good model), isolate flatstream's actual share of per-record cost from the
   application's.
@@ -231,17 +262,36 @@ vectored write is worth shipping.)
 > `io::Error::other` — uniform kind, no lost context. Rationale in
 > `docs/DESIGN_v2_8.md` §3. Not an open task.
 
-**B1 — External-index recipe**
+**B1 — External-index recipe** — **DONE**, `tests/external_index.rs` + README
+"Frame offsets for external indexing"
+- **Outcome:** seven tests pin contiguity, byte-exactness, `with_start_offset`
+  append semantics, checksum-inclusive `wire_len`, and torn-tail survival. The
+  `get_mut()` counter-bypass is now an asserted, documented hazard rather than
+  folklore.
 - Promote `examples/external_index.rs` into (a) an integration test under
   `tests/` asserting index-contiguity and seek-based random-access correctness,
   and (b) a short README recipe. This is the pattern every index-building
   consumer needs.
 
-**B2 — Post-2.8 documentation consistency sweep**
-- Reconcile README, `docs/DESIGN_v2_8.md`, `docs/DESIGN_EVOLUTION.md`, and
-  rustdoc so the writer API surface (receipts, `bytes_written`,
-  `with_start_offset`, `OwnedStreamWriter`) is described consistently and with no
-  stale or unmeasured claims. Verify every code snippet compiles as a doctest.
+**B2 — Post-2.8 documentation consistency sweep** — **DONE** (2026-07-24)
+- **Stale versions:** README install snippets said `0.2.7`; `src/lib.rs`'s doc
+  header said `v0.2.7`. The lib header is now
+  `#![doc = concat!("# FlatStream (v", env!("CARGO_PKG_VERSION"), ")")]`, so it
+  cannot drift again. `WIRE_FORMAT_SPEC.md` now states it is verified at v0.2.8
+  and unchanged since v0.2.7 — the thing external indexers most need to know.
+- **Unmeasured claims:** the stale figures ("84.1% faster", "4.55x", "~8%
+  overhead") are all confined to `DESIGN_EVOLUTION.md`, and nothing current
+  cites them. That document now opens with a provenance banner marking it a
+  historical record and pointing at `docs/benchmark/` for reproducible numbers.
+  Its title also claimed "v1 to v2.6" while covering v2.7.
+- **Snippets:** all five `ignore`d rustdoc snippets now compile (11 doctests,
+  0 ignored). Four were in `writer.rs` — the module whose API changed in 2.8.
+- **The real find:** the README's snippets were never compiled by anything, and
+  **17 of 29 did not build**. Four ASCII diagrams used untagged fences, which
+  rustdoc treats as Rust; one paragraph was indented four spaces and so was also
+  parsed as code; the rest were missing imports or `?`-in-`main`. All 19
+  compilable snippets now pass, 5 are `rust,ignore` because they need generated
+  schema code. `scripts/readme_doctests.sh` enforces this and runs in the gate.
 
 ### C. Test and robustness hardening
 
@@ -255,9 +305,47 @@ vectored write is worth shipping.)
   Coverage is expected to grow here; document any boundary the `--lib` run does
   not currently exercise.
 
-**C3 — Self-assert audit of examples**
+**C3 — Self-assert audit of examples** — **DONE** (2026-07-24)
+- **Outcome:** seven examples were print-only or under-asserted and now assert:
+  `validation_example` (round-trip equality + write-path rejection leaves the
+  sink empty), `adaptive_policy` (records reclamation events and pins the
+  hysteresis to message 10), `bounded_adapters_example` (rejected writes leak no
+  bytes; over-limit frames never reach the callback), `custom_allocator_example`
+  (both write paths round-trip in order), `custom_framer_example` (bad magic,
+  torn header, and clean-EOF paths — the example's stated purpose, previously
+  unexercised), `multiple_builders_example` (measures builder capacities instead
+  of claiming the memory benefit in prose), `ergonomics_example` (message count
+  and no-reallocation-after-`reserve`), `ingest_lobster` (`debug_assert` that
+  compiled out of release builds, on a counter that incremented even for skipped
+  zips).
+- **The gap behind the gap:** `scripts/gate.sh` only ever *compiled* examples
+  (`clippy --all-targets`), so every assertion in `examples/` was inert in CI.
+  The gate now runs each example, deriving the list from the directory so new
+  examples are covered on arrival.
 - Audit every `examples/*.rs` for the self-assert rule (§1). Any example whose
   "success" is only a `println!` gets a real assertion or is removed.
+
+**C4 — The zero-allocation steady state, enforced** — **DONE** (2026-07-24),
+`tests/allocation.rs`; rationale in `docs/planning/ZERO_ALLOCATION_ENFORCEMENT.md`
+- **Why it needed an instrument of its own:** the claim was defended only by
+  wall-clock benchmarks, and one allocation per frame costs tens of nanoseconds —
+  inside the −24%/+57% drift band §4 documents. A categorical property was being
+  guarded by a continuous, noisy measurement.
+- **Outcome:** a test-only counting global allocator (`#[global_allocator]` is
+  per-binary, so nothing shipped is affected) with a thread-local armed counter.
+  Seven tests: the expert, receipt, and checksummed write loops and the read loop
+  each allocate and realloc **exactly zero** times in steady state; growth past
+  the high-water mark costs, and the frame after it does not; and two harness
+  self-tests prove a nonzero result is reachable, so the zero-assertions cannot
+  pass vacuously.
+- **Sensitivity verified by mutation:** injecting a single `vec![0u8; 8]` into
+  `write_all_vectored` failed all three write tests immediately and correctly
+  left the read test green. A zero-assertion nobody has seen fail is not yet
+  evidence.
+- **Scope, stated so it is not oversold:** this pins the *allocation* half of the
+  steady-state claim. Copies are a different property — a `memcpy` into an
+  already-allocated buffer reports a clean zero here — and remain covered by A3
+  and the README's scoping note.
 
 ### D. Small feature — reader-side offset reporting *(design sign-off first)*
 
@@ -276,7 +364,13 @@ vectored write is worth shipping.)
 
 ### E. Carried forward from earlier plans
 
-**E1 — Single-`writev` framing (vectored write)** *(the maintainer wants this; build + measure)*
+**E1 — Single-`writev` framing (vectored write)** — **DONE**, `docs/benchmark/FINDINGS_VECTORED_FRAMING.md`
+- **Outcome:** adopted as the default in `DefaultFramer`/`ChecksumFramer`, not
+  gated. 2.5–2.8× faster per frame on a raw `File`, 2.0× on loopback TCP, and
+  +0.71 ns/record (+6.8%) on 64 B frames through `BufWriter` — 1.1% of a
+  realistic record, which the maintainer-set bar accepts for a µs-scale win
+  elsewhere. `CountingWriter::write_vectored` shipped with it; see the findings
+  doc §4.1 for the silent receipt-corruption bug this would otherwise have been.
 - **Goal:** emit each frame's header (`[len]`, or `[len | checksum]`) and its
   payload in **one `write_vectored` call** instead of two `write_all`s, inside the
   **existing** `DefaultFramer`/`ChecksumFramer` — no new framer types. Two
@@ -287,14 +381,20 @@ vectored write is worth shipping.)
   per frame for high-frequency small writes. It is a call-count / syscall win, not
   a copy win — zero-copy already holds.
 - **Correctness — this is the real work:**
-  - `Write::write_all_vectored` and `IoSlice::advance_slices` are **unstable** on
-    the MSRV (1.97.1, issue #70436). Hand-roll the partial-write loop over
-    `write_vectored` in one small, tested helper (track bytes written; drop
-    fully-consumed slices; re-slice the partially-consumed one). Never assume a
-    single `write_vectored` completes the frame.
+  - `Write::write_all_vectored` is **unstable** on the MSRV (1.97.1, issue
+    #70436), so hand-roll the partial-write loop over `write_vectored` in one
+    small, tested helper. `IoSlice::advance_slices` is **stable** (since 1.81 —
+    this task description previously said otherwise) and does the drop/re-slice
+    bookkeeping for you. Never assume a single `write_vectored` completes the
+    frame.
   - `writev` is **not atomic** across slices — make no all-or-nothing claims.
   - `write_vectored` falls back to sequential writes unless the sink overrides it
-    (`File`/`TcpStream` do); gate on `is_write_vectored()` where that helps.
+    (`File`/`TcpStream` do). `is_write_vectored()` is **unstable** on the MSRV
+    (issue #69941 — this task description previously suggested gating on it), so
+    a sink's vectoring support cannot be detected. It does not need to be: the
+    provided fallback writes the first non-empty slice, the partial-write loop
+    picks up the rest, and a non-vectoring sink therefore costs the same two
+    calls it did before. `vectored_tests` pins that.
   - **Frame-receipt interaction — do not miss this:** the internal `CountingWriter`
     (v0.2.8, `src/writer.rs`) overrides `write`/`write_all`/`flush` but **not**
     `write_vectored`. A framer that starts calling `write_vectored` MUST also get a

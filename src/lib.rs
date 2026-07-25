@@ -1,4 +1,6 @@
-//! # FlatStream (v0.2.7)
+// Sourced from Cargo.toml so the crate docs cannot drift from the released
+// version, as they did through 0.2.8.
+#![doc = concat!("# FlatStream (v", env!("CARGO_PKG_VERSION"), ")")]
 //!
 //! A lightweight, composable, high-performance Rust library for streaming FlatBuffers.
 //!

@@ -71,6 +71,19 @@ impl<W: Write> Write for CountingWriter<W> {
         Ok(())
     }
 
+    /// Counting the vectored path is **load-bearing**, not an optimization:
+    /// the built-in framers emit each frame as one `write_vectored` call, and
+    /// `Write`'s provided `write_vectored` would route around this wrapper's
+    /// `write`/`write_all` overrides entirely — every frame would be counted
+    /// as zero bytes and every [`FrameReceipt`] would be wrong. Proven by
+    /// `receipts_are_correct_for_a_vectoring_sink`.
+    #[inline]
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let n = self.inner.write_vectored(bufs)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
@@ -106,9 +119,14 @@ impl<W: Write> Write for CountingWriter<W> {
 /// over-provisioned. The baseline is policy configuration
 /// (`MemoryPolicy::baseline_capacity`, default 16 KiB):
 ///
-/// ```ignore
-/// let mut writer = StreamWriter::new(file, DefaultFramer)
+/// ```
+/// use flatstream::{DefaultFramer, StreamWriter};
+/// use flatstream::policy::AdaptiveWatermarkPolicy;
+///
+/// # let file = Vec::new();
+/// let writer = StreamWriter::new(file, DefaultFramer)
 ///     .with_memory_policy(AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024));
+/// # let _ = writer;
 /// ```
 ///
 /// The policy is consulted once per `write()` — a single predictable branch
@@ -165,7 +183,10 @@ pub type OwnedStreamWriter<W, F> = StreamWriter<'static, W, F, DefaultAllocator>
 /// used to seek a reader — no `8 + payload_len` wire arithmetic in caller code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameReceipt {
-    /// Offset of the frame's first byte, relative to the writer's start offset.
+    /// Offset of the frame's first byte, measured from the writer's start
+    /// offset — so it is an absolute file offset whenever
+    /// [`with_start_offset`](StreamWriter::with_start_offset) was given one,
+    /// and a stream-relative offset otherwise (the default start offset is 0).
     pub frame_start: u64,
     /// Total bytes the frame occupies on the wire.
     pub wire_len: u64,
@@ -225,6 +246,7 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
     /// baseline — at or below it there is nothing to reclaim.
     ///
     /// Has no effect on `write_finished()`, where the caller owns the builder.
+    #[must_use]
     pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
         self.policy = Some(PolicySlot {
             baseline_capacity: policy.baseline_capacity(),
@@ -249,11 +271,16 @@ where
     /// is only needed when you require a custom allocator.
     ///
     /// # Example
-    /// ```ignore
-    /// // With a hypothetical custom allocator
-    /// let allocator = MyCustomAllocator::new();
-    /// let builder = FlatBufferBuilder::new_with_allocator(allocator);
-    /// let writer = StreamWriter::with_builder_alloc(file, framer, builder);
+    /// ```
+    /// use flatbuffers::FlatBufferBuilder;
+    /// use flatstream::{DefaultFramer, StreamWriter};
+    ///
+    /// // `DefaultAllocator` stands in for yours; any `flatbuffers::Allocator`
+    /// // works the same way.
+    /// let allocator = flatbuffers::DefaultAllocator::default();
+    /// let builder = FlatBufferBuilder::new_in(allocator);
+    /// let writer = StreamWriter::with_builder_alloc(Vec::new(), DefaultFramer, builder);
+    /// # let _ = writer;
     /// ```
     pub fn with_builder_alloc(writer: W, framer: F, builder: FlatBufferBuilder<'a, A>) -> Self {
         Self {
@@ -271,6 +298,7 @@ where
     /// [`with_memory_policy`](Self::with_memory_policy): a reclaim replaces the
     /// internal builder with `make_builder(policy.baseline_capacity())`, so the
     /// factory decides how a fresh builder (and its allocator) is constructed.
+    #[must_use]
     pub fn with_memory_policy_and_factory<P, M>(mut self, policy: P, make_builder: M) -> Self
     where
         P: MemoryPolicy + 'static,
@@ -296,9 +324,16 @@ where
     /// - Excellent for uniform, small-to-medium messages.
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use flatstream::{DefaultFramer, StreamWriter};
+    ///
+    /// # fn main() -> flatstream::Result<()> {
+    /// let mut writer = StreamWriter::new(Vec::new(), DefaultFramer);
     /// writer.write(&"Hello, world!")?;
-    /// writer.write(&my_telemetry_event)?;
+    /// writer.write(&"another message")?;
+    /// writer.flush()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn write<T: StreamSerialize>(&mut self, item: &T) -> Result<()> {
@@ -403,13 +438,22 @@ where
     /// (drop and recreate the builder, or use multiple right-sized builders).
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use flatbuffers::FlatBufferBuilder;
+    /// use flatstream::{DefaultFramer, StreamSerialize, StreamWriter};
+    ///
+    /// # fn main() -> flatstream::Result<()> {
+    /// let mut writer = StreamWriter::new(Vec::new(), DefaultFramer);
     /// let mut builder = FlatBufferBuilder::new();
+    /// let events = ["first", "second"];
+    ///
     /// for event in events {
-    ///     builder.reset();  // Critical: reuse allocated memory!
+    ///     builder.reset(); // Critical: reuse allocated memory!
     ///     event.serialize(&mut builder)?;
     ///     writer.write_finished(&mut builder)?;
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Requirements
@@ -666,6 +710,72 @@ mod tests {
         let payload = finished(&mut builder, "checked");
         let r = writer.write_finished_with_receipt(&mut builder).unwrap();
         assert_eq!(r.wire_len, (4 + XxHash64::SIZE + payload.len()) as u64);
+    }
+
+    /// A sink that implements `write_vectored` and reports it — the shape of
+    /// a real `File`/`TcpStream`, and the shape that would silently break
+    /// receipt accounting if `CountingWriter` did not override
+    /// `write_vectored`. `write` is deliberately left un-counted-through by
+    /// recording separately, so a test can tell which path was taken.
+    struct VectoringSink {
+        written: Vec<u8>,
+        vectored_calls: usize,
+        scalar_calls: usize,
+    }
+
+    impl Write for VectoringSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.scalar_calls += 1;
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+            self.vectored_calls += 1;
+            let mut total = 0;
+            for buf in bufs {
+                self.written.extend_from_slice(buf);
+                total += buf.len();
+            }
+            Ok(total)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn receipts_are_correct_for_a_vectoring_sink() {
+        // The trap this test exists for: the framers emit each frame as one
+        // `write_vectored` call. If `CountingWriter` did not override
+        // `write_vectored`, `Write`'s provided implementation would bypass
+        // its `write`/`write_all` overrides and every frame would count as
+        // zero bytes — receipts and `bytes_written()` would silently read 0
+        // while the stream on the wire was perfectly correct. Nothing else in
+        // the suite would notice.
+        let sink = VectoringSink {
+            written: Vec::new(),
+            vectored_calls: 0,
+            scalar_calls: 0,
+        };
+        let mut writer = StreamWriter::new(sink, DefaultFramer);
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut expected_start = 0u64;
+        for i in 0..3 {
+            let payload = finished(&mut builder, &format!("frame {i}"));
+            let receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
+            assert_eq!(receipt.frame_start, expected_start);
+            assert_eq!(receipt.wire_len, (4 + payload.len()) as u64);
+            expected_start += receipt.wire_len;
+        }
+
+        assert_eq!(writer.bytes_written(), expected_start);
+        let sink = writer.into_inner();
+        // The receipt total must equal the bytes the sink actually received,
+        // and the frames must genuinely have gone down the vectored path.
+        assert_eq!(sink.written.len() as u64, expected_start);
+        assert_eq!(sink.vectored_calls, 3, "one vectored call per frame");
+        assert_eq!(sink.scalar_calls, 0, "no scalar writes on a vectoring sink");
     }
 
     #[test]

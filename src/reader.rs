@@ -131,6 +131,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// never invalidated. The policy is consulted only while the buffer's
     /// capacity exceeds that baseline — at or below it there is nothing to
     /// reclaim.
+    #[must_use]
     pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
         self.policy = Some(PolicySlot {
             baseline_capacity: policy.baseline_capacity(),

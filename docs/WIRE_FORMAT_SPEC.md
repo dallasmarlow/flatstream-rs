@@ -1,8 +1,14 @@
 # Wire Format Specification: flatstream-rs
 
-**Status:** Implemented / Verified (v0.2.7)  
+**Status:** Implemented / Verified (v0.2.8)  
 **Author:** Dallas Marlow  
-**Updated:** 2026-07-23
+**Updated:** 2026-07-24
+
+> **Unchanged since v0.2.7.** v0.2.8 added frame receipts and moved framing to a
+> single `write_vectored` call, but neither alters a byte of the layout below —
+> the wire-format corpus tests pin this, and the vectored path is asserted
+> byte-identical to the two-call form it replaced. Consumers reading this spec
+> against a v0.2.7 stream need change nothing.
 
 ## 1. Overview
 

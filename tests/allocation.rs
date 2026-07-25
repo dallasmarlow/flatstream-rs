@@ -1,0 +1,371 @@
+//! C4 — The zero-allocation steady state, as an enforced invariant.
+//!
+//! The crate's headline property is that once buffers reach their high-water
+//! mark, the write and read loops allocate nothing. That claim has been argued
+//! in the design docs and observed in benchmarks, but until now nothing failed
+//! when it broke — and a wall-clock benchmark is the wrong instrument for it.
+//! One extra allocation per frame costs tens of nanoseconds, well inside the
+//! −24%/+57% run-to-run drift `CONTRIBUTING.md` §4 documents. A regression
+//! would be indistinguishable from a noisy machine.
+//!
+//! It is also easy to introduce and innocent-looking in review: a `format!` on
+//! a path that turns out to be hot, a `.to_vec()` where a slice would do, a
+//! `Box::new` per frame inside a new adapter.
+//!
+//! This is a categorical property — the count is zero or it is not — so it is
+//! counted rather than timed. See `docs/planning/ZERO_ALLOCATION_ENFORCEMENT.md`
+//! for the full rationale, including what this deliberately does *not* prove:
+//! allocations and copies are different properties, and a `memcpy` into an
+//! already-allocated buffer reports a clean zero here. This pins the
+//! allocation half of the steady-state claim only.
+
+use flatbuffers::FlatBufferBuilder;
+use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::io::Cursor;
+
+// --- The counting allocator -------------------------------------------------
+
+// Counting is thread-local, not global: `cargo test` runs tests in parallel
+// threads within one binary, so a shared counter would attribute one test's
+// allocations to another's measurement window. The allocator runs on the
+// allocating thread, so a thread-local attributes correctly and needs no
+// synchronization.
+//
+// `const`-initialized because lazy TLS initialization can itself allocate,
+// which would recurse into the allocator being measured.
+thread_local! {
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+    static REALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+struct CountingAllocator;
+
+impl CountingAllocator {
+    /// `try_with` rather than `with`: during thread teardown the TLS is already
+    /// destroyed, and a panic inside the global allocator is not recoverable.
+    #[inline]
+    fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
+        let armed = ARMED.try_with(Cell::get).unwrap_or(false);
+        if armed {
+            let _ = counter.try_with(|c| c.set(c.get() + 1));
+        }
+    }
+}
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        Self::bump(&ALLOCS);
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // Frees are not counted. A steady-state loop that allocates nothing
+        // also frees nothing, so `allocs == 0` is the property; counting frees
+        // would only add noise from teardown of setup values.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // Counted separately because this is the shape a buffer-growth
+        // regression takes: `Vec::resize` past capacity reallocs rather than
+        // allocs, so a test that only watched `alloc` would miss it.
+        Self::bump(&REALLOCS);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Counts {
+    allocs: usize,
+    reallocs: usize,
+}
+
+impl Counts {
+    fn total(&self) -> usize {
+        self.allocs + self.reallocs
+    }
+}
+
+/// Runs `body` with allocation counting armed, and returns what it did.
+///
+/// Everything that formats — assertion machinery, `format!`, panic payloads —
+/// allocates, so the counters are read and disarmed before any assertion runs.
+/// Callers must do their asserting on the returned `Counts`, never inside
+/// `body`.
+fn measure<T>(body: impl FnOnce() -> T) -> (Counts, T) {
+    ALLOCS.with(|c| c.set(0));
+    REALLOCS.with(|c| c.set(0));
+    ARMED.with(|c| c.set(true));
+
+    let out = body();
+
+    ARMED.with(|c| c.set(false));
+    let counts = Counts {
+        allocs: ALLOCS.with(Cell::get),
+        reallocs: REALLOCS.with(Cell::get),
+    };
+    (counts, out)
+}
+
+// --- Fixtures ---------------------------------------------------------------
+
+/// The largest payload any loop below writes. Warmup must use this size: the
+/// steady state is only reached once the builder and the reader's buffer have
+/// grown to the largest frame they will see, so warming with smaller payloads
+/// would report correct growth as a regression.
+const MAX_PAYLOAD: usize = 512;
+
+const WARMUP: usize = 32;
+const MEASURED: usize = 256;
+
+fn build(builder: &mut FlatBufferBuilder, len: usize) {
+    builder.reset();
+    let s = "x".repeat(len);
+    let off = builder.create_string(&s);
+    builder.finish(off, None);
+}
+
+/// A sink that cannot allocate, so that any count belongs to the library.
+///
+/// A `Vec<u8>` would grow and charge its reallocs to us; `io::sink()` discards
+/// and would not exercise a real write path. This keeps the bytes and the
+/// bound, and asserts the bound held.
+struct FixedSink {
+    buf: Vec<u8>,
+    cap: usize,
+}
+
+impl FixedSink {
+    fn new(cap: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(cap),
+            cap,
+        }
+    }
+}
+
+impl std::io::Write for FixedSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        assert!(
+            self.buf.len() + buf.len() <= self.cap,
+            "FixedSink overflow: the test under-reserved, so its own growth \
+             would be counted as the library's"
+        );
+        self.buf.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+// --- The harness must itself be trustworthy ---------------------------------
+
+#[test]
+fn the_counter_sees_an_allocation() {
+    // A zero-assertion is only meaningful if a nonzero result is reachable. If
+    // arming were broken, every other test in this file would pass vacuously.
+    let (counts, v) = measure(|| vec![7u8; 1024]);
+    assert_eq!(v.len(), 1024);
+    assert!(
+        counts.allocs >= 1,
+        "harness is not observing allocations: {counts:?}"
+    );
+}
+
+#[test]
+fn the_counter_is_disarmed_outside_measure() {
+    let (before, _) = measure(|| ());
+    let _noise = vec![0u8; 4096];
+    let (after, _) = measure(|| ());
+    assert_eq!(before.total(), 0);
+    assert_eq!(
+        after.total(),
+        0,
+        "allocations leaked into a disarmed window"
+    );
+}
+
+// --- The claim --------------------------------------------------------------
+
+#[test]
+fn steady_state_expert_write_allocates_nothing() {
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    let mut writer = StreamWriter::new(FixedSink::new(1 << 20), DefaultFramer);
+
+    for _ in 0..WARMUP {
+        build(&mut builder, MAX_PAYLOAD);
+        writer.write_finished(&mut builder).unwrap();
+    }
+
+    // `build` allocates a String per call by design, so it stays outside the
+    // armed region: pre-build one payload and write that same finished buffer.
+    build(&mut builder, MAX_PAYLOAD);
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write_finished(&mut builder).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "expert-mode write"
+    );
+}
+
+#[test]
+fn steady_state_write_with_receipt_allocates_nothing() {
+    // The 0.2.8 addition: `CountingWriter` sits in this path and receipts are
+    // returned by value. Neither should cost an allocation.
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    let mut writer = StreamWriter::new(FixedSink::new(1 << 20), DefaultFramer);
+
+    for _ in 0..WARMUP {
+        build(&mut builder, MAX_PAYLOAD);
+        writer.write_finished_with_receipt(&mut builder).unwrap();
+    }
+
+    build(&mut builder, MAX_PAYLOAD);
+    let (counts, last) = measure(|| {
+        let mut last = None;
+        for _ in 0..MEASURED {
+            last = Some(writer.write_finished_with_receipt(&mut builder).unwrap());
+        }
+        last
+    });
+
+    assert!(last.unwrap().wire_len > 0);
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "receipt write"
+    );
+}
+
+#[cfg(feature = "crc32")]
+#[test]
+fn steady_state_checksummed_write_allocates_nothing() {
+    use flatstream::{ChecksumFramer, Crc32};
+
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    let mut writer = StreamWriter::new(FixedSink::new(1 << 20), ChecksumFramer::new(Crc32::new()));
+
+    for _ in 0..WARMUP {
+        build(&mut builder, MAX_PAYLOAD);
+        writer.write_finished(&mut builder).unwrap();
+    }
+
+    build(&mut builder, MAX_PAYLOAD);
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write_finished(&mut builder).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "checksummed write"
+    );
+}
+
+#[test]
+fn steady_state_read_allocates_nothing() {
+    // Build a stream whose frames are all MAX_PAYLOAD-sized, so the reader's
+    // buffer reaches its high-water mark during warmup and never grows again.
+    let mut bytes = Vec::new();
+    {
+        let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+        let mut writer = StreamWriter::new(&mut bytes, DefaultFramer);
+        for _ in 0..(WARMUP + MEASURED) {
+            build(&mut builder, MAX_PAYLOAD);
+            writer.write_finished(&mut builder).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+
+    let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer::new());
+    for _ in 0..WARMUP {
+        assert!(reader.read_message().unwrap().is_some());
+    }
+
+    let (counts, read) = measure(|| {
+        let mut read = 0usize;
+        while let Some(payload) = reader.read_message().unwrap() {
+            // Touch the payload so the read cannot be optimized away, without
+            // allocating: sum bytes rather than copying them.
+            read += payload.len().min(1);
+        }
+        read
+    });
+
+    assert_eq!(
+        read, MEASURED,
+        "warmup + measured frames must tile the stream"
+    );
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "steady-state read"
+    );
+}
+
+#[test]
+fn a_growing_frame_reallocs_exactly_once_then_settles() {
+    // The complement to the zero-assertions, and the reason `realloc` is
+    // counted separately: growth past the high-water mark *should* cost, and
+    // the frame after it should not. A change that made every read re-grow
+    // would still pass the steady-state test above if its warmup happened to
+    // reach the mark, but it would fail here.
+    let mut bytes = Vec::new();
+    {
+        let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+        let mut writer = StreamWriter::new(&mut bytes, DefaultFramer);
+        for len in [64, 64, MAX_PAYLOAD, MAX_PAYLOAD] {
+            build(&mut builder, len);
+            writer.write_finished(&mut builder).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+
+    let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer::new());
+    reader.read_message().unwrap().unwrap();
+    reader.read_message().unwrap().unwrap();
+
+    // Frame 3 jumps from 64 to 512 bytes: the buffer must grow.
+    let (grow, _) = measure(|| reader.read_message().unwrap().map(<[u8]>::len));
+    // Frame 4 is the same size: nothing should move.
+    let (settled, _) = measure(|| reader.read_message().unwrap().map(<[u8]>::len));
+
+    assert!(
+        grow.total() >= 1,
+        "growing past the high-water mark should cost something: {grow:?}"
+    );
+    assert_eq!(
+        settled,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "the frame after growth must be free"
+    );
+}

@@ -1,6 +1,7 @@
 /target
 *.bin
 .DS_Store
+.ssh/
 tests/corpus/**/*-counts.txt
 tests/corpus/**/*.csv
 tests/corpus/**/*.zip
