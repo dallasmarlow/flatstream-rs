@@ -18,12 +18,14 @@
 //! churn) for significant memory savings.
 //!
 //! Install a policy with `StreamWriter::with_memory_policy` /
-//! `StreamReader::with_memory_policy`. The policy is consulted once per message —
-//! a single predictable branch when none is installed — and only while the current
-//! capacity exceeds the policy's baseline capacity (at or below the baseline there
-//! is nothing to reclaim, so policy state does not churn at steady state). Policies
-//! apply only to buffers the library owns: the writer's simple mode (`write()`) and
-//! the reader's internal buffer, never to caller-owned builders (`write_finished()`).
+//! `StreamReader::with_memory_policy`. Installation changes the concrete
+//! writer/reader policy-state type, so decisions are statically dispatched.
+//! [`NoMemoryPolicy`] is the zero-sized default and compiles away. Installed
+//! policies are consulted only while current capacity exceeds their cached
+//! baseline (at or below it there is nothing to reclaim, so policy state does
+//! not churn). Policies apply only to buffers the library owns: the writer's
+//! simple mode (`write()`) and the reader's internal buffer, never to
+//! caller-owned builders (`write_finished()`).
 
 use std::time::{Duration, Instant};
 
@@ -102,12 +104,18 @@ pub trait MemoryPolicy: Send {
     }
 }
 
+/// Zero-sized default state indicating that no memory policy is installed.
+///
+/// Unlike [`NoOpPolicy`], this marker bypasses capacity reads and policy
+/// decisions entirely. It is the default generic state for readers and writers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoMemoryPolicy;
+
 /// A policy that never triggers a reset.
 ///
 /// Useful as a benchmark baseline and as the inner policy for observer/wrapper
-/// compositions. Note that *not installing a policy at all* is cheaper still
-/// (no boxed call); this type exists for cases where a policy slot must be
-/// filled but should do nothing.
+/// compositions. [`NoMemoryPolicy`] is cheaper still because no policy is
+/// installed or consulted.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoOpPolicy;
 
@@ -456,6 +464,11 @@ mod tests {
         let mut policy = NoOpPolicy;
         assert_eq!(policy.should_reset(100, 1000), None);
         assert_eq!(policy.should_reset(1000, 1000), None);
+    }
+
+    #[test]
+    fn no_memory_policy_is_zero_sized() {
+        assert_eq!(std::mem::size_of::<NoMemoryPolicy>(), 0);
     }
 
     #[test]

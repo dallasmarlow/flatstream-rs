@@ -142,6 +142,15 @@ harness = false
 required-features = ["crc32"]
 
 [[bench]]
+name = "sync_policy"
+harness = false
+
+[[bench]]
+name = "positioned_reads"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
 name = "instruction_count"
 harness = false
 required-features = ["instruction_bench", "all_checksums"]

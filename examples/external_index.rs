@@ -5,14 +5,12 @@
 // would otherwise have to keep in lockstep with the wire layout.
 //!
 //! Demonstrates `write_with_receipt` / `FrameReceipt` for index construction and
-//! offset-addressed reads with today's `Read + Seek` API. A first-class
-//! `read_frame_at` is deferred to the v3 range-parser work; this shows the
-//! supported pattern in the meantime.
+//! caller-scratch `read_frame_at` for allocation-free steady-state lookup.
 
 use flatstream::{
-    DefaultDeframer, DefaultFramer, FrameReceipt, Result, StreamReader, StreamWriter,
+    read_frame_at, DefaultDeframer, DefaultFramer, FrameReceipt, Result, StreamWriter,
 };
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::Cursor;
 
 /// One index entry: the application's record id and where its frame lives.
 struct IndexEntry {
@@ -39,7 +37,7 @@ fn main() -> Result<()> {
         let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
         for (id, text) in records {
             // The receipt tells us exactly where this frame landed — no
-            // knowledge of the 8-byte header or wire layout in this code.
+            // knowledge of the header or wire layout in this code.
             let receipt = writer.write_with_receipt(&text)?;
             index.push(IndexEntry { id, receipt });
         }
@@ -66,14 +64,23 @@ fn main() -> Result<()> {
 
     // --- Random access: fetch frames out of order by seeking to the offset. ---
     // Fetch id 30 (the 3rd record) and id 10 (the 1st), in that order.
+    let mut source = Cursor::new(&wire);
+    let mut scratch = Vec::new();
     for wanted in [30u32, 10] {
         let entry = index
             .iter()
             .find(|e| e.id == wanted)
             .expect("record present in index");
 
-        let payload = read_frame_at(&wire, entry.receipt.frame_start)?;
-        let text = flatbuffers::root::<&str>(&payload).expect("string root");
+        let frame = read_frame_at(
+            &mut source,
+            &DefaultDeframer::new(),
+            entry.receipt.frame_start,
+            &mut scratch,
+        )?
+        .expect("a frame begins at the indexed offset");
+        assert_eq!(frame.receipt, entry.receipt);
+        let text = flatbuffers::root::<&str>(frame.payload).expect("string root");
 
         let (_, expected) = records
             .iter()
@@ -89,20 +96,4 @@ fn main() -> Result<()> {
 
     println!("[ok] external index built from receipts; random access verified");
     Ok(())
-}
-
-/// Read a single frame whose first byte is at `offset`, using the current
-/// `Read + Seek` API: seek, wrap a fresh reader, pull one message.
-///
-/// This allocates a reader (and its buffer) per call — the cost the future
-/// `read_frame_at` will remove by reusing caller-supplied scratch. Returned as
-/// an owned `Vec` so it outlives the transient reader.
-fn read_frame_at(wire: &[u8], offset: u64) -> Result<Vec<u8>> {
-    let mut cursor = Cursor::new(wire);
-    cursor.seek(SeekFrom::Start(offset))?;
-    let mut reader = StreamReader::new(cursor, DefaultDeframer::new());
-    let payload = reader
-        .read_message()?
-        .expect("a frame begins at the indexed offset");
-    Ok(payload.to_vec())
 }

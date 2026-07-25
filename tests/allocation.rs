@@ -20,10 +20,14 @@
 //! allocation half of the steady-state claim only.
 
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{DefaultDeframer, DefaultFramer, StreamReader, StreamWriter};
+use flatstream::{
+    read_frame_at, DefaultDeframer, DefaultFramer, Durable, StreamReader, StreamSerialize,
+    StreamWriter, SyncEveryNFrames, SyncMode,
+};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::io::Cursor;
+use std::num::NonZeroU64;
 
 // --- The counting allocator -------------------------------------------------
 
@@ -165,6 +169,29 @@ impl std::io::Write for FixedSink {
     }
 }
 
+impl Durable for FixedSink {
+    fn sync_data(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn sync_all(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct Blob<'a>(&'a [u8]);
+
+impl StreamSerialize for Blob<'_> {
+    fn serialize<A: flatbuffers::Allocator>(
+        &self,
+        builder: &mut FlatBufferBuilder<A>,
+    ) -> flatstream::Result<()> {
+        let payload = builder.create_vector(self.0);
+        builder.finish(payload, None);
+        Ok(())
+    }
+}
+
 // --- The harness must itself be trustworthy ---------------------------------
 
 #[test]
@@ -220,6 +247,62 @@ fn steady_state_expert_write_allocates_nothing() {
             reallocs: 0
         },
         "expert-mode write"
+    );
+}
+
+#[test]
+fn steady_state_simple_write_allocates_nothing() {
+    let bytes = [0xA5u8; MAX_PAYLOAD];
+    let blob = Blob(&bytes);
+    let mut writer =
+        StreamWriter::with_capacity(FixedSink::new(1 << 20), DefaultFramer, MAX_PAYLOAD * 4);
+
+    for _ in 0..WARMUP {
+        writer.write(&blob).unwrap();
+    }
+
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write(&blob).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "simple-mode write"
+    );
+}
+
+#[test]
+fn static_sync_policy_allocates_nothing_even_when_it_checkpoints() {
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    build(&mut builder, MAX_PAYLOAD);
+    let policy = SyncEveryNFrames::new(NonZeroU64::new(MEASURED as u64).unwrap(), SyncMode::Data);
+    let mut writer =
+        StreamWriter::new(FixedSink::new(1 << 20), DefaultFramer).with_sync_policy(policy);
+
+    for _ in 0..WARMUP {
+        writer.write_finished(&mut builder).unwrap();
+    }
+    // The warmup remains below the cadence, so the measured window contains
+    // exactly one successful checkpoint.
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write_finished(&mut builder).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "static sync policy"
     );
 }
 
@@ -326,6 +409,83 @@ fn steady_state_read_allocates_nothing() {
             reallocs: 0
         },
         "steady-state read"
+    );
+}
+
+#[test]
+fn steady_state_point_lookup_allocates_nothing() {
+    let mut bytes = Vec::new();
+    let receipt;
+    {
+        let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+        build(&mut builder, MAX_PAYLOAD);
+        let mut writer = StreamWriter::new(&mut bytes, DefaultFramer);
+        receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
+    }
+
+    let mut source = Cursor::new(&bytes);
+    let mut scratch = Vec::new();
+    // Warm the caller-owned scratch to the frame's high-water mark.
+    read_frame_at(
+        &mut source,
+        &DefaultDeframer::new(),
+        receipt.frame_start,
+        &mut scratch,
+    )
+    .unwrap()
+    .unwrap();
+
+    let (counts, touched) = measure(|| {
+        let mut touched = 0usize;
+        for _ in 0..MEASURED {
+            let frame = read_frame_at(
+                &mut source,
+                &DefaultDeframer::new(),
+                receipt.frame_start,
+                &mut scratch,
+            )
+            .unwrap()
+            .unwrap();
+            touched += frame.payload.len().min(1);
+        }
+        touched
+    });
+
+    assert_eq!(touched, MEASURED);
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "point lookup"
+    );
+}
+
+#[test]
+fn fresh_reader_per_lookup_allocates_each_time() {
+    let mut bytes = Vec::new();
+    {
+        let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+        build(&mut builder, MAX_PAYLOAD);
+        StreamWriter::new(&mut bytes, DefaultFramer)
+            .write_finished(&mut builder)
+            .unwrap();
+    }
+
+    let (counts, read) = measure(|| {
+        let mut read = 0usize;
+        for _ in 0..MEASURED {
+            let mut reader = StreamReader::new(Cursor::new(&bytes), DefaultDeframer::new());
+            read += reader.read_message().unwrap().unwrap().len().min(1);
+        }
+        read
+    });
+
+    assert_eq!(read, MEASURED);
+    assert!(
+        counts.total() >= MEASURED,
+        "a fresh reader must allocate its frame buffer each lookup: {counts:?}"
     );
 }
 

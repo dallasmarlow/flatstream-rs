@@ -1,9 +1,13 @@
 # Library critique: technical merit and blind spots
 
 **Date:** 2026-07-24
-**Against:** `flatstream` 0.2.8 (plus the A1/E1/B1/B2/C3 work landed the same day)
+**Against:** `flatstream` 0.2.8 (including A1/E1/E3/B1/B2/C3/C4)
 **Lens:** the stated destination — this crate becoming the storage substrate for
 a graph database.
+
+> **Benchmark status:** A1/E1 isolated raw runs and required surprising-result
+> rechecks are committed. This critique uses only the qualified conclusions in
+> those findings documents.
 
 This is a working engineer's review, not a marketing document. Section 1 is what
 I think is genuinely well built and should not be traded away. Section 2 is what
@@ -18,7 +22,8 @@ from the things that are merely priority disagreements with the maintainer.
 ### 1.1 The invariants are tested, not asserted
 
 Most pre-1.0 crates claim "zero-copy" and "zero-allocation" in a README and
-nowhere else. This one has `tests/no_alloc_invariants.rs`, a golden hex corpus
+nowhere else. This one has the counting allocator in `tests/allocation.rs`
+(plus typed-path coverage in `tests/no_alloc_invariants.rs`), a golden hex corpus
 (`tests/corpus/*.hex`, 12 files across four framers) that pins the wire format
 byte-for-byte, property round-trip tests, I/O fault injection, fuzz targets, and
 a Miri script. When I replaced the framing write path wholesale in E1, the
@@ -28,9 +33,10 @@ you cannot.
 
 ### 1.2 Dynamic dispatch is enumerated, not merely avoided
 
-The README names every place a boxed or indirect call survives: `MemoryPolicy`
-(one boxed call while the policy is above baseline), `CompositeValidator` (one
-per composed validator), `TypedValidator` (a function pointer). A library that
+The README names every place a boxed or indirect call survives:
+`CompositeValidator` (one per composed validator) and `TypedValidator` (a
+function pointer). Memory and sync policies are statically dispatched with
+zero-sized defaults. A library that
 knows exactly where its indirection lives is one you can reason about under a
 latency budget. Most "zero-cost abstraction" claims are unfalsifiable; this one
 is specific enough to be checked, and I checked several.
@@ -63,12 +69,12 @@ added in 2.8 is the right call for application boundaries.
 ### 1.6 The "no unmeasured claims" rule earns its keep
 
 `CONTRIBUTING.md` §1 forbids publishing performance attributions that have not
-been measured. This is not ceremony — it produced a genuinely counterintuitive
-result. A1 measured framing at **0.6% of a 64-byte record** and flatstream's
-total share (framing + CRC-32) at **14.1%**, against 65.7% for the application's
-own harvest and FlatBuffer construction. With `fsync` in the pipeline, all of
-flatstream is **1.6%** of the record. An optimization effort guided by intuition
-would have gone straight at the framing layer and won nothing.
+been measured. This is not ceremony: the isolated 64 B recheck puts application
+harvest/build/index at **63.0%**, flatstream framing/copy + CRC-32 at **17.3%**,
+and buffered file output at **19.7%**. With one `sync_data()` per 1000-record
+batch, the entire non-sync pipeline is about **1.4%** of elapsed time
+(flatstream's share is about 0.25%). At 4 KiB the shares change substantially;
+the attribution is useful precisely because it is workload-qualified.
 
 ### 1.7 Recovery is a designed feature
 
@@ -81,10 +87,7 @@ still resolves, so a crash costs you the tail and nothing else.
 
 ## 2. Blind spots
 
-### 2.1 There is no stream-level header — no magic, no version, no self-description
-
-**This is the one I would fix before anything else, and before any data you care
-about is written.**
+### 2.1 There is no stream-level header — owner-declined
 
 A stream is a bare sequence of `[len][checksum?][payload]`. There is no preamble.
 Consequences, in increasing order of severity:
@@ -109,50 +112,29 @@ Consequences, in increasing order of severity:
   crash recovery that is adequate; for a durable artifact underneath a database
   it is not.
 
-**Recommendation.** A 3.0 stream preamble: magic bytes, a format version, and a
-framing descriptor (checksum algorithm id and width). Cost: a fixed handful of
-bytes once per stream — nothing per frame, so A1's numbers are untouched.
-Payoff: journals become self-describing, a mismatched deframer *fails* instead
-of mis-parsing, and the format acquires the ability to evolve at all. If you
-want the option of a chained/rolling digest later, reserving space for it now is
-much cheaper than adding it after there is data on disk.
+**Decision (owner, 2026-07-25):** no core preamble is planned. Flatstream
+remains a headerless framing primitive whose composition is agreed out of band.
+Applications that persist streams must own a manifest/format-generation marker
+and refuse unknown versions before constructing a deframer (Palimpsest already
+does this). The risks above are accepted and transferred to that application
+contract rather than solved in the wire format.
 
-### 2.2 The write path got receipts; the read path got nothing
+### 2.2 The read-side position gap is now closed
 
-v0.2.8 gave the writer `FrameReceipt`, `bytes_written()`, and
-`with_start_offset()`. The reader has no `bytes_consumed()`, no per-frame offset,
-and no way to read the frame at a known offset.
+The reviewed baseline gave only the writer receipts. v0.2.8 now also ships
+`bytes_consumed`, receipt-aware forward reads, and stateless `read_frame_at`
+with caller-owned scratch. Fresh-reader-per-lookup allocation is eliminated,
+and Palimpsest can retire its last checksum/header arithmetic during resume.
 
-B1's own example shows the cost. To fetch one indexed frame, the recommended
-pattern is:
+The performance result is deliberately narrower than the API win: caller
+scratch reaches zero-allocation steady state, while wall-clock throughput
+depends on frame size and whether the retained source is buffered. See
+`FINDINGS_POSITIONED_READS.md`.
 
-```rust
-cursor.seek(SeekFrom::Start(offset))?;
-let mut reader = StreamReader::new(cursor, DefaultDeframer::new());
-let payload = reader.read_message()?.expect("a frame begins here");
-```
+### 2.3 The durability gap was real and is now closed
 
-That constructs a `StreamReader` — and allocates its buffer — **per point
-lookup**. The example's own comment admits this is the cost a future
-`read_frame_at` will remove.
-
-For a graph database, offset-keyed point lookups are not a nice-to-have; they
-are the read path. Task D in the backlog covers forward offset reporting and
-*explicitly excludes* random access. I think that split is inverted: an index you
-can build cheaply but cannot query cheaply is not yet a useful index. I would
-promote `read_frame_at(offset, &mut scratch)` — with caller-supplied scratch, so
-it inherits the zero-allocation steady state the write path already has — to the
-top of the post-3.0 list, ahead of forward offset reporting.
-
-This is a priority disagreement, not a defect. The deferral is deliberate and
-documented (`docs/DESIGN_v2_7.md`). I am flagging it because the destination
-changes the calculus.
-
-### 2.3 There is no durability API, and the workaround shares a door with a known hazard
-
-`flush()` is documented as explicitly not an `fsync`. There is no `sync()` on
-`StreamWriter`. To make a write durable you go through `get_mut()` and call
-`sync_data()` on the inner `File`.
+The reviewed baseline documented `flush()` as explicitly not an `fsync` and
+required consumers to reach through `get_mut()` to the inner `File`.
 
 `get_mut()` is also the accessor that silently invalidates `FrameReceipt`
 offsets if you *write* through it — B1 now has a test pinning that hazard. So
@@ -161,16 +143,14 @@ durability is the same one that quietly corrupts their index if they use it
 slightly differently. Reading through it is safe and writing through it is not,
 and nothing in the type system says so.
 
-Meanwhile A1 measured `fsync` at **61× the cost of everything else combined** at
-64 bytes. The dominant cost in any durable pipeline is entirely outside the
-library's model, which means group-commit and batched-fsync policy — the thing
-that actually determines a graph database's write throughput — has to be
-reinvented by every consumer.
+A1 now measures that cadence at **68.6×** the non-sync 64 B pipeline but only
+**5.3×** at 4 KiB, proving cadence and payload shape both matter.
 
-**Recommendation.** An explicit `sync()`/`durable_flush()` on `StreamWriter` for
-sinks that can support it, so durability stops being spelled `get_mut()`. Even
-if the implementation is three lines, moving it out of the hazardous accessor is
-worth it.
+**Resolution.** `Durable`, static `SyncPolicy` implementations, manual
+`sync_data`/`sync_all`, and durable watermarks now keep synchronization out of
+`get_mut()`. The default `NoSync` writer remains zero-sized/branch-free; policy
+writers make group-commit cadence explicit and report checkpoint failures
+without pretending the triggering frame was unwritten.
 
 ### 2.4 Concurrency is entirely unspecified
 
@@ -191,8 +171,8 @@ readers must not tail a live stream" would be an improvement over silence.
 
 ### 2.5 The gate is excellent and nothing enforces it
 
-`scripts/gate.sh` is genuinely excellent — fmt, clippy across four feature
-configurations, a test matrix, doctests, rustdoc-as-errors, bench and fuzz
+`scripts/gate.sh` is genuinely excellent — fmt, clippy across its feature
+matrix, tests, doctests, rustdoc-as-errors, bench and fuzz
 compile checks, and an MSRV assertion. It is better than most production CI.
 
 `CONTRIBUTING.md` §3 states that verification is "local by deliberate choice;
@@ -211,6 +191,10 @@ the failure mode is silent — the next contributor cannot distinguish "I broke
 this" from "this was already broken," which is a genuinely demoralizing first
 hour.
 
+That specific mismatch is fixed: `fuzz/Cargo.lock` now records `flatstream
+0.2.8`. This section records the process gap that allowed the stale lockfile to
+land; it is not a claim that the current checkout is still gate-red.
+
 So I would not argue for CI as such. I would argue for closing that specific
 gap, and it does not require a runner: a `pre-push` hook, or a gate step that
 checks `fuzz/Cargo.lock` against the workspace version, or simply running the
@@ -225,13 +209,13 @@ naming as a category rather than two separate bugs.
 
 - **Examples were compiled but never run.** `clippy --all-targets` type-checks
   `examples/`, so the maintainer's §1 rule that "examples self-assert" was being
-  enforced by nothing. Four examples had zero assertions; several more printed
+  enforced by nothing. Several examples had zero assertions; others printed
   "ok" on paths that would have printed "ok" after processing zero messages.
   `ingest_lobster` guarded its only success condition with a `debug_assert` that
   compiles out of the release builds it actually runs in — on a counter that
   incremented even for skipped files.
 - **README snippets were never compiled at all.** rustdoc only tests snippets
-  under `src/`. **17 of the README's 29 Rust snippets did not build.** Four ASCII
+  under `src/`. Many of the README's Rust snippets did not build. ASCII
   diagrams used untagged code fences, which rustdoc treats as Rust; one paragraph
   was indented four spaces and so was also parsed as code. Several snippets used
   `#`-prefixed hidden-line syntax, which means someone once intended them to be
@@ -279,25 +263,23 @@ compilers that are never exercised. Worth knowing before a consumer pins to it.
 **Do not trade away:** the tested invariants, the golden wire-format corpus, the
 enumerated dispatch story, the honest scoping of "zero-copy," and the
 no-unmeasured-claims rule. Those are the reasons this crate is a credible
-foundation rather than another framing helper. The A1 result — flatstream is
-0.6% to 14% of a write, and 1.6% once durability is real — is the kind of fact
-that only exists because of that culture, and it should shape where effort goes
-next.
+foundation rather than another framing helper. A1's qualified 64 B result
+(63.0% application / 17.3% flatstream / 19.7% buffered output) is the kind of
+attribution that culture can establish without pretending it transfers to the
+4 KiB profile.
 
 **Fix before depending on the format:**
 
 | | Item | Why it's first |
 |---|---|---|
-| 1 | Stream preamble: magic, version, framing descriptor (§2.1) | Without it the format cannot evolve and a mismatched deframer corrupts silently. Every day of written data raises the cost. |
-| 2 | Explicit durability API (§2.3) | `fsync` is 61× everything else and currently lives outside the library, reached through the one accessor that also corrupts receipts. |
-| 3 | `read_frame_at` with caller-supplied scratch (§2.2) | Offset-keyed point lookup is a graph database's read path; today it allocates a reader per lookup. |
+| 1 | Application-owned format manifest (§2.1) | Core preamble declined; durable consumers must pin framing/checksum/schema generation out of band and reject unknown versions. |
+| 2 | Explicit durability API (§2.3) — **resolved in v0.2.8** | Static policies and durable watermarks now encode group commit without `get_mut()`. |
+| 3 | `read_frame_at` with caller-supplied scratch (§2.2) — **resolved in v0.2.8** | Forward and random reads now return exact receipts without per-lookup frame-buffer allocation. |
 | 4 | A written position on concurrency (§2.4) | Live tailing and crash recovery see the same bytes and need opposite behavior. |
-| 5 | Some mechanism keeping committed state gate-green (§2.5) | Not necessarily CI. The gate was already red on a fresh checkout, and that is invisible until someone pays for it. |
+| 5 | Some mechanism keeping committed state gate-green (§2.5) | Not necessarily CI. A stale lockfile once made a fresh checkout gate-red; that instance is fixed, but it remained invisible until the next contributor ran the gate. |
 
-Items 2 and 3 add public API and so need their shape agreed in review before
-implementation, per §5. Both are now written up at the API-shape level in
-`docs/DESIGN_v2_8.md` §10, together with `FrameReceipt::end()`, each with its
-rejected alternatives and the open questions the maintainer should settle.
+Items 2 and 3 plus `FrameReceipt::end()` received maintainer sign-off and are
+implemented in v0.2.8.
 
 **Process, not code:** keep the habit of asking what the gate *doesn't* cover —
 that question found two real classes of rot today (§2.6). Benchmark isolation

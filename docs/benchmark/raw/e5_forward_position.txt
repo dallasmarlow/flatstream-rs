@@ -1,0 +1,51 @@
+# e5_forward_position
+# date:    2026-07-25T19:09:19Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench positioned_reads -- Tracking
+
+   Compiling flatstream v0.2.8 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 0.89s
+     Running benches/positioned_reads.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/d07501f02f79b9d3e085ed31647e3cb3/cargo-target/release/deps/positioned_reads-2b1c95a9ab3785a3)
+Gnuplot not found, using plotters backend
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/4096
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/4096: Warming up for 3.0000 s
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/4096: Collecting 100 samples in estimated 6.1176 s (15k iterations)
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/4096: Analyzing
+Forward Position Tracking/uncounted_deframer_loop/4096
+                        time:   [414.46 µs 417.65 µs 421.35 µs]
+                        thrpt:  [2.3733 Melem/s 2.3943 Melem/s 2.4128 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking Forward Position Tracking/stream_reader_counted/4096
+Benchmarking Forward Position Tracking/stream_reader_counted/4096: Warming up for 3.0000 s
+Benchmarking Forward Position Tracking/stream_reader_counted/4096: Collecting 100 samples in estimated 6.3327 s (15k iterations)
+Benchmarking Forward Position Tracking/stream_reader_counted/4096: Analyzing
+Forward Position Tracking/stream_reader_counted/4096
+                        time:   [411.60 µs 417.30 µs 424.93 µs]
+                        thrpt:  [2.3533 Melem/s 2.3964 Melem/s 2.4296 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/65536
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/65536: Warming up for 3.0000 s
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/65536: Collecting 100 samples in estimated 5.4503 s (800 iterations)
+Benchmarking Forward Position Tracking/uncounted_deframer_loop/65536: Analyzing
+Forward Position Tracking/uncounted_deframer_loop/65536
+                        time:   [6.7653 ms 6.7827 ms 6.8021 ms]
+                        thrpt:  [147.01 Kelem/s 147.43 Kelem/s 147.81 Kelem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+Benchmarking Forward Position Tracking/stream_reader_counted/65536
+Benchmarking Forward Position Tracking/stream_reader_counted/65536: Warming up for 3.0000 s
+Benchmarking Forward Position Tracking/stream_reader_counted/65536: Collecting 100 samples in estimated 5.4068 s (800 iterations)
+Benchmarking Forward Position Tracking/stream_reader_counted/65536: Analyzing
+Forward Position Tracking/stream_reader_counted/65536
+                        time:   [6.7366 ms 6.7606 ms 6.7872 ms]
+                        thrpt:  [147.34 Kelem/s 147.92 Kelem/s 148.44 Kelem/s]
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  8 (8.00%) high severe

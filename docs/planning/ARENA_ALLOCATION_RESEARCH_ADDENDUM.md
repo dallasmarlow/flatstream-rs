@@ -96,37 +96,35 @@ of a measurement taken after the document was written.
 The document sets its own bar: "**Performance**: Achieve at least 15% performance
 improvement over current builder reuse approach." When it was written there was no
 committed measurement of what builder reuse costs inside a real record, so 15% was
-a number without a denominator. `FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md` (A1)
-now supplies one.
+a number without a denominator. The completed
+`FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md` (A1) now supplies one.
 
-A1 measured, at a 64 B payload:
+A1's isolated 64 B recheck measured:
 
-- harvest + FlatBuffer build together are **65.7%** of a non-durable record;
-- with `fsync` per record, *everything that is not `fsync`* collapses to **1.6%**
-  of the record.
+- harvest + FlatBuffer build together are **61.6%** of a non-durable record;
+- with one `sync_data()` per 1000-record batch, the *entire non-sync pipeline*
+  is **1.4%** of elapsed time.
 
 Carrying the bar through:
 
 | profile | build+harvest share of a record | ceiling on a 15% build-stage win |
 |---|---|---|
-| `fsync` per record | ~1.05% | **~0.16%** |
-| no durability call (network sink, in-memory, `io::sink`) | 65.7% | **~9.9%** |
+| `sync_data()` once per 1000-record batch | ~0.88% | **~0.13%** |
+| no durability call (network sink, in-memory, `io::sink`) | 61.6% | **~9.2%** |
 
-Two caveats keep this honest. The 65.7% figure combines harvest with build, and
-arena allocation only addresses part of the build half, so the durable-profile
-number is an **upper bound** — the real ceiling is lower. And A1's absolute
-figures are still provisional pending collection on reference hardware
-(`docs/benchmark/raw/README.md`).
+Two caveats keep this honest. The 61.6% figure combines harvest with build, and
+arena allocation only addresses part of the build half, so the measured
+batched-sync number is an **upper bound** — the real ceiling is lower. The
+figures are specific to the 64 B workload and this machine.
 
-Even as an upper bound the conclusion is stark. **In a `fsync`-per-record
-journaling profile, a project that fully meets its own 15% bar moves the record by
-about a sixth of one percent** — an order of magnitude below the −24%/+57% noise
-band `CONTRIBUTING.md` §4 documents. It would be unmeasurable on the machine that
-measured it. Set against the document's own 9–18 week plan and a failed `unsafe`
-bridge, that is not a close call.
+Even as an upper bound, the measured cadence is informative. **With
+one `sync_data()` per 1000-record batch, a project that fully meets its own 15%
+bar would move the record by about a tenth of one percent on this run** — below
+the −24%/+57% noise band `CONTRIBUTING.md` §4 documents. The effect would be
+unresolvable on the machine that produced the run.
 
-In a profile with no per-record durability call, the same work is worth up to
-~10%, which is plainly worth having.
+In a profile with no durability call, the same calculation gives an upper
+bound near 9%.
 
 So the arena question is not "is arena allocation worth it." It is **"which
 durability profile is `flatstream` optimizing for?"** — and that is a question for
@@ -134,24 +132,21 @@ the maintainer, not for a research phase.
 
 **Proposed:** the research document should state its target profile in its
 opening, and should not resume Phase 2 until that is settled. If the answer is
-`fsync`-per-record journaling, A1 has closed the question and the document should
-be moved to `docs/archive/` with that rationale. If the answer is batched or
-absent durability — which is the likelier shape for the stated graph-database
-destination, where commits are typically grouped — then the work is live and the
-15% bar is meaningful, but it should be measured against the *batched* profile
-rather than the terminal-journaling one A1 modeled.
+the once-per-1000-record cadence A1 modeled, the result argues against resuming
+the work without a stronger mechanism. A
+different cadence or no durability call is a different profile and needs its
+own denominator before this research is accepted or retired.
 
 This is the same reasoning A1 was commissioned to enable. Its stated purpose was
 to find out where write cost actually is so that effort could be aimed correctly;
-aiming the arena question is the second use of that result, after E1 was the
-first.
+the decision can now be made against the committed A1 evidence.
 
 ## 5. A smaller note: the bar should name its instrument
 
 "At least 15% performance improvement" does not say measured how. Given §4, a 15%
 win on the build stage in isolation and a 15% win on an end-to-end record are
-wildly different claims, and the second is unachievable in the durable profile
-regardless of how good the allocator is. Per `CONTRIBUTING.md` §4, the bar should
+different claims, and the once-per-1000-record profile leaves little
+room for the second. Per `CONTRIBUTING.md` §4, the bar should
 name the benchmark, the profile, and whether it is wall-clock or instruction
 counts — and given the size of the effect being chased, instruction counts
 (A2's instrument) are the only honest choice for the isolated-stage version.

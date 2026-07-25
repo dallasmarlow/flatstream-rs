@@ -1,0 +1,43 @@
+# e4_instruction_counts
+# date: 2026-07-25
+# command: scripts/instruction_counts.sh
+# container: rust:1.97.1-bookworm
+# rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
+# host: aarch64-unknown-linux-gnu
+# LLVM: 22.1.6
+# valgrind: valgrind-3.19.0
+# gungraun-runner: 0.19.4
+
+instruction_count::end_to_end_workloads::write_default messages_100:(events())
+  Instructions:                       26771|27592                (-2.97550%) [-1.03067x]
+  L1 Hits:                            38207|39334                (-2.86521%) [-1.02950x]
+  LL Hits:                                6|6                    (No change)
+  RAM Hits:                             112|122                  (-8.19672%) [-1.08929x]
+  Total read+write:                   38325|39462                (-2.88125%) [-1.02967x]
+  Estimated Cycles:                   42157|43634                (-3.38498%) [-1.03504x]
+
+instruction_count::end_to_end_workloads::write_static_memory_policy_not_due messages_100:(events())
+  Instructions:                       28585|N/A                  (*********)
+  L1 Hits:                            41732|N/A                  (*********)
+  LL Hits:                                6|N/A                  (*********)
+  RAM Hits:                             118|N/A                  (*********)
+  Total read+write:                   41856|N/A                  (*********)
+  Estimated Cycles:                   45892|N/A                  (*********)
+
+instruction_count::end_to_end_workloads::write_static_sync_policy_not_due messages_100:(events())
+  Instructions:                       29785|30434                (-2.13248%) [-1.02179x]
+  L1 Hits:                            43632|44427                (-1.78945%) [-1.01822x]
+  LL Hits:                                6|8                    (-25.0000%) [-1.33333x]
+  RAM Hits:                             120|129                  (-6.97674%) [-1.07500x]
+  Total read+write:                   43758|44564                (-1.80863%) [-1.01842x]
+  Estimated Cycles:                   47862|48982                (-2.28655%) [-1.02340x]
+
+instruction_count::end_to_end_workloads::write_static_sync_policy_once messages_100:(events())
+  Instructions:                       30095|30442                (-1.13987%) [-1.01153x]
+  L1 Hits:                            43953|44444                (-1.10476%) [-1.01117x]
+  LL Hits:                                6|7                    (-14.2857%) [-1.16667x]
+  RAM Hits:                             120|128                  (-6.25000%) [-1.06667x]
+  Total read+write:                   44079|44579                (-1.12160%) [-1.01134x]
+  Estimated Cycles:                   48183|48959                (-1.58500%) [-1.01611x]
+
+Gungraun result: Ok. 7 without regressions; 0 regressed; 0 filtered; 7 benchmarks finished in 1.12704s

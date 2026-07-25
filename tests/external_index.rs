@@ -3,7 +3,8 @@
 //! This is the pattern every index-building consumer needs, and the reason
 //! `FrameReceipt` exists (`docs/DESIGN_v2_8.md` §2): record where each frame
 //! landed at write time, then seek straight to it later, without ever
-//! reimplementing `8 + payload_len` wire arithmetic in application code.
+//! reimplementing `4 + checksum_width + payload_len` wire arithmetic in
+//! application code.
 //!
 //! `examples/external_index.rs` demonstrates the pattern on an in-memory
 //! `Cursor`. These tests pin the properties that make it *safe* — on real
@@ -40,21 +41,18 @@ fn records() -> Vec<String> {
         .collect()
 }
 
-/// Reads exactly one frame whose first byte is at `offset`. The supported
-/// random-access pattern until the v3 range parser lands: seek, wrap a fresh
-/// reader, pull one message.
-fn read_frame_at<D: flatstream::Deframer>(
+/// Reads exactly one frame whose first byte is at `offset`.
+fn read_frame_at_path<D: flatstream::Deframer>(
     path: &std::path::Path,
     offset: u64,
     deframer: D,
 ) -> Vec<u8> {
     let mut file = File::open(path).unwrap();
-    file.seek(SeekFrom::Start(offset)).unwrap();
-    let mut reader = StreamReader::new(file, deframer);
-    reader
-        .read_message()
+    let mut scratch = Vec::new();
+    flatstream::read_frame_at(&mut file, &deframer, offset, &mut scratch)
         .unwrap()
         .expect("a frame begins at an indexed offset")
+        .payload
         .to_vec()
 }
 
@@ -134,7 +132,7 @@ fn seeking_to_an_indexed_offset_returns_the_exact_payload() {
     }
 
     for i in [index.len() - 1, 0, 7, 42, 1, index.len() - 2] {
-        let got = read_frame_at(&path, index[i].frame_start, DefaultDeframer::new());
+        let got = read_frame_at_path(&path, index[i].frame_start, DefaultDeframer::new());
         assert_eq!(
             got, expected[i],
             "frame {i} did not round-trip via its offset"
@@ -217,7 +215,7 @@ fn wire_len_accounts_for_the_checksum_field() {
     assert_eq!(cursor, std::fs::metadata(&path).unwrap().len());
 
     // Random access still verifies the checksum on the way out.
-    let got = read_frame_at(
+    let got = read_frame_at_path(
         &path,
         index[9].frame_start,
         ChecksumDeframer::new(Crc32::new()),
@@ -284,7 +282,7 @@ fn with_start_offset_yields_absolute_offsets_when_appending() {
     // Every entry — from both sessions — still random-accesses correctly.
     for (i, receipt) in index.iter().enumerate() {
         assert_eq!(
-            read_frame_at(&path, receipt.frame_start, DefaultDeframer::new()),
+            read_frame_at_path(&path, receipt.frame_start, DefaultDeframer::new()),
             expected[i]
         );
     }
@@ -341,7 +339,7 @@ fn index_entries_below_the_recovery_point_survive_a_torn_tail() {
     for (i, receipt) in index.iter().enumerate() {
         if receipt.frame_start + receipt.wire_len <= report.last_good_offset {
             assert_eq!(
-                read_frame_at(&path, receipt.frame_start, DefaultDeframer::new()),
+                read_frame_at_path(&path, receipt.frame_start, DefaultDeframer::new()),
                 expected[i],
                 "entry {i} should have survived the torn tail"
             );

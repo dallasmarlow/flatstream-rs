@@ -3,14 +3,16 @@
 #
 # Each step exists for a reason:
 #   fmt         style drift makes diffs unreviewable
-#   clippy      lints-as-errors across every target (tests/benches/examples rot silently)
+#   clippy      lints-as-errors across every target, including the plain
+#               no-default-features configuration (tests/benches/examples rot silently)
 #   test matrix all_checksums (full suite incl. doctests), no-features, and a
 #               single-feature build (crc16) that catches #[cfg] gaps; plus
 #               the opt-in unsafe_typed integration test so that public feature
 #               cannot bit-rot outside the default unsafe-free build
-#   examples    examples self-assert (§1), which is only worth anything if they
-#               actually execute — compiling them under clippy proves nothing
-#               about their assertions; see scripts/examples.sh
+#   examples    non-mutating examples self-assert (§1), which is only worth
+#               anything if they actually execute; the corpus-mutating lobster
+#               example is compile-checked by default and runs only when
+#               explicitly enabled; see scripts/examples.sh
 #   README      the README's Rust snippets are the code consumers copy first,
 #               and rustdoc only tests snippets under src/ — see
 #               scripts/readme_doctests.sh
@@ -37,6 +39,9 @@ cargo fmt --check
 echo "== clippy (all targets, all_checksums, -D warnings)"
 cargo clippy --locked --all-targets --features all_checksums -- -D warnings
 
+echo "== clippy: no default features (-D warnings)"
+cargo clippy --locked --all-targets --no-default-features -- -D warnings
+
 echo "== clippy: individual checksum feature configurations"
 for feature in xxhash crc32 crc16; do
     cargo clippy --locked --all-targets --no-default-features --features "$feature" -- -D warnings
@@ -57,7 +62,7 @@ cargo test --locked --no-default-features --features crc16
 echo "== test: unsafe_typed opt-in"
 cargo test --locked --features all_checksums,unsafe_typed --test stream_deserialize_integration_tests
 
-echo "== examples: run (their assertions are the point)"
+echo "== examples: run non-mutating examples; compile-check lobster"
 ./scripts/examples.sh
 
 echo "== README snippets compile and run"

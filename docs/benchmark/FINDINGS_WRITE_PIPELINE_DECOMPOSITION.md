@@ -2,8 +2,8 @@
 
 **Author:** contributor (A1, `CONTRIBUTING.md` §6)
 **Date:** 2026-07-24
-**Status:** in progress — methodology and conclusions settled; absolute numbers
-are provisional pending re-collection on reference hardware (see Threats §T1)
+**Status:** complete — isolated raw output committed at
+`docs/benchmark/raw/a1_write_pipeline.txt`
 
 ## Hypothesis
 
@@ -20,9 +20,9 @@ attribution would be wrong and the optimization effort would belong in
 `src/framing.rs`.
 
 A secondary hypothesis, added because it is the first thing a journal author
-asks next: **durability (`fsync`), when present, dwarfs everything else** — so
-the framing layer's share is not merely small but negligible in any pipeline
-that actually persists.
+asks next: **at the measured cadence of one `sync_data()` per 1000-record batch,
+durability dwarfs everything else**. This experiment does not generalize that
+share to every possible sync cadence or storage device.
 
 ## Methodology
 
@@ -46,8 +46,8 @@ deltas — see Findings §F3, which is precisely why backlog item A2 exists.
 
 ```bash
 # Isolated: nothing else running on the machine (see Threats §T1).
-cargo bench --features crc32 --bench write_pipeline_decomposition \
-  2>&1 | tee docs/benchmark/raw/a1_write_pipeline.txt
+scripts/bench_isolated.sh a1_write_pipeline \
+  write_pipeline_decomposition Decomposition -- --features crc32 --locked
 ```
 
 `Throughput::Elements(1000)` is set, so every Criterion figure below is read
@@ -93,108 +93,115 @@ steady-state append into page cache, not file creation.
 
 ## Findings
 
-All figures are Criterion medians, in nanoseconds per record. "Δ" is the cost of
-the layer that rung adds. Raw output: `docs/benchmark/raw/a1_write_pipeline.txt`
-(regenerate with the command in Steps).
+All figures below are Criterion medians from isolated runs, in nanoseconds per
+record. "Δ" is the cost of the layer that rung adds. The 64 B cross-check
+surprised in the full decomposition and was therefore re-collected alone; its
+table uses `a1_64b_recheck.txt`. The 4096 B table uses
+`a1_write_pipeline.txt`.
 
 ### F1. 64-byte chunk (a typical terminal line)
 
 | Rung | ns/record | Δ | Share of `s6` |
 |---|---:|---:|---:|
-| `s1_harvest` | 21.4 | — | 32.4 % |
-| `s2_build` | 41.1 | **+19.7** | 29.8 % |
-| `s3_frame` | 41.5 | **+0.4** | 0.6 % |
-| `s4_frame_crc32` | 50.4 | **+8.9** | 13.5 % |
-| `s5_buffered_file` | 63.7 | **+13.3** | 20.1 % |
-| `s6_index` | 66.1 | **+2.3** | 3.5 % |
-| `s7_fsync` | 4 087.5 | **+4 021.4** | (61× all of `s6`) |
+| `s1_harvest` | 20.124 | — | 31.9 % |
+| `s2_build` | 38.790 | **+18.666** | 29.6 % |
+| `s3_frame` | 40.787 | **+1.997** | 3.2 % |
+| `s4_frame_crc32` | 49.692 | **+8.905** | 14.1 % |
+| `s5_buffered_file` | 62.121 | **+12.429** | 19.7 % |
+| `s6_index` | 63.011 | **+0.890** | 1.4 % |
+| `s7_fsync` | 4 386.7 | **+4 323.7** | (68.6× all of `s6`) |
 
-Cross-checks: `x_crc32_only` − `s2_build` = 8.4 ns against `s4 − s3` = 8.9 ns
-(6 % apart — agreement). `x_frame_sink` = 39.1 ns against `s2_build` = 41.1 ns —
-see §F3.
+Cross-checks: `x_crc32_only` − `s2_build` = 8.751 ns against `s4 − s3` =
+8.905 ns (1.7 % apart — agreement). `x_frame_sink` = 37.975 ns against
+`s2_build` = 38.790 ns — see §F3.
 
 **Attribution at 64 B, excluding fsync:**
 
-- application (harvest + build + index): **43.4 ns, 65.7 %**
-- flatstream (framing + CRC-32): **9.3 ns, 14.1 %** — of which framing itself is
-  0.4 ns (0.6 %)
-- OS buffered write: **13.3 ns, 20.1 %**
+- application (harvest + build + index): **39.680 ns, 63.0 %**
+- flatstream (framing/copy + CRC-32): **10.902 ns, 17.3 %**
+- OS buffered write: **12.429 ns, 19.7 %**
 
 ### F2. 4096-byte chunk (a screen repaint)
 
 | Rung | ns/record | Δ | Share of `s6` |
 |---|---:|---:|---:|
-| `s1_harvest` | 21.6 | — | 1.6 % |
-| `s2_build` | 119.3 | **+97.6** | 7.1 % |
-| `s3_frame` | 178.7 | **+59.5** | 4.4 % |
-| `s4_frame_crc32` | 560.7 | **+382.0** | 28.0 % |
-| `s5_buffered_file` | 1 362.4 | **+801.7** | 58.7 % |
-| `s6_index` | 1 366.4 | **+4.0** | 0.3 % |
-| `s7_fsync` | 16 470 | **+15 103.6** | (11× all of `s6`) |
+| `s1_harvest` | 20.020 | — | 1.7 % |
+| `s2_build` | 108.85 | **+88.83** | 7.4 % |
+| `s3_frame` | 167.05 | **+58.20** | 4.8 % |
+| `s4_frame_crc32` | 520.92 | **+353.87** | 29.4 % |
+| `s5_buffered_file` | 1 203.9 | **+682.98** | 56.8 % |
+| `s6_index` | 1 201.6 | unresolved (below run-to-run resolution) | unresolved |
+| `s7_fsync` | 7 534.5 | **+6 332.9** | (5.3× all of `s6`) |
 
-Cross-check: `x_crc32_only` − `s2_build` = 365.0 ns against `s4 − s3` = 382.0 ns
-(4.5 % apart — agreement).
+Cross-check: `x_crc32_only` − `s2_build` = 359.14 ns against `s4 − s3` =
+353.87 ns (1.5 % apart — agreement). The index rung measured 2.3 ns faster
+than the otherwise identical file rung; that impossible negative delta puts
+the index cost below this wall-clock harness's resolution.
 
 At this size the picture inverts in an instructive way. Framing's *call* overhead
-is still nil; the entire `s3 − s2` = 59.5 ns is the payload copy into the
+is still below resolution; the `s3 − s2` = 58.20 ns rung is the payload copy into the
 destination buffer (≈ 69 GB/s, a cache-resident copy). CRC-32 becomes
 flatstream's dominant cost because it is a pure function of payload bytes
-(≈ 10.7 GB/s here — see §F5 on hardware acceleration). And the OS write path,
+(≈ 11.6 GB/s here — see §F5 on hardware acceleration). And the OS write path,
 also a function of bytes, takes over as the single largest term.
 
 ### F3. The noise floor, stated plainly
 
-At 64 B, `x_frame_sink` (39.1 ns) measured **faster** than `s2_build` (41.1 ns),
+At 64 B, `x_frame_sink` (37.975 ns) measured **faster** than `s2_build`
+(38.790 ns),
 despite doing strictly more work. Their Criterion confidence intervals do not
 overlap, so this is not sampling variance — it is a codegen artifact of where
 `black_box` sits in each arm.
 
 The correct reading is not "framing is free". It is: **framing's call overhead at
 64 B is below what this harness can resolve**, somewhere in the interval
-[0, ~2] ns/record, and any figure quoted more precisely than that from a
+[0, ~2] ns/record. The positive 1.997 ns `s3 − s2` rung includes copying the
+payload into the destination `Vec`; it is not a pure call-overhead result.
+Any call-overhead figure quoted more precisely than that from a
 wall-clock bench would be fiction. This is exactly the gap backlog item **A2**
 (instruction counts via `scripts/instruction_counts.sh`) exists to close, and it
 is the reason A2 should not be skipped just because A1 came out favourable.
 
 ### F4. Durability dominates everything
 
-One `sync_data()` per 1000-record batch costs 4.02 ms (64 B batch, 68 KiB) and
-15.1 ms (4 KiB batch, 4.1 MiB) on this machine's SSD. Amortized per record that
-is 4 021 ns and 15 104 ns respectively — **61× and 11× the entire rest of the
-pipeline combined**. Under any fsync policy at all, flatstream's share of an
-end-to-end write falls to **0.23 % (64 B) / 2.7 % (4 KiB)**.
+One `sync_data()` per 1000-record batch raises the measured batch from
+63.011 µs to 4.3867 ms at 64 B and from 1.2016 ms to 7.5345 ms at 4 KiB.
+The checkpoint increment is therefore **68.6×** the entire non-sync 64 B
+pipeline but only **5.3×** the 4 KiB pipeline. At this specific cadence,
+flatstream's framing-plus-CRC share of total elapsed time is approximately
+**0.25 % (64 B) / 5.5 % (4 KiB)**.
 
 ### F5. Note on CRC-32 acceleration
 
 `crc32fast` uses hardware acceleration **where the target provides it** —
 SSE4.2/PCLMULQDQ on x86-64, the CRC32 instructions on aarch64 — and falls back to
-a scalar table-driven implementation otherwise. The ≈10.7 GB/s measured at 4 KiB
+a scalar table-driven implementation otherwise. The ≈11.6 GB/s measured at 4 KiB
 in §F2 is an accelerated aarch64 path and must not be quoted as a portable
 figure. Per `CONTRIBUTING.md` §6 A1, phrase this as *hardware-assisted where
 available, scalar fallback otherwise* — never as universally accelerated.
 
 ## Conclusion
 
-**The consumer's attribution is supported, and may now be stated as measured
-fact.** In the terminal-journaling shape, flatstream's framing accounts for 0.6 %
-of a 64-byte record's non-durable write cost and 4.4 % of a 4 KiB one. Adding the
-opt-in CRC-32 brings the library's total share to 14 % and 32 % respectively;
-including a per-batch fsync drops it below 3 % in both cases. The application's
-own harvest and FlatBuffers construction is the larger term at small record sizes
-(66 %), and the OS write path is the larger term at large ones (59 %).
+**The consumer's attribution is supported for the 64 B terminal-line shape,
+but not as a workload-independent statement.** Application harvest/build/index
+is 63.0 % of the non-durable 64 B record, versus 17.3 % for flatstream
+framing/copy plus CRC-32 and 19.7 % for buffered file output. At 4 KiB, the
+picture inverts: flatstream is about 34.3 %, the OS rung about 56.8 %, and
+application harvest/build about 9 % (with index cost unresolved).
 
-A large end-to-end throughput drop therefore **cannot** be explained by
-flatstream's framing layer. There is not enough time in it to lose.
+Framing call overhead itself remains below this wall-clock harness's
+resolution; the size-dependent library cost is payload copying plus optional
+CRC. A large regression therefore cannot be assigned to “flatstream” or “the
+application” without matching the consumer's payload-size and durability
+cadence.
 
 ### What changes as a result
 
-- The attribution may now be published. The specific supportable sentence is the
-  one above, with this document cited.
-- **No code change is indicated by this experiment.** Framing is already below
-  the measurement floor at small sizes; optimizing it further would be optimizing
-  nothing. (E1's vectored write is justified by syscall count on unbuffered
-  sinks, a different argument, measured separately in
-  `FINDINGS_VECTORED_FRAMING.md`.)
+- Publish the attribution only with its 64 B workload qualifier.
+- **No framing-call optimization is indicated by this run.** Its call overhead
+  is below the harness's measurement floor. (E1's vectored write addresses
+  syscall count on unbuffered sinks, a
+  different argument tracked separately in `FINDINGS_VECTORED_FRAMING.md`.)
 - **A2 is promoted, not retired.** §F3 shows wall clock cannot resolve the
   framing path; the instruction-count characterization is the only way to put a
   real number on it.
@@ -206,26 +213,26 @@ flatstream's framing layer. There is not enough time in it to lose.
 
 ## Threats to validity
 
-- **T1 — Single machine, and a noisy one; numbers are provisional.** All figures
-  come from one Apple M4 laptop. While collecting the E1 experiment on the same
-  machine, unchanged code moved by −24 % and +57 % between consecutive runs, so
-  absolute values here should be treated as provisional until re-collected on
-  reference hardware. The **ratios and adjacent-rung deltas** are the durable
-  content; the orders of magnitude that carry the conclusion (fsync at 61×) are
-  far outside any plausible noise band.
-- **T2 — Wall clock cannot resolve the framing rung.** §F3 is explicit: the
-  0.4 ns figure is a *bound*, not a measurement. It is quoted in Conclusion only
-  as "below the measurement floor", never as a precise cost. A2 exists to fix
-  this.
+- **T1 — Single machine, and a noisy one.** All figures come from one Apple M4
+  laptop. The run is committed and internally paired, but absolute values do
+  not transfer across hardware. Criterion also prints changes against its
+  machine-local prior baseline; those cross-run “improved/regressed” labels are
+  not used anywhere in this document. The first isolated 64 B run's CRC
+  cross-check differed by ~16%; per the re-collection rule it was rerun alone,
+  where the two CRC estimates agreed within 1.7 %. F1 uses only that recheck.
+- **T2 — Wall clock cannot resolve pure framing call overhead or the 4 KiB
+  index delta.** §F3 is explicit about the former; the negative `s6 − s5`
+  result is explicit about the latter. A2/instruction counts are the appropriate
+  instrument.
 - **T3 — One workload shape.** The terminal-journaling profile is realistic but
   singular. A workload with a costlier `StreamSerialize` body, or with mixed
   record sizes that provoke internal-builder bloat, would shift the shares toward
   the application — which strengthens rather than weakens the conclusion, but the
   specific percentages would not transfer.
-- **T4 — fsync cost is storage-specific.** 4.02 ms/batch is this SSD under this
-  filesystem. On a different device, or with a write cache that lies about
-  durability, the 61× multiplier will differ substantially. The qualitative claim
-  (durability dominates) is robust; the multiplier is not.
+- **T4 — sync cost is storage- and cadence-specific.** The measured increments
+  are from this SSD/filesystem with one `sync_data()` per 1,000 records. The
+  separate E3 cadence benchmark demonstrates why no single multiplier can
+  describe every policy.
 - **T5 — This characterizes a healthy pipeline, and does not diagnose a
   regression.** It bounds flatstream's steady-state share. Still open for a
   consumer seeing a real drop, and *not* addressed here: simple-mode

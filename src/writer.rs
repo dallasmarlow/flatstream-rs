@@ -1,23 +1,92 @@
 //! A generic, composable writer for `flatstream`.
 
-use crate::error::Result;
+use crate::durability::{Durable, NoSync, SyncMode, SyncPolicy, SyncPolicyBackend, Syncing};
+use crate::error::{Error, Result};
 use crate::framing::Framer;
-use crate::policy::{MemoryPolicy, ReclamationInfo};
+use crate::policy::{MemoryPolicy, NoMemoryPolicy, ReclamationInfo};
 use crate::traits::StreamSerialize;
 use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
 
-/// Installed-policy state: the policy, its baseline (cached from
-/// `MemoryPolicy::baseline_capacity()` at installation so the steady-state gate
-/// is a plain integer compare), and the means to rebuild the internal builder.
-///
-/// The factory closure exists because a reclaim must construct a *fresh*
-/// `FlatBufferBuilder`, and only the caller knows how to do that for a custom
-/// allocator. For the default allocator it is simply `FlatBufferBuilder::with_capacity`.
-struct PolicySlot<'a, A: flatbuffers::Allocator> {
-    policy: Box<dyn MemoryPolicy>,
+/// Builds a fresh internal builder after a memory policy requests reclamation.
+pub trait BuilderFactory<'a, A: flatbuffers::Allocator>: Send {
+    fn make_builder(&mut self, capacity: usize) -> FlatBufferBuilder<'a, A>;
+}
+
+impl<'a, A, F> BuilderFactory<'a, A> for F
+where
+    A: flatbuffers::Allocator,
+    F: FnMut(usize) -> FlatBufferBuilder<'a, A> + Send,
+{
+    fn make_builder(&mut self, capacity: usize) -> FlatBufferBuilder<'a, A> {
+        self(capacity)
+    }
+}
+
+/// Zero-sized factory for the default FlatBuffers allocator.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DefaultBuilderFactory;
+
+impl<'a> BuilderFactory<'a, DefaultAllocator> for DefaultBuilderFactory {
+    fn make_builder(&mut self, capacity: usize) -> FlatBufferBuilder<'a, DefaultAllocator> {
+        FlatBufferBuilder::with_capacity(capacity)
+    }
+}
+
+/// Statically dispatched writer memory-policy state.
+pub struct WriterMemoryPolicy<P, B> {
+    policy: P,
     baseline_capacity: usize,
-    make_builder: Box<dyn FnMut(usize) -> FlatBufferBuilder<'a, A> + Send + 'a>,
+    make_builder: B,
+}
+
+impl<P: MemoryPolicy, B> WriterMemoryPolicy<P, B> {
+    fn new(policy: P, make_builder: B) -> Self {
+        let baseline_capacity = policy.baseline_capacity();
+        Self {
+            policy,
+            baseline_capacity,
+            make_builder,
+        }
+    }
+}
+
+/// Internal static-dispatch bridge for writer-owned memory.
+#[doc(hidden)]
+pub trait WriterMemoryBackend<'a, A: flatbuffers::Allocator>: Send {
+    fn after_write(&mut self, builder: &mut FlatBufferBuilder<'a, A>, last_message_size: usize);
+}
+
+impl<'a, A: flatbuffers::Allocator> WriterMemoryBackend<'a, A> for NoMemoryPolicy {
+    #[inline(always)]
+    fn after_write(&mut self, _builder: &mut FlatBufferBuilder<'a, A>, _last_message_size: usize) {}
+}
+
+impl<'a, A, P, B> WriterMemoryBackend<'a, A> for WriterMemoryPolicy<P, B>
+where
+    A: flatbuffers::Allocator,
+    P: MemoryPolicy,
+    B: BuilderFactory<'a, A>,
+{
+    #[inline]
+    fn after_write(&mut self, builder: &mut FlatBufferBuilder<'a, A>, last_message_size: usize) {
+        let current_capacity = builder.mut_finished_buffer().0.len();
+        if current_capacity <= self.baseline_capacity {
+            return;
+        }
+        if let Some(reason) = self
+            .policy
+            .should_reset(last_message_size, current_capacity)
+        {
+            *builder = self.make_builder.make_builder(self.baseline_capacity);
+            self.policy.on_reclaim(&ReclamationInfo {
+                reason,
+                last_message_size,
+                capacity_before: current_capacity,
+                capacity_after: self.baseline_capacity,
+            });
+        }
+    }
 }
 
 /// Wraps the underlying writer and counts bytes handed to it, so a
@@ -129,10 +198,26 @@ impl<W: Write> Write for CountingWriter<W> {
 /// # let _ = writer;
 /// ```
 ///
-/// The policy is consulted once per `write()` — a single predictable branch
-/// when no policy is installed. **Policies apply to simple mode only**: in
-/// expert mode (`write_finished()`) the caller owns the builder, so the writer
-/// cannot and does not reclaim it.
+/// Policy state is a generic parameter. The default [`NoMemoryPolicy`] is
+/// zero-sized and its backend call compiles away; installed policies are
+/// monomorphized. **Policies apply to simple mode only**: in expert mode
+/// (`write_finished()`) the caller owns the builder, so the writer cannot and
+/// does not reclaim it.
+///
+/// ## Durability policies
+///
+/// The default [`NoSync`] state is zero-sized and performs no policy check.
+/// For a [`Durable`] sink, [`with_sync_policy`](Self::with_sync_policy) changes
+/// the writer's concrete type to `Syncing<P>` and evaluates the statically
+/// dispatched policy after each complete frame. Successful checkpoints update
+/// [`durable_watermark`](StreamWriter::durable_watermark); manual
+/// [`sync_data`](StreamWriter::sync_data) / [`sync_all`](StreamWriter::sync_all)
+/// return the same byte position.
+///
+/// A durability error occurs after the triggering frame has been accepted.
+/// [`ErrorKind::DurabilityFailed`](crate::ErrorKind::DurabilityFailed) carries
+/// the attempted and previous watermarks plus the frame coordinates so callers
+/// do not duplicate the frame by blindly retrying it.
 ///
 /// ## Custom Allocators
 ///
@@ -147,17 +232,24 @@ impl<W: Write> Write for CountingWriter<W> {
 /// To combine a custom allocator with a memory policy, use
 /// [`with_memory_policy_and_factory`](Self::with_memory_policy_and_factory) and
 /// supply the closure that rebuilds your builder on reclaim.
-pub struct StreamWriter<'a, W: Write, F: Framer, A = DefaultAllocator>
-where
+pub struct StreamWriter<
+    'a,
+    W: Write,
+    F: Framer,
+    A = DefaultAllocator,
+    S = NoSync,
+    M = NoMemoryPolicy,
+> where
     A: flatbuffers::Allocator,
 {
     writer: CountingWriter<W>,
     framer: F,
     builder: FlatBufferBuilder<'a, A>,
-    policy: Option<PolicySlot<'a, A>>,
+    memory: M,
     /// Offset that [`FrameReceipt`] offsets and [`StreamWriter::bytes_written`]
     /// are measured from. 0 unless set via [`StreamWriter::with_start_offset`].
     start_offset: u64,
+    sync: S,
 }
 
 /// A [`StreamWriter`] fixed to the default allocator and a `'static` builder
@@ -169,10 +261,11 @@ where
 /// the builder borrow) never exercise that lifetime yet still have to name or
 /// infer it. This alias pins it to `'static`, so such writers read as a plain
 /// `OwnedStreamWriter<W, F>`.
-pub type OwnedStreamWriter<W, F> = StreamWriter<'static, W, F, DefaultAllocator>;
+pub type OwnedStreamWriter<W, F, S = NoSync, M = NoMemoryPolicy> =
+    StreamWriter<'static, W, F, DefaultAllocator, S, M>;
 
-/// The byte position and on-wire size of a single written frame, returned by
-/// the `*_with_receipt` write methods.
+/// The byte position and on-wire size of one frame, returned by receipt-aware
+/// write and read APIs.
 ///
 /// `frame_start` is the offset of the frame's first byte; `wire_len` is the
 /// total bytes the frame occupies on the wire (length prefix + optional
@@ -192,7 +285,19 @@ pub struct FrameReceipt {
     pub wire_len: u64,
 }
 
-impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
+impl FrameReceipt {
+    /// Offset one past this frame's final byte.
+    pub const fn end(&self) -> u64 {
+        self.frame_start + self.wire_len
+    }
+
+    /// The frame's exact byte range on the wire.
+    pub const fn range(&self) -> std::ops::Range<u64> {
+        self.frame_start..self.end()
+    }
+}
+
+impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, NoMemoryPolicy> {
     /// Creates a new `StreamWriter` with a default `FlatBufferBuilder`.
     ///
     /// This enables **simple mode** - the writer manages an internal builder
@@ -206,8 +311,9 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer: CountingWriter::new(writer),
             framer,
             builder: FlatBufferBuilder::new(),
-            policy: None,
+            memory: NoMemoryPolicy,
             start_offset: 0,
+            sync: NoSync,
         }
     }
 
@@ -218,8 +324,9 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer: CountingWriter::new(writer),
             framer,
             builder,
-            policy: None,
+            memory: NoMemoryPolicy,
             start_offset: 0,
+            sync: NoSync,
         }
     }
 
@@ -231,33 +338,37 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F> {
             writer: CountingWriter::new(writer),
             framer,
             builder: FlatBufferBuilder::with_capacity(capacity),
-            policy: None,
+            memory: NoMemoryPolicy,
             start_offset: 0,
+            sync: NoSync,
         }
     }
+}
 
+impl<'a, W: Write, F: Framer, S, M> StreamWriter<'a, W, F, DefaultAllocator, S, M> {
     /// Installs a memory reclamation policy on this writer (simple mode only).
     ///
     /// After each successful `write()`, the policy observes the message size and
     /// current builder capacity; when it fires, the internal builder is replaced
-    /// with a fresh one at the policy's baseline capacity
-    /// (`MemoryPolicy::baseline_capacity`, cached here at installation). The
-    /// policy is consulted only while the builder's capacity exceeds that
-    /// baseline — at or below it there is nothing to reclaim.
-    ///
-    /// Has no effect on `write_finished()`, where the caller owns the builder.
+    /// with a fresh one at the policy's baseline capacity.
     #[must_use]
-    pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
-        self.policy = Some(PolicySlot {
-            baseline_capacity: policy.baseline_capacity(),
-            policy: Box::new(policy),
-            make_builder: Box::new(FlatBufferBuilder::with_capacity),
-        });
-        self
+    pub fn with_memory_policy<P: MemoryPolicy>(
+        self,
+        policy: P,
+    ) -> StreamWriter<'a, W, F, DefaultAllocator, S, WriterMemoryPolicy<P, DefaultBuilderFactory>>
+    {
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: self.builder,
+            memory: WriterMemoryPolicy::new(policy, DefaultBuilderFactory),
+            start_offset: self.start_offset,
+            sync: self.sync,
+        }
     }
 }
 
-impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A>
+impl<'a, W: Write, F: Framer, A> StreamWriter<'a, W, F, A, NoSync, NoMemoryPolicy>
 where
     A: flatbuffers::Allocator,
 {
@@ -287,11 +398,19 @@ where
             writer: CountingWriter::new(writer),
             framer,
             builder,
-            policy: None,
+            memory: NoMemoryPolicy,
             start_offset: 0,
+            sync: NoSync,
         }
     }
+}
 
+impl<'a, W: Write, F: Framer, A, S, M> StreamWriter<'a, W, F, A, S, M>
+where
+    A: flatbuffers::Allocator,
+    S: SyncPolicyBackend<W>,
+    M: WriterMemoryBackend<'a, A>,
+{
     /// Installs a memory reclamation policy together with a builder factory.
     ///
     /// This is the custom-allocator variant of
@@ -299,17 +418,23 @@ where
     /// internal builder with `make_builder(policy.baseline_capacity())`, so the
     /// factory decides how a fresh builder (and its allocator) is constructed.
     #[must_use]
-    pub fn with_memory_policy_and_factory<P, M>(mut self, policy: P, make_builder: M) -> Self
+    pub fn with_memory_policy_and_factory<P, B>(
+        self,
+        policy: P,
+        make_builder: B,
+    ) -> StreamWriter<'a, W, F, A, S, WriterMemoryPolicy<P, B>>
     where
-        P: MemoryPolicy + 'static,
-        M: FnMut(usize) -> FlatBufferBuilder<'a, A> + Send + 'a,
+        P: MemoryPolicy,
+        B: BuilderFactory<'a, A>,
     {
-        self.policy = Some(PolicySlot {
-            baseline_capacity: policy.baseline_capacity(),
-            policy: Box::new(policy),
-            make_builder: Box::new(make_builder),
-        });
-        self
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: self.builder,
+            memory: WriterMemoryPolicy::new(policy, make_builder),
+            start_offset: self.start_offset,
+            sync: self.sync,
+        }
     }
 
     /// Writes a serializable item to the stream using the internally managed builder.
@@ -367,56 +492,16 @@ where
         self.framer.frame_and_write(&mut self.writer, payload)?;
         let wire_len = (self.start_offset + self.writer.count) - frame_start;
 
-        // Evaluate the policy only after a successful write, so the payload we
-        // just framed is never invalidated. One predictable branch when no
-        // policy is installed; the machinery is outlined to keep this hot path
-        // small.
-        if self.policy.is_some() {
-            self.evaluate_memory_policy(last_message_size);
-        }
+        // Static dispatch: `NoMemoryPolicy` compiles this call away.
+        self.memory
+            .after_write(&mut self.builder, last_message_size);
 
-        Ok(FrameReceipt {
+        let receipt = FrameReceipt {
             frame_start,
             wire_len,
-        })
-    }
-
-    /// Consults the installed policy after a successful `write()`. Outlined
-    /// (`inline(never)`) to keep `write()`'s inlinable body minimal for
-    /// writers without a policy.
-    #[inline(never)]
-    fn evaluate_memory_policy(&mut self, last_message_size: usize) {
-        let Some(slot) = self.policy.as_mut() else {
-            return;
         };
-        // Capacity read: `FlatBufferBuilder` exposes no capacity() getter.
-        // mut_finished_buffer() returns (&mut backing_buffer, start_index);
-        // the slice length is the backing buffer size — our effective
-        // capacity. O(1), no allocation, and safe here because the builder
-        // is finished and the frame has been written.
-        let (buf, _start_idx) = self.builder.mut_finished_buffer();
-        let current_capacity = buf.len();
-
-        // At or below the policy's baseline there is nothing to reclaim —
-        // skip the policy entirely so its hysteresis state cannot churn
-        // (rebuilding a baseline-sized builder into an identical one would
-        // be pure allocator noise).
-        if current_capacity > slot.baseline_capacity {
-            if let Some(reason) = slot
-                .policy
-                .should_reset(last_message_size, current_capacity)
-            {
-                // Drop the over-provisioned builder and rebuild at the
-                // baseline capacity — resets the stream's high-water mark.
-                self.builder = (slot.make_builder)(slot.baseline_capacity);
-                slot.policy.on_reclaim(&ReclamationInfo {
-                    reason,
-                    last_message_size,
-                    capacity_before: current_capacity,
-                    capacity_after: slot.baseline_capacity,
-                });
-            }
-        }
+        self.sync.after_frame(self.writer.get_mut(), receipt)?;
+        Ok(receipt)
     }
 
     /// Writes a finished FlatBuffer message to the stream.
@@ -484,10 +569,12 @@ where
         self.framer.frame_and_write(&mut self.writer, payload)?;
         let wire_len = (self.start_offset + self.writer.count) - frame_start;
 
-        Ok(FrameReceipt {
+        let receipt = FrameReceipt {
             frame_start,
             wire_len,
-        })
+        };
+        self.sync.after_frame(self.writer.get_mut(), receipt)?;
+        Ok(receipt)
     }
 
     /// Flushes the underlying writer.
@@ -527,6 +614,29 @@ where
         self.start_offset + self.writer.count
     }
 
+    /// Installs a statically dispatched durability policy.
+    ///
+    /// The returned writer has a different concrete sync-state type. The
+    /// default [`NoSync`] writer remains branch-free and works with any
+    /// [`Write`]; installing a policy requires a [`Durable`] sink.
+    #[must_use]
+    pub fn with_sync_policy<P: SyncPolicy>(
+        self,
+        policy: P,
+    ) -> StreamWriter<'a, W, F, A, Syncing<P>, M>
+    where
+        W: Durable,
+    {
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: self.builder,
+            memory: self.memory,
+            start_offset: self.start_offset,
+            sync: Syncing::new(policy),
+        }
+    }
+
     /// Sets the offset that [`FrameReceipt`] offsets and
     /// [`bytes_written`](Self::bytes_written) are measured from.
     ///
@@ -537,6 +647,66 @@ where
     pub fn with_start_offset(mut self, offset: u64) -> Self {
         self.start_offset = offset;
         self
+    }
+}
+
+impl<'a, W: Durable, F: Framer, A, M> StreamWriter<'a, W, F, A, NoSync, M>
+where
+    A: flatbuffers::Allocator,
+    M: WriterMemoryBackend<'a, A>,
+{
+    /// Flushes buffered bytes and synchronizes file contents.
+    ///
+    /// Returns the durable watermark. Retain it if you need to test receipts
+    /// later; default no-policy writers intentionally store no watermark state.
+    pub fn sync_data(&mut self) -> Result<u64> {
+        self.manual_sync_without_policy(SyncMode::Data)
+    }
+
+    /// Flushes buffered bytes and synchronizes file contents and metadata.
+    pub fn sync_all(&mut self) -> Result<u64> {
+        self.manual_sync_without_policy(SyncMode::All)
+    }
+
+    fn manual_sync_without_policy(&mut self, mode: SyncMode) -> Result<u64> {
+        let attempted_watermark = self.bytes_written();
+        let result = match mode {
+            SyncMode::Data => self.writer.get_mut().sync_data(),
+            SyncMode::All => self.writer.get_mut().sync_all(),
+        };
+        result.map_err(|source| {
+            Error::durability_failed(mode, attempted_watermark, None, None, None, source)
+        })?;
+        Ok(attempted_watermark)
+    }
+}
+
+impl<'a, W: Durable, F: Framer, A, P, M> StreamWriter<'a, W, F, A, Syncing<P>, M>
+where
+    A: flatbuffers::Allocator,
+    P: SyncPolicy,
+    M: WriterMemoryBackend<'a, A>,
+{
+    /// Last successfully synchronized stream offset, or `None` before the
+    /// first successful checkpoint.
+    pub fn durable_watermark(&self) -> Option<u64> {
+        self.sync.durable_watermark
+    }
+
+    /// Forces a content checkpoint and resets the installed policy window.
+    pub fn sync_data(&mut self) -> Result<u64> {
+        self.manual_sync(SyncMode::Data)
+    }
+
+    /// Forces a content-and-metadata checkpoint and resets the policy window.
+    pub fn sync_all(&mut self) -> Result<u64> {
+        self.manual_sync(SyncMode::All)
+    }
+
+    fn manual_sync(&mut self, mode: SyncMode) -> Result<u64> {
+        let attempted_watermark = self.bytes_written();
+        self.sync
+            .checkpoint(self.writer.get_mut(), mode, attempted_watermark, None)
     }
 }
 

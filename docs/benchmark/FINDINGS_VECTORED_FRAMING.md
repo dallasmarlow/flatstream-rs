@@ -2,18 +2,22 @@
 
 **Author:** contributor (E1, `CONTRIBUTING.md` §6)
 **Date:** 2026-07-24
-**Status:** in progress — the change is landed and the direction is settled;
-absolute numbers are provisional pending re-collection on reference hardware
-(see Threats §T1)
+**Status:** complete — isolated raw `File`, TCP, and `BufWriter` outputs committed
 
 ## Hypothesis
 
-Before this change, every framer put a frame on the wire with two calls:
+Before this change, the two built-in framers put a frame on the wire with two
+calls. `DefaultFramer` wrote the length and payload separately:
 
 ```rust
 writer.write_all(&payload_len.to_le_bytes())?;  // 4 bytes
 writer.write_all(payload)?;                     // N bytes
 ```
+
+`ChecksumFramer` had already merged length and checksum into one stack header in
+v0.2.7, then wrote that complete header and the payload as its two calls. E1
+changes both built-ins to a two-slice vectored write: complete header plus
+payload.
 
 On a `BufWriter` that is two `memcpy`s into the same buffer and costs almost
 nothing. On an **unbuffered** sink — a raw `File`, a `TcpStream`, a pipe — each
@@ -39,10 +43,11 @@ check on `BufWriter` as it is a win-measurement on raw sinks.
 - Relevant dependency versions: `flatstream` 0.2.8, `flatbuffers` 25.12.19 (from
   `Cargo.lock`)
 - Tool: Criterion 0.5, default sampling, `Throughput::Elements(1000)`
-- Feature flags: none (default)
-- Baseline compared against: `TwoCallFramer`, an in-bench copy of the pre-E1
-  `DefaultFramer` body — **not** a saved Criterion baseline. See §T1 for why a
-  saved cross-run baseline is not admissible on this machine.
+- Feature flags: `crc32` (default and CRC-32 arms)
+- Baselines compared against: `TwoCallFramer` and `TwoCallCrc32Framer`, in-bench
+  copies of the corresponding pre-E1 bodies — **not** saved Criterion
+  baselines. Both include the historical payload-length guard and the checksum
+  baseline includes the already-assembled header.
 
 **Instrument choice.** Wall clock (Criterion). The quantity of interest is
 syscall cost, which is wall-clock by nature; instruction counts would not capture
@@ -50,16 +55,16 @@ it.
 
 ### Steps
 
-The full 12-arm suite must **not** be run in one pass on this hardware — see §T1.
+The full suite must **not** be run in one pass on this hardware — see §T1.
 Collect one sink group at a time, with nothing else running:
 
 ```bash
-cargo bench --bench vectored_framing -- bufwriter \
-  2>&1 | tee docs/benchmark/raw/e1_bufwriter.txt
-cargo bench --bench vectored_framing -- 'file/' \
-  2>&1 | tee docs/benchmark/raw/e1_file.txt
-cargo bench --bench vectored_framing -- 'tcp/' \
-  2>&1 | tee docs/benchmark/raw/e1_tcp.txt
+scripts/bench_isolated.sh e1_bufwriter vectored_framing bufwriter \
+  -- --features crc32 --locked
+scripts/bench_isolated.sh e1_file vectored_framing 'file/' \
+  -- --features crc32 --locked
+scripts/bench_isolated.sh e1_tcp vectored_framing 'tcp/' \
+  -- --features crc32 --locked
 ```
 
 1000 frames per iteration; Criterion's per-element figures are read directly as
@@ -67,9 +72,9 @@ cargo bench --bench vectored_framing -- 'tcp/' \
 
 ### What is being compared
 
-Both arms run through the same `StreamWriter`, the same `CountingWriter`, the
-same builder, and the same reused payload. The **only** difference between them
-is the call shape at the sink.
+Each default or CRC-32 pair runs through the same `StreamWriter`, the same
+`CountingWriter`, the same builder, and the same reused payload. The **only**
+difference inside a pair is the call shape at the sink.
 
 Three sinks, chosen to span the interesting cases:
 
@@ -88,44 +93,43 @@ per-byte cost.
 
 ## Findings
 
-All figures ns/record, Criterion median with the 95 % CI in brackets. Raw output
-under `docs/benchmark/raw/e1_*.txt` (regenerate with the commands in Steps).
+All figures below are ns/record, Criterion median with the 95 % CI in brackets.
+Raw output is committed in `docs/benchmark/raw/e1_{file,tcp,bufwriter}.txt`;
+required surprising-result rechecks are `e1_file_recheck.txt` and
+`e1_bufwriter_recheck.txt`.
 
 ### F1. Unbuffered sinks — the win
 
-| Sink | Payload | Two calls | One `writev` | Speedup |
-|---|---|---|---|---|
-| raw `File` | 64 B | 1936.6 [1927.1, 1947.4] | **695.5** [691.0, 701.5] | **2.78×** |
-| raw `File` | 4096 B | 1875.9 [1825.7, 1914.9] | **752.7** [751.5, 754.2] | **2.49×** |
-| loopback TCP | 64 B | 31580 [31465, 31709] | **15989** [15678, 16365] | **1.98×** |
-| loopback TCP | 4096 B | 31821 [31631, 32101] | **15935** [15892, 15986] | **2.00×** |
+| Sink | Framer | Payload | Two calls | One `writev` | Speedup |
+|---|---|---:|---:|---:|---:|
+| raw `File` | default | 64 B | 1904.2 [1900.2, 1908.8] | **1039.6** [1038.5, 1040.8] | **1.83×** |
+| raw `File` | CRC-32 | 64 B | 1995.4 [1990.9, 2000.9] | **1084.4** [1082.3, 1086.7] | **1.84×** |
+| raw `File` | default | 4096 B | 2536.8 [2375.9, 2720.6] | **695.6** [694.5, 696.7] | **3.65×; 2.12× recheck** |
+| raw `File` | CRC-32 | 4096 B | 2526.4 [2517.1, 2537.3] | **1545.5** [1540.1, 1551.6] | **1.63×** |
+| loopback TCP | default | 64 B | 3290.4 [3200.8, 3386.6] | **1758.1** [1686.5, 1831.7] | **1.87×** |
+| loopback TCP | CRC-32 | 64 B | 3169.4 [3095.3, 3251.4] | **1704.2** [1644.7, 1769.7] | **1.86×** |
+| loopback TCP | default | 4096 B | 3686.1 [3574.8, 3801.1] | **1914.4** [1857.3, 1975.3] | **1.93×** |
+| loopback TCP | CRC-32 | 4096 B | 4186.9 [4071.6, 4311.2] | **2537.5** [2471.8, 2607.6] | **1.65×** |
 
-The raw-`File` numbers are internally consistent with a pure syscall-count story,
-which is the cross-check that the benchmark is measuring what it claims: two
-calls cost 1936 ns, one costs 695 ns, i.e. **~968 ns per `write` versus ~695 ns
-for one `writev` carrying the same bytes**. The speedup exceeds 2× because
-collapsing the pair also removes one `write_all` loop setup and one return-path
-check, not merely one syscall.
-
-That the 64 B and 4096 B rows are nearly equal (695 vs 753 ns) confirms the cost
-here is per-*call*, not per-byte: a 64× larger payload adds 8 % to the frame
-cost. This is the shape that makes the change worth having — the smaller your
-records, the larger the relative win.
-
-TCP lands at exactly 2.00×, the cleanest possible signal that call count is the
-entire story on that path. The absolute value (≈16 µs/frame) is dominated by
-loopback scheduling against the draining reader thread and should not be read as
-a syscall cost; only the ratio is meaningful.
+Every unbuffered pair improves, including the previously unmeasured CRC-32
+path. Magnitude depends on checksum work and payload size: the syscall saving is
+fixed while CRC/copy work grows. The default-file/4096 B recheck retained the
+win but moved it from 3.65× to 2.12×, so only the direction survives there.
+Loopback absolute values include scheduling against the drain thread and are
+not network-latency claims.
 
 ### F2. `BufWriter` — the regression check
 
-| Payload | Two calls | One `writev` | Delta |
-|---|---|---|---|
-| 64 B | **10.56** [10.42, 10.78] | 11.27 [11.23, 11.35] | **+0.71 ns (+6.8 %)** |
-| 4096 B | 1164.7 [1112.5, 1230.2] | 1076.5 [1071.5, 1081.9] | no reliable difference |
+| Framer | Payload | First isolated pair | Required recheck | Conclusion |
+|---|---:|---:|---:|---|
+| default | 64 B | +2.90 ns (+25.2 %) | −0.75 ns (−5.4 %) | inconclusive |
+| CRC-32 | 64 B | +1.36 ns (+7.5 %) | +1.29 ns (+7.3 %) | **~7 % regression** |
+| default | 4096 B | −108 ns (−9.6 %) | +53 ns (+4.7 %) | inconclusive |
+| CRC-32 | 4096 B | −17 ns (−1.2 %) | +33 ns (+2.2 %, overlapping CIs) | inconclusive |
 
-Small frames on `BufWriter` cost **0.71 ns/record more** than before. This
-reproduced across two isolated runs (+6.8 %, +7.8 %), so it is real, not drift.
+The 64 B CRC-32 arm is the only stable buffered result: one `writev` costs
+roughly 1.3 ns/record more. The default/64 B and both 4096 B arms reverse or
+disappear on recheck, so no claim survives for them.
 
 It was worse. The first implementation was a straight loop over
 `IoSlice::advance_slices`, and it cost ~3.3 ns/record (+24 %). The current code
@@ -140,14 +144,10 @@ match writer.write_vectored(slices) {
 ```
 
 With the partial-write bookkeeping moved behind `#[cold] #[inline(never)]`, the
-residual 0.71 ns is what is genuinely irreducible: summing two slice lengths,
-constructing the two-element `IoSlice` array, and one comparison — plus the fact
-that `BufWriter::write_vectored` cannot use the specialized single-buffer path a
-plain `write_all` takes.
-
-At 4096 B the fixed cost is amortized into the memcpy and flush, and the two arms
-are indistinguishable. **This is the arm that produced a false result before
-isolation** — see §T1.
+small-frame residual is consistent with summing two slice lengths, constructing
+the two-element `IoSlice` array, and one comparison — plus the fact that
+`BufWriter::write_vectored` cannot use the specialized single-buffer path a plain
+`write_all` takes. At 4096 B the workstation cannot resolve a repeatable result.
 
 ### F3. A silent-corruption bug this experiment exposed
 
@@ -174,9 +174,8 @@ fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<u
 The generalizable lesson: **`CountingWriter` must override every `Write` method
 that can move bytes**, and must not be allowed to stay correct by relying on a
 default trait method. `tests/external_index.rs` (B1) now asserts receipt offsets
-against actual frame boundaries, and `tests/io_fault_injection.rs` drives the
-partial-vectored path through the full writer stack, so this class of failure
-fails a test instead of shipping.
+against actual frame boundaries, so this class of failure fails a test instead
+of shipping.
 
 Note for future work: `Write::is_write_vectored` is still unstable on the MSRV
 (`can_vector`, issue #69941), so `CountingWriter` cannot forward it. Nothing in
@@ -186,34 +185,27 @@ silently lose the vectored path rather than misbehave.
 
 ## Conclusion
 
-Single-`writev` framing is a **2–2.8× reduction in per-frame cost on unbuffered
-sinks** and costs **0.71 ns/record on small frames through `BufWriter`**.
+Single-`writev` framing reduces every measured unbuffered pair by **1.63–3.65×**,
+with the 3.65× arm rechecking at 2.12×.
+For the production-shaped CRC-32/64 B pair it saves about **0.91 µs/frame** on a
+raw file and **1.47 µs/frame** on loopback TCP, while costing **1.29–1.36
+ns/frame** through `BufWriter`.
 
-Set against A1's decomposition, the trade is easy to price. A1 measured a full
-64-byte journaling record — harvest, FlatBuffer build, CRC-32 framing, buffered
-file write, index update — at **66.1 ns**, rising to **4087.5 ns** once `fsync`
-enters the pipeline. So:
-
-- On the recommended `BufWriter` path, E1 costs **0.71 ns of a 66.1 ns record**
-  (1.1 %), and **0.017 %** of a durable one. It is below the noise floor of any
-  consumer-visible measurement.
-- On an unbuffered sink it saves **~1.2 µs per frame** — three orders of
-  magnitude more than it costs.
+Against A1's isolated 63.011 ns non-durable 64 B record, that buffered CRC-32
+cost is roughly **2.0–2.2 %**. With one sync per 1,000 records it is about
+0.03 % of total elapsed time. These percentages are specific to the paired
+workloads, not portable constants.
 
 **Adopted as the default** in `DefaultFramer` and `ChecksumFramer`, not gated
 behind a feature or a sink probe. `CONTRIBUTING.md` §6 E1 permits gating "only if
-it helps some sinks and hurts others"; a 1.1 % cost on one path against a 2.5×
-win on another does not meet that bar, and a gate would add a branch to the very
-path it was meant to protect.
+it helps some sinks and hurts others"; the observed small buffered cost against
+the large unbuffered improvement did not meet that bar. A gate would also add a
+branch to the path it was meant to protect.
 
-The change is also a correctness improvement on the TCP path that the timings
-understate: with two writes, a frame header could reach the peer in a separate
-segment from its payload, so a reader on a slow link sees a length prefix
-describing bytes that have not arrived. One `writev` makes the kernel's atomic
-acceptance of header-plus-payload the common case rather than an accident of
-buffering. (`writev` is **not** atomic across slices in general — no
-all-or-nothing claim is made or relied on; the partial-write loop handles the
-rest.)
+On TCP this is only a call-count optimization. TCP is a byte stream:
+`writev` does not guarantee all-or-nothing acceptance, segment boundaries, or
+simultaneous arrival of header and payload. The partial-write loop handles
+short acceptance; readers must continue to handle arbitrary stream chunking.
 
 ### What changes as a result
 
@@ -236,32 +228,28 @@ rest.)
   moved +57 %. Criterion reported both as significant (p < 0.05) because it
   compares against its own saved run and cannot know the machine, not the code,
   changed. The first pass of this experiment reported `BufWriter`/4096 B as a
-  **34 % win** for `writev`; re-collected one group at a time, it was parity.
+  **34 % win** for `writev`; it did not survive isolated rechecks.
   Every figure above was re-collected in isolation. **Rule this establishes:
   cross-run absolute comparisons on this hardware are worth nothing at this
   timescale — only A-vs-B pairs from the same isolated run are admissible, and a
-  surprising delta must be re-collected before it is written down.** Absolute
-  numbers here remain provisional until re-collected on reference hardware; the
-  ratios, which are syscall-count-driven, should hold.
+  surprising delta must be re-collected before it is written down.** The new
+  raw files follow that rule; the contradictory 4096 B buffered recheck is
+  reported as inconclusive rather than averaged away.
 - **T2 — Single machine, single OS.** Apple M4 / macOS. `writev` cost relative to
-  `write` differs on Linux, and the 2.78× raw-`File` figure must not be quoted as
-  cross-platform. The *direction* is structural (one syscall beats two); the
-  magnitude is not.
-- **T3 — Loopback TCP is not a network.** The 1.98× ratio is trustworthy; the
-  16 µs absolute is an artifact of local scheduling against a draining reader
-  thread and says nothing about real link behavior.
-- **T4 — The `BufWriter` regression is at the edge of what this harness
-  resolves.** 0.71 ns/record is ~7 % of a 10.5 ns operation. It reproduced twice
-  in isolation, which is why it is reported as real, but it is not resolvable in
-  a contended run and would be better characterized by instruction counts (A2's
-  instrument).
+  `write` differs on Linux. The *direction* on the measured unbuffered sinks is
+  structural; the 1.63–3.65× magnitude is not portable.
+- **T3 — Loopback TCP is not a network.** Absolute values include local
+  scheduling against a draining reader thread and say nothing about real link
+  behavior.
+- **T4 — `BufWriter` is at the harness limit.** CRC-32/64 B reproduced at
+  ~7 %, but default/64 B and both 4096 B conclusions reversed or vanished.
+  Instruction counts are the better
+  fixed-overhead instrument.
 - **T5 — Partial writes are correctness-tested, not perf-tested.** The `#[cold]`
   path is covered by `vectored_tests` (one-byte-at-a-time, partial-vectored, and
-  stalled sinks) and by `tests/io_fault_injection.rs` through the full writer
-  stack, but it is never benchmarked. A sink that habitually accepts partial
-  vectored writes would pay costs not measured here.
+  stalled sinks), but it is never benchmarked. A sink that habitually accepts
+  partial vectored writes would pay costs not measured here.
 - **T6 — The baseline is a reimplementation, not the historical binary.**
-  `TwoCallFramer` is the pre-E1 `DefaultFramer` body copied verbatim into the
-  bench. If that copy drifted from what actually shipped in 0.2.7, the comparison
-  would be against a strawman. It is four lines and was checked against git
-  history, but it is a copy.
+  Both two-call framers are source replicas rather than the historical binary.
+  They include the historical length guard and combined checksum header and
+  were checked against the parent commit, but remain copies.

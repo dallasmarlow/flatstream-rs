@@ -1,4 +1,4 @@
-# Design Document: flatstream-rs v2.8 — Writer Frame Receipts and Boundary Ergonomics
+# Design Document: flatstream-rs v2.8 — Receipts, Vectored Framing, and Durability
 
 **Version:** 1.0
 **Status:** Implemented on branch `v0.2.8`; pending review and tag
@@ -7,11 +7,11 @@
 
 ## 1. Overview
 
-v2.8 is a small, **fully additive, non-breaking** minor release cut in response to
+v2.8 is an additive minor release cut in response to
 the first real consumer of the library (a terminal scrollback journal built on the
-`ONBOARDING.md` §7 profile). It adds four things and changes nothing else — no
-wire-format change, no trait-signature change, no observable behavior change on
-existing code paths:
+`ONBOARDING.md` §7 profile). It changes no wire bytes or existing method
+signatures. The vectored path changes sink call shape, and the durability layer
+is opt-in through a new concrete writer type:
 
 1. **Frame receipts** — writer offset reporting, so external "offset → frame"
    indexes stop reimplementing the wire layout.
@@ -20,13 +20,20 @@ existing code paths:
 3. **`OwnedStreamWriter<W, F>`** — a lifetime-free type alias for the common
    `write_finished`-only writer.
 4. **Single-`writev` framing** — the built-in framers emit each frame with one
-   vectored write rather than two sequential ones. Byte-identical output; 2–2.8×
-   cheaper per frame on unbuffered sinks.
+   vectored write rather than two sequential ones. Output is byte-identical;
+   isolated results are recorded in `FINDINGS_VECTORED_FRAMING.md`.
+5. **Static durability policies** — `Durable` sinks, automatic frame/byte/time
+   checkpoint policies, manual sync methods, and durable watermarks without a
+   branch or trait object in the default writer.
+6. **Static memory policies** — writer/reader reclamation state and custom
+   builder factories are generic; `NoMemoryPolicy` is the zero-sized default.
+7. **Positioned reads** — receipt-aware forward reads, byte-position reporting,
+   and stateless indexed lookup with caller-owned scratch.
 
 The organizing observation: the consumer succeeded without async, compression,
 streamset, or segments, and the only friction was two small additive gaps. The
-frame-receipt primitive is also exactly what the v3/segment direction (F1-IMPL's
-stream-position accounting, E2's range parser, future segment indexes) needs, so
+frame-receipt primitive is also exactly what segment indexes and positioned
+reads need, so
 this release is being pulled by real usage rather than speculative design. `v0.2.7`
 stays immutable; `0.3.x+` stays reserved for the roadmap.
 
@@ -85,11 +92,13 @@ a distinct builder-less type is reconsidered only if the alias proves insufficie
 
 ## 5. Single-`writev` framing
 
-`DefaultFramer` and `ChecksumFramer` previously put a frame on the wire with two
-calls — `write_all(&len_prefix)` then `write_all(payload)`. On a `BufWriter` that
-is two `memcpy`s; on an unbuffered sink (raw `File`, `TcpStream`, pipe) it is **two
-syscalls per frame** for bytes the kernel will accept in one. Both framers now
-build a two-element `IoSlice` array and issue a single `write_vectored`.
+The built-in framers previously put a frame on the wire with two calls:
+`DefaultFramer` wrote the length prefix and payload separately, while
+`ChecksumFramer` (since v0.2.7) wrote its merged length-plus-checksum header and
+then the payload. On a `BufWriter` that is two staging calls; on an unbuffered
+sink (raw `File`, `TcpStream`, pipe) it can be two syscalls. Both framers now
+build a two-element `IoSlice` array — complete header plus payload — and issue a
+single `write_vectored`.
 
 - **The wire format does not change.** The same bytes are emitted in the same
   order; only the call shape differs. The golden hex corpus
@@ -103,15 +112,15 @@ build a two-element `IoSlice` array and issue a single `write_vectored`.
   across slices. The full-acceptance case is peeled out as the hot path; the
   remainder loop lives behind `#[cold] #[inline(never)]`, retries `Interrupted`,
   and converts a stalled sink into `WriteZero` rather than spinning. Covered by
-  the `vectored_tests` sinks (one-byte-at-a-time, partial-vectored, stalled) and
-  end-to-end in `tests/io_fault_injection.rs`.
+  the `vectored_tests` sinks (one-byte-at-a-time, partial-vectored, stalled).
 
-**Measured** (`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`): 2.78× on raw `File`
-and 1.98× on loopback TCP at 64 B; on the recommended `BufWriter` path, small
-frames cost **0.71 ns/record more** (+6.8 %), which against A1's 66.1 ns
-non-durable record is 1.1 %, and 0.017 % of a durable one. Adopted unconditionally
-rather than gated on a sink probe: a gate would add a branch to the very path it
-was meant to protect.
+**Measured** (`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`): every raw-File/TCP
+pair improved (1.63–3.65× on this machine; a surprising 3.65× arm rechecked at
+2.12×). The production-shaped CRC-32/64 B `BufWriter` pair repeatedly cost
+1.29–1.36 ns (~7 %) more; default/64 B and both 4 KiB buffered arms were
+inconsistent and are reported as inconclusive. The implementation was adopted
+unconditionally rather than gated on a sink probe: a gate would add a branch to
+the path it was meant to protect.
 
 **Receipt interaction — the reason this belongs in the same release as §2.**
 `CountingWriter` originally tallied bytes by overriding `write` and `flush` only.
@@ -133,23 +142,17 @@ quietly lose the vectored path rather than misbehave.
 
 ## 6. Deferred and Rejected
 
-- **Offset-addressed read (`read_frame_at` / `StreamReader::seek_to`) — deferred to
-  E2.** A general seek has too many undefined interactions (stateful deframers,
-  pending memory-policy shrink, buffered readers, v2-vs-v3 header base) to rush; it
-  is the job of E2's range parser. `examples/external_index.rs` demonstrates the
-  supported seek-and-fresh-reader pattern in the meantime, and documents the
-  per-fetch allocation that E2 will remove with caller-supplied scratch.
 - **Fluent builder objects — remain rejected/archived** (`docs/archive/V2_X_FLUENT_BUILDER.md`).
   The consumer report did not ask for a builder; the `FramerExt`/`DeframerExt`
   extension methods already provide the useful, fluent portion.
 
 ## 7. Verification
 
-- **Tests:** 42 lib unit tests (incl. new receipt, offset, alias, and
-  error-conversion tests) plus the integration and doctest suites, green across
-  `all_checksums`, no-features, and `crc16`-only. `cargo fmt --check`, `clippy
-  --all-targets -D warnings` (all-features and no-features), and `rustdoc -D
-  warnings` all clean.
+- **Tests:** the unit, integration, and doctest suites cover the new receipt,
+  offset, alias, and error-conversion behavior across the gate's feature matrix.
+  Exact counts are omitted because later test additions make them stale. The
+  current gate also runs maintained examples and README snippets and
+  compile-checks benchmarks and fuzz targets.
 - **Write-path performance (the consumer's headline concern):** measured against
   the saved post-`v0.2.7` Criterion baseline, the `CountingWriter` + receipt
   routing shows **no regression** — "Sustained Performance: Writing 1000 small
@@ -165,14 +168,38 @@ quietly lose the vectored path rather than misbehave.
   be detected — and does not need to be. The `vectored_tests` case
   `a_non_vectoring_sink_costs_the_same_two_calls_it_did_before` pins that such a
   sink still sees exactly two calls, with byte-identical output.
+- **Durability:** `tests/durability.rs` pins cadence, composition, mode strength,
+  `BufWriter` flush ordering, watermarks, start offsets, manual resets, partial
+  receipt accounting, and failure context. `tests/allocation.rs` proves
+  simple-mode and policy-enabled checkpoint loops allocate zero times in steady
+  state. Criterion and pinned instruction counts are recorded in
+  `FINDINGS_SYNC_POLICY.md`.
+- **Memory dispatch:** existing writer/reader reclamation tests pass unchanged,
+  including deferred reader shrink and custom factories. The default path loses
+  8.21 instructions/frame relative to the optional-box carrier; installed
+  policy costs are separated from dispatch in
+  `FINDINGS_STATIC_MEMORY_POLICY.md`.
+- **Positioned reads:** `tests/positioned_reads.rs` pins byte-exact forward and
+  random reads, start offsets, checksums, one-byte source reads, and safe retry
+  after a live file grows. Allocation tests prove caller scratch reaches a
+  zero-allocation steady state while fresh readers allocate per lookup;
+  `FINDINGS_POSITIONED_READS.md` records buffering-dependent wall-clock results.
+  Pinned instruction counts in `FINDINGS_POSITION_ACCOUNTING.md` characterize
+  discarded/consumed writer receipts and the larger counted-reader boundary;
+  no forward wall-clock regression is resolved.
+- **Completed verification:** the final local gate and a clean
+  `rust:1.97.1-bookworm` gate are green on the exact MSRV; Miri passes all
+  in-source unit tests; both fuzz targets complete their 300-second budgets
+  without a crash; every Criterion target and the pinned Gungraun suite runs;
+  the corpus-backed LOBSTER integration passes.
 
 ## 8. Consuming builders are `#[must_use]`
 
-Thirteen methods take `self` and return a modified `Self` (or a wrapping
-adapter): `with_memory_policy`, `with_memory_policy_and_factory`,
+Methods that take `self` and return a modified `Self` (or a wrapping adapter)
+carry `#[must_use]`: `with_memory_policy`, `with_memory_policy_and_factory`,
 `with_max_frame_len` on both deframers, `with_cooldown`, `with_baseline`, and the
-`FramerExt`/`DeframerExt` combinators `bounded`, `observed`, `with_validator`.
-Only `with_start_offset` and `ValidatorChain::add` carried `#[must_use]`.
+`FramerExt`/`DeframerExt` combinators `bounded`, `observed`, `with_validator`,
+plus durability's `with_sync_policy` and `SyncPolicyExt::or`.
 
 Without it, `deframer.with_max_frame_len(1024);` as a statement compiles clean
 and does nothing — the default 2 GiB bound stays in force. That is the failure
@@ -184,31 +211,34 @@ the validator is simply absent. A `compile_fail` doctest on
 
 ## 9. Breaking Changes
 
-None to the API or the wire format. v2.8 is purely additive; every existing
-constructor, method signature, and wire byte is unchanged. Version bumped
-`0.2.7` → `0.2.8`.
+The wire format and every existing constructor/method signature are unchanged.
+The durability work adds one source-level break permitted by the pre-1.0 policy:
+`ErrorKind::DurabilityFailed` is a new public enum variant, so downstream
+exhaustive matches must add an arm. `StreamWriter` gains a defaulted sync-state
+type parameter; existing type spellings continue to compile because it defaults
+to `NoSync`.
+
+The memory refactor adds defaulted policy-state parameters to `StreamWriter`,
+`StreamReader`, `Messages`, and `TypedMessages`. Existing default-state type
+spellings continue to compile, but code that explicitly annotated the concrete
+return type of `with_memory_policy` or `with_memory_policy_and_factory` must name
+the new static policy/factory state.
 
 The `#[must_use]` additions in §8 can produce **new warnings** in downstream code
 that discards a builder's result. Every such warning is a latent bug — the call
 was already a no-op — so this is intended, and it is a warning, not an error.
 
-## 10. Proposed for 2.8 — pending review sign-off
+## 10. Durability and boundary follow-ups
 
-> **Status: not implemented.** These three add public surface, which §5 of
-> `CONTRIBUTING.md` requires be agreed in review *before* it is built. They are
-> written up here at the shape-of-the-API level so that agreement is possible.
-> Each states the problem from measured evidence, the proposed surface, the
-> alternatives rejected, and the open questions the maintainer should settle.
+> **Status:** §10.1–§10.3 are implemented after maintainer sign-off.
 
-### 10.1 `Durable`: an explicit durability API
+### 10.1 Static durability policies — implemented
 
-**Problem.** A1 measured `fsync` at roughly 61× the cost of everything else in a
-record. It is, by a wide margin, the most important call a journaling consumer
-makes — and the library has no opinion about it. Today you reach it through
-`get_mut()`, which is the one accessor documented to **bypass the frame
-counter** and corrupt subsequent receipts. The most performance-critical and
-most correctness-critical operation in the write path is reached through the
-crate's designated footgun.
+**Problem.** A1 measured one `sync_data()` per 1000-record batch at 68.6× the
+non-sync 64 B pipeline, but only 5.3× at 4 KiB. The separate cadence benchmark
+shows why no cadence-independent multiplier exists. The call is important to a
+journaling consumer, but previously the only route was through `get_mut()`, the
+one accessor documented to bypass the frame counter.
 
 There is a second, quieter trap. `StreamWriter<BufWriter<File>>` is the
 recommended shape, and `writer.get_mut().get_ref().sync_all()` on it syncs
@@ -216,11 +246,11 @@ whatever happens to have been flushed — frames still sitting in the `BufWriter
 are not on disk, and nothing says so. "Flush before sync" is knowledge the type
 system could carry and currently does not.
 
-**Proposed surface.**
+**Implemented surface.**
 
 ```rust
 /// A sink that can push accepted bytes to durable storage.
-pub trait Durable {
+pub trait Durable: std::io::Write {
     /// Contents only (`fdatasync`); cheaper where metadata need not be current.
     fn sync_data(&mut self) -> std::io::Result<()>;
     /// Contents and metadata (`fsync`).
@@ -232,20 +262,36 @@ impl<W: Durable + Write> Durable for std::io::BufWriter<W> { /* flush, then sync
 impl<W: Durable + ?Sized> Durable for &mut W { /* forward */ }
 impl<W: Durable + ?Sized> Durable for Box<W> { /* forward */ }
 
-impl<'a, W: Write + Durable, F: Framer> StreamWriter<'a, W, F> {
-    /// Flushes this writer, then syncs the sink. Returns the **durable
-    /// watermark**: every frame whose `end()` is at or below the returned
-    /// offset is on stable storage.
-    pub fn sync_data(&mut self) -> Result<u64>;
-    pub fn sync_all(&mut self) -> Result<u64>;
+pub trait SyncPolicy: Send {
+    fn observe(&mut self, info: SyncInfo) -> Option<SyncMode>;
+    fn on_synced(&mut self, durable_watermark: u64) {}
 }
+
+let writer = StreamWriter::new(BufWriter::new(file), DefaultFramer)
+    .with_sync_policy(SyncEveryNFrames::new(
+        std::num::NonZeroU64::new(1000).unwrap(),
+        SyncMode::Data,
+    ));
 ```
 
-**Why the watermark return.** It is what a commit protocol actually needs. A
-consumer holding receipts can answer "is transaction T durable?" by comparing
-`receipt.end()` against the last watermark, with no bookkeeping of its own and
-no second call to `bytes_written()` that could race with an intervening write.
-It costs nothing to return — it is `bytes_written()` at sync time.
+`NoSync` is the writer's zero-sized default. Installing a policy changes the
+writer's sync-state type to `Syncing<P>` and requires `W: Durable`; policy calls
+are monomorphized. The default `Vec`/`io::Sink` writer retains its old bounds,
+size, and branch-free write path. Built-ins cover every frame, every N frames,
+every N wire bytes, and an injected-clock interval. `SyncPolicyExt::or` composes
+two policies statically and chooses `SyncMode::All` when simultaneous decisions
+have different strength.
+
+**Checkpoint semantics.** Policies observe a frame only after the sink has
+accepted it completely. `BufWriter<W>: Durable` flushes before delegating the
+sync. A successful checkpoint stores a durable watermark; every receipt whose
+`end()` is at or below it is confirmed by that checkpoint. Manual
+`sync_data()`/`sync_all()` return the same watermark and reset the policy window.
+
+If a checkpoint fails, the frame is already accepted. Returning an ordinary
+`Io` error would invite a duplicate retry, so `ErrorKind::DurabilityFailed`
+records the attempted watermark, previous successful watermark, triggering
+frame coordinates (for automatic checkpoints), sync mode, and source error.
 
 **Deliberately not implemented for in-memory sinks.** No `impl Durable for
 Vec<u8>` or `io::Sink`. A no-op `sync` that returns `Ok` is a lie of exactly the
@@ -253,21 +299,13 @@ kind this crate's culture rejects; absence of the impl makes "this sink has no
 durability" a compile-time fact. Test code that needs a durable sink can use a
 `tempfile`, as the existing tests already do.
 
-**Honesty requirement — macOS.** `File::sync_all` maps to `fsync`, which on
+**macOS semantics.** `File::sync_all` maps to `fsync`, which on
 macOS does **not** flush the drive's write cache; only `F_FULLFSYNC` does. A
-crate that documents its zero-copy scope this carefully should not ship a method
-named `sync_all` without saying so. Proposed: document it plainly on the trait,
-and leave `F_FULLFSYNC` out of scope rather than adding a platform-conditional
-behavior difference the tests cannot portably verify. This is worth an explicit
-maintainer decision, because the alternative view — that `sync_all` should mean
-"actually durable" everywhere and take the `F_FULLFSYNC` cost on macOS — is
-defensible.
+crate that forbids unsafe by default cannot add `fcntl(F_FULLFSYNC)` casually.
+The trait therefore preserves and documents standard-library semantics without
+unsafe code or a runtime dependency.
 
-**Open questions.** (a) Trait name: `Durable` vs `SyncTarget`. (b) Whether
-`sync_data`/`sync_all` should return the watermark or `()`. (c) Whether the
-macOS caveat is documented or handled.
-
-### 10.2 `FrameReceipt::end()`
+### 10.2 `FrameReceipt::end()` and `range()` — implemented
 
 **Problem.** `frame_start + wire_len` is written out by hand in the README
 recipe, in `examples/external_index.rs`, and in five places in
@@ -275,7 +313,7 @@ recipe, in `examples/external_index.rs`, and in five places in
 not do wire arithmetic, and then leaves them doing the one piece that matters —
 the piece you must get right to seek to the *next* frame or to bound a read.
 
-**Proposed surface.**
+**Implemented surface.**
 
 ```rust
 impl FrameReceipt {
@@ -286,14 +324,11 @@ impl FrameReceipt {
 }
 ```
 
-Both are `const fn`, total, and derivable from public fields, so this adds no
-capability — only a name for the thing everyone is already computing, and one
-place to be correct about checksum bytes being inside `wire_len`.
+Both are `const fn`, total, and derivable from public fields. They add no new
+capability, but give checkpoint and index code one named place to compute frame
+boundaries.
 
-**Open question.** Whether `range()` earns its place alongside `end()`, or
-whether `end()` alone is the smaller surface worth having.
-
-### 10.3 `read_frame_at`: offset-keyed point lookup
+### 10.3 Positioned reads — implemented
 
 **Problem.** §6 deferred this to E2 on the grounds that a general seek has too
 many undefined interactions — stateful deframers, a pending memory-policy
@@ -312,33 +347,52 @@ function** that owns nothing:
   says so directly rather than "relative to the writer's start offset," which
   read as though the start offset still had to be added.
 
-Today the supported pattern allocates a fresh reader *and* a fresh buffer per
-lookup. For a graph database, offset-keyed point lookup **is** the read path.
+The old supported pattern allocated a fresh reader and frame buffer per lookup.
+Palimpsest also needed forward receipts to retire its remaining
+`8 + payload.len()` resume-scan arithmetic.
 
-**Proposed surface.**
+**Implemented surface.**
 
 ```rust
-/// Reads the single frame beginning at `offset`, into caller-owned `scratch`.
-/// Returns the payload, or `None` at clean EOF.
+pub struct ReadFrame<'a> {
+    pub payload: &'a [u8],
+    pub receipt: FrameReceipt,
+}
+
 pub fn read_frame_at<'s, R: Read + Seek, D: Deframer>(
     src: &mut R,
     deframer: &D,
     offset: u64,
     scratch: &'s mut Vec<u8>,
-) -> Result<Option<&'s [u8]>>;
+) -> Result<Option<ReadFrame<'s>>>;
+
+impl<R: Read, D: Deframer, M: ReaderMemoryBackend> StreamReader<R, D, M> {
+    pub fn with_start_offset(self, offset: u64) -> Self;
+    pub fn bytes_consumed(&self) -> u64;
+    pub fn read_message_with_receipt(&mut self)
+        -> Result<Option<ReadFrame<'_>>>;
+}
 ```
 
-The whole body is a `seek` plus the existing `read_and_deframe`. The value is
-not the code, it is (a) the allocation moving to the caller, who can reuse one
-`scratch` across a whole traversal, and (b) making the supported random-access
-pattern a tested function rather than an example to copy.
+The free function seeks to an absolute offset, decodes exactly one frame through
+the supplied deframer, and leaves the source at the next frame boundary. Scratch
+grows to a high-water mark and is then allocation-free. Bounds and checksum
+semantics remain the deframer's responsibility.
 
-**Documented caveats.** Passing a `BufReader` is legal but usually wrong —
-`seek` discards its buffer, so it pays for buffering it cannot use; a bare
-`File` is the right argument for scatter reads. And `offset` must be a frame
-boundary from a receipt: pointing it mid-frame yields a garbage length header,
-which the frame-length bound rejects but cannot distinguish from corruption.
+Forward `StreamReader` wraps its source in a counting reader. Receipts and
+`bytes_consumed()` use the same optional start-offset base as writer receipts.
+Bytes read directly through `get_mut()` bypass accounting and are documented as
+the corresponding footgun.
 
-**Open questions.** (a) Free function versus an associated function on
-`StreamReader`. (b) Module placement — `reader`, or a new `random_access`. (c)
-Whether this supersedes E2's scope or is a stepping stone to it.
+**Measured result.** Fresh-reader-per-lookup allocates every frame; warmed
+caller scratch allocates zero times. Wall-clock direction depends on frame size
+and buffering: at 4 KiB a retained `BufReader` narrows the caller-scratch cost,
+while at 64 KiB bare and buffered caller-scratch reads slightly outperform the
+fresh-reader baseline. See `FINDINGS_POSITIONED_READS.md`.
+
+**Live-file implication.** `UnexpectedEof` means the current read attempt
+reached EOF mid-frame, not that the file is finalized. A seekable follower can
+retry `read_frame_at` with the same absolute offset after more bytes arrive;
+each call rewinds before parsing, so a partial attempt cannot strand the reader
+mid-frame. Recovery remains the layer that interprets the same condition as a
+torn tail after writing has stopped.

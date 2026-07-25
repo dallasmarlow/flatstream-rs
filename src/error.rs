@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use crate::durability::SyncMode;
+
 /// Custom error type for the flatstream-rs library.
 ///
 /// The payload lives behind a `Box`, so `Error` is pointer-sized and the hot
@@ -59,9 +61,39 @@ pub enum ErrorKind {
         reason: Cow<'static, str>,
     },
 
-    /// Unexpected end of file while reading stream data.
+    /// The current read attempt reached EOF inside a frame.
+    ///
+    /// This says nothing about whether a seekable source may grow later;
+    /// recovery and live-tailing callers interpret the condition using their
+    /// source lifecycle.
     #[error("Unexpected end of file while reading stream")]
     UnexpectedEof,
+
+    /// A frame was accepted by the sink, but its durability checkpoint failed.
+    ///
+    /// `attempted_watermark` includes every complete frame accepted before the
+    /// failed checkpoint. Callers must not blindly retry the triggering write:
+    /// its bytes are already present even though stable storage was not
+    /// confirmed.
+    #[error(
+        "{mode:?} durability checkpoint through offset {attempted_watermark} failed \
+         (previous durable watermark: {previous_watermark:?}): {source}"
+    )]
+    DurabilityFailed {
+        /// Durability operation that failed.
+        mode: SyncMode,
+        /// Stream offset the checkpoint attempted to make durable.
+        attempted_watermark: u64,
+        /// Last successfully confirmed durable offset, if any.
+        previous_watermark: Option<u64>,
+        /// Triggering frame start for an automatic checkpoint.
+        frame_start: Option<u64>,
+        /// Triggering frame length for an automatic checkpoint.
+        wire_len: Option<u64>,
+        /// Underlying sink error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Renders `InvalidFrame`'s optional context as ` (declared_len=…, …)` — on
@@ -169,6 +201,27 @@ impl Error {
     #[cold]
     pub fn unexpected_eof() -> Self {
         ErrorKind::UnexpectedEof.into()
+    }
+
+    /// Creates an error for a failed durability checkpoint.
+    #[cold]
+    pub(crate) fn durability_failed(
+        mode: SyncMode,
+        attempted_watermark: u64,
+        previous_watermark: Option<u64>,
+        frame_start: Option<u64>,
+        wire_len: Option<u64>,
+        source: std::io::Error,
+    ) -> Self {
+        ErrorKind::DurabilityFailed {
+            mode,
+            attempted_watermark,
+            previous_watermark,
+            frame_start,
+            wire_len,
+            source,
+        }
+        .into()
     }
 }
 

@@ -187,6 +187,11 @@ right.
 first run — no regression was lurking. That is the good outcome, and it means the
 value of this work is prospective: it holds a property that currently holds.
 
+**E3 follow-up:** the implemented suite now has nine tests, including six
+steady-state zero assertions: simple, expert, receipt, checksummed, static
+sync-policy write loops and the read loop. The policy-enabled test contains a
+successful checkpoint inside the armed region.
+
 **Two design points changed during implementation.** `realloc` needed its own
 counter, because `Vec` growth past capacity reallocs rather than allocs and a
 harness watching only `alloc` would miss the most likely regression shape. And

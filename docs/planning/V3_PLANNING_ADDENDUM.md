@@ -6,6 +6,11 @@ nothing
 **Author:** contributor
 **Applies to:** `docs/planning/V3_VECTOR_IO.md`, `docs/planning/V3_SCHEMA_AWARE.md`
 
+> **Owner decision (2026-07-25):** the core stream-header/preamble direction is
+> declined. Headerless v0.2 framing remains normative; durable applications own
+> external format manifests. Header-dependent analysis below is retained only
+> to explain which older proposals no longer apply.
+
 The 3.0 line is maintainer-directed and out of scope for contributor work
 (`CONTRIBUTING.md` §7), so this is deliberately short. It records two things a
 contributor reading `docs/planning/` needs to know and cannot currently learn
@@ -13,39 +18,28 @@ there.
 
 ---
 
-## 1. `V3_VECTOR_IO.md` is finished work sitting in the planning directory
+## 1. `V3_VECTOR_IO.md` is retired in place
 
-Its content shipped in **0.2.8**. `FINDINGS_VECTORED_FRAMING.md` records the
-corrected design — two `IoSlice`s inside the existing `DefaultFramer` and
-`ChecksumFramer`, adopted as the default, byte-identical on the wire — and the
-golden hex corpus passes unchanged. The document already carries an emphatic
-SUPERSEDED banner (2026-07-10) warning that its body "MUST NOT be used as a design
-reference" and that its `VectoredFramer` / `VectoredChecksumFramer` types "will
-not be built."
+Its useful core idea shipped in **0.2.8**.
+`FINDINGS_VECTORED_FRAMING.md` records the corrected design — two `IoSlice`s
+inside the existing `DefaultFramer` and `ChecksumFramer`, adopted as the default,
+byte-identical on the wire — and the golden hex corpus passes unchanged. The
+isolated raw benchmark results and required rechecks are now committed.
 
-Its remaining content is actively wrong against the shipped library: it claims
-`writev` provides "**Atomic operations**: All-or-nothing semantics" (it does not,
-and the shipped partial-write loop exists because it does not), it prices
-syscalls with figures the banner itself calls fabricated, and its v3.0 → v3.1 →
-v4.0 migration staging describes deprecating a `DefaultFramer` that now simply
-*is* the vectored path.
+The old proposal was actively wrong against the shipped library: it claimed
+`writev` provided all-or-nothing atomicity, priced syscalls with unsupported
+figures, and staged deprecation of a `DefaultFramer` that now *is* the vectored
+path. Its body has therefore been replaced with a short retired tombstone that
+states the current behavior and preserves existing links.
 
-**The problem is placement, not content.** `docs/planning/` reads as "work that
-might happen"; `docs/archive/` reads as "decided, preserved for the reasoning."
-This document is unambiguously the second, and its own banner says so. Leaving it
-in `planning/` undoes the work the banner is doing — the directory says "consider
-this" while the first paragraph says "do not."
+The normal placement would be `docs/archive/`, but this correction deliberately
+does not perform a git rename. The tombstone's first heading and status make its
+retired state explicit despite the retained path.
 
-**Proposed:** move it to `docs/archive/V3_VECTOR_IO.md`, keeping the banner and
-adding one line recording that the corrected design shipped in 0.2.8 with a link
-to the findings doc. This matches how `V2_X_FLUENT_BUILDER.md` and
-`V2_X_BOXED_TRAITS.md` were handled on 2026-07-24.
-
-One thing in it is worth carrying forward rather than archiving quietly: its
-review notes established the principle "Don't add a new `FlatBufferFramer` trait
-yet; the current `Framer` is enough. Extra traits add surface area without
-immediate gain." That reasoning outlived the document, and §2 below is where it
-next applies.
+One conclusion is preserved in the tombstone: the current `Framer` trait is
+enough; no `FlatBufferFramer` extension or parallel vectored-framer types were
+needed. That reasoning outlived the proposal, and §2 below is where it next
+applies.
 
 ## 2. `V3_SCHEMA_AWARE.md` needs a refresh before it is built against
 
@@ -115,10 +109,9 @@ built against.
 
 ## 3. A note on the planning directory itself
 
-After the moves proposed here and in `ARENA_ALLOCATION_RESEARCH_ADDENDUM.md`,
-`docs/planning/` would contain only live work. That is worth maintaining as a
-rule: **a document that has shipped, been rejected, or been superseded belongs in
-`docs/archive/`**, and the move should happen in the same change that decides its
-fate. Three of the directory's current contents are stale in different ways and
-none announced it in its filename or location — which is how a contributor ends up
-reading a design reference that the maintainer already knows is dead.
+Apart from explicit tombstones such as `V3_VECTOR_IO.md`, `docs/planning/` should
+contain only live work. A document that has shipped, been rejected, or been
+superseded normally belongs in `docs/archive/`, and that move should happen in
+the same change that decides its fate. When a rename is intentionally deferred,
+the retained file must be reduced to an unmistakable retired marker rather than
+leave obsolete design content in a planning location.

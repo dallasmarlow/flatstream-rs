@@ -16,14 +16,25 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET_DIR=$(cargo metadata --format-version 1 --no-deps \
+TARGET_DIR=$(cargo metadata --locked --format-version 1 --no-deps \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+README_TARGET_DIR="$TARGET_DIR/readme-doctests"
 
-cargo build --locked --quiet --features all_checksums
+# Use an isolated clean target. Picking an arbitrary `libflatbuffers-*.rlib`
+# from the shared target is unsound when another workspace has built the same
+# version with a different crate identity: rustdoc then sees two incompatible
+# FlatBufferBuilder types despite identical version strings.
+cargo clean --quiet --target-dir "$README_TARGET_DIR"
+CARGO_TARGET_DIR="$README_TARGET_DIR" \
+    cargo build --locked --quiet --features all_checksums
 
-FLATBUFFERS_RLIB=$(ls -t "$TARGET_DIR"/debug/deps/libflatbuffers-*.rlib | head -1)
+FLATBUFFERS_RLIB=("$README_TARGET_DIR"/debug/deps/libflatbuffers-*.rlib)
+if [[ ${#FLATBUFFERS_RLIB[@]} -ne 1 ]]; then
+    echo "expected exactly one flatbuffers rlib, found ${#FLATBUFFERS_RLIB[@]}" >&2
+    exit 1
+fi
 
 exec rustdoc --edition 2021 --test README.md \
-    -L "dependency=$TARGET_DIR/debug/deps" \
-    --extern flatstream="$TARGET_DIR/debug/libflatstream.rlib" \
-    --extern flatbuffers="$FLATBUFFERS_RLIB"
+    -L "dependency=$README_TARGET_DIR/debug/deps" \
+    --extern flatstream="$README_TARGET_DIR/debug/libflatstream.rlib" \
+    --extern flatbuffers="${FLATBUFFERS_RLIB[0]}"

@@ -45,14 +45,18 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{ChecksumFramer, Crc32, DefaultFramer, FrameReceipt, StreamWriter};
+use flatstream::{
+    ChecksumFramer, Crc32, DefaultFramer, FrameReceipt, StreamWriter, SyncEveryNFrames, SyncMode,
+};
 use std::io::{BufWriter, Seek, SeekFrom};
+use std::num::NonZeroU64;
 use std::time::Instant;
 
 /// Records per iteration. Large enough to amortize the per-iteration setup
 /// (one `seek`, one writer construction) into the noise, small enough that the
 /// scratch file stays in page cache.
 const RECORDS: usize = 1_000;
+const DURABILITY_RECORDS: usize = 16;
 
 /// Chunk payload sizes. 64 B is a typical single-line terminal write; 4 KiB is
 /// a screen repaint or a burst of program output.
@@ -318,6 +322,43 @@ fn decomposition(c: &mut Criterion) {
     }
 
     group.finish();
+
+    // Durability cadence is a separate dimension. The decomposition above
+    // measures one checkpoint per 1,000-record batch; it cannot support claims
+    // about every possible fsync policy. Keep this group small enough that the
+    // every-frame arm is practical while preserving identical work per arm.
+    let mut durability = c.benchmark_group("A1 Durability Cadence");
+    durability.throughput(Throughput::Elements(DURABILITY_RECORDS as u64));
+    let chunk_len = 64;
+    for cadence in [1u64, 4, DURABILITY_RECORDS as u64] {
+        let mut file = tempfile::tempfile().expect("scratch file");
+        let mut builder = FlatBufferBuilder::new();
+        let mut index: Vec<(u64, FrameReceipt)> = Vec::with_capacity(DURABILITY_RECORDS);
+        durability.bench_function(BenchmarkId::new("sync_data_every", cadence), |b| {
+            b.iter(|| {
+                file.set_len(0).unwrap();
+                file.seek(SeekFrom::Start(0)).unwrap();
+                index.clear();
+                let mut h = Harvester::new(black_box(&source), chunk_len);
+                let policy =
+                    SyncEveryNFrames::new(NonZeroU64::new(cadence).unwrap(), SyncMode::Data);
+                let mut writer =
+                    StreamWriter::new(BufWriter::new(&mut file), ChecksumFramer::new(Crc32::new()))
+                        .with_sync_policy(policy);
+                for _ in 0..DURABILITY_RECORDS {
+                    let chunk = h.harvest();
+                    build(&mut builder, &chunk);
+                    let receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
+                    index.push((chunk.sequence, receipt));
+                }
+                if writer.durable_watermark() != Some(writer.bytes_written()) {
+                    writer.sync_data().unwrap();
+                }
+                black_box((&index, writer.durable_watermark()));
+            });
+        });
+    }
+    durability.finish();
 }
 
 criterion_group!(benches, decomposition);

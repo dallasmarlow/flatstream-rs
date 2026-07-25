@@ -1,11 +1,168 @@
 //! A generic, composable reader for `flatstream`.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::framing::Deframer;
-use crate::policy::{MemoryPolicy, ReclamationInfo};
+use crate::policy::{MemoryPolicy, NoMemoryPolicy, ReclamationInfo};
 use crate::traits::StreamDeserialize;
-use std::io::Read;
+use crate::writer::FrameReceipt;
+use std::io::{IoSliceMut, Read, Seek, SeekFrom};
 use std::marker::PhantomData;
+
+/// Wraps a source and counts bytes actually returned through `Read`.
+///
+/// Deframers are generic over `Read`, so routing them through this wrapper
+/// provides frame positions without changing the `Deframer` trait.
+struct CountingReader<R> {
+    inner: R,
+    count: u64,
+}
+
+impl<R> CountingReader<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, count: 0 }
+    }
+
+    fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
+    fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+
+    #[inline]
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> std::io::Result<usize> {
+        let n = self.inner.read_vectored(bufs)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+}
+
+/// One successfully decoded frame and its exact wire bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadFrame<'a> {
+    /// Payload borrowed from caller-owned or reader-owned scratch storage.
+    pub payload: &'a [u8],
+    /// Absolute or stream-relative wire range, matching the reader's configured
+    /// start offset.
+    pub receipt: FrameReceipt,
+}
+
+/// Statically dispatched reader memory-policy state.
+pub struct ReaderMemoryPolicy<P> {
+    policy: P,
+    baseline_capacity: usize,
+    pending_shrink: bool,
+}
+
+impl<P: MemoryPolicy> ReaderMemoryPolicy<P> {
+    fn new(policy: P) -> Self {
+        let baseline_capacity = policy.baseline_capacity();
+        Self {
+            policy,
+            baseline_capacity,
+            pending_shrink: false,
+        }
+    }
+}
+
+/// Internal static-dispatch bridge for reader-owned memory.
+#[doc(hidden)]
+pub trait ReaderMemoryBackend: Send {
+    fn before_read(&mut self, buffer: &mut Vec<u8>);
+    fn after_read(&mut self, buffer_capacity: usize, last_message_size: usize);
+}
+
+impl ReaderMemoryBackend for NoMemoryPolicy {
+    #[inline(always)]
+    fn before_read(&mut self, _buffer: &mut Vec<u8>) {}
+
+    #[inline(always)]
+    fn after_read(&mut self, _buffer_capacity: usize, _last_message_size: usize) {}
+}
+
+impl<P: MemoryPolicy> ReaderMemoryBackend for ReaderMemoryPolicy<P> {
+    #[inline]
+    fn before_read(&mut self, buffer: &mut Vec<u8>) {
+        if self.pending_shrink {
+            *buffer = Vec::with_capacity(self.baseline_capacity);
+            self.pending_shrink = false;
+        }
+    }
+
+    #[inline]
+    fn after_read(&mut self, buffer_capacity: usize, last_message_size: usize) {
+        if buffer_capacity <= self.baseline_capacity {
+            return;
+        }
+        if let Some(reason) = self.policy.should_reset(last_message_size, buffer_capacity) {
+            self.pending_shrink = true;
+            self.policy.on_reclaim(&ReclamationInfo {
+                reason,
+                last_message_size,
+                capacity_before: buffer_capacity,
+                capacity_after: self.baseline_capacity,
+            });
+        }
+    }
+}
+
+/// Reads exactly one frame beginning at absolute `offset`.
+///
+/// The payload is decoded into caller-owned `scratch` and borrowed from it in
+/// the result. Once `scratch` reaches the largest frame used by a workload,
+/// repeated lookups allocate nothing. Bounds and checksum behavior come from
+/// `deframer`, exactly as they do for [`StreamReader`].
+///
+/// On success, `src` is positioned one byte past the frame. `Ok(None)` means
+/// clean EOF at `offset`. An EOF observed after any part of a frame is
+/// [`ErrorKind::UnexpectedEof`](crate::ErrorKind::UnexpectedEof); a live-file
+/// follower may retry safely by calling this function again with the same
+/// absolute offset, which seeks back before parsing.
+///
+/// Passing a buffered reader is legal, but every point lookup seeks and
+/// invalidates its buffered position. Even so, buffering can reduce syscall
+/// count for small frames; benchmark a retained `BufReader<File>` against a bare
+/// `File` for the application's frame-size distribution.
+pub fn read_frame_at<'a, R, D>(
+    src: &mut R,
+    deframer: &D,
+    offset: u64,
+    scratch: &'a mut Vec<u8>,
+) -> Result<Option<ReadFrame<'a>>>
+where
+    R: Read + Seek,
+    D: Deframer,
+{
+    src.seek(SeekFrom::Start(offset))?;
+    let Some(payload_len) = deframer.read_and_deframe(src, scratch)? else {
+        return Ok(None);
+    };
+    let frame_end = src.stream_position()?;
+    let wire_len = frame_end.checked_sub(offset).ok_or_else(|| {
+        Error::invalid_frame("source position moved before the requested frame offset")
+    })?;
+    Ok(Some(ReadFrame {
+        payload: &scratch[..payload_len],
+        receipt: FrameReceipt {
+            frame_start: offset,
+            wire_len,
+        },
+    }))
+}
 
 /// A reader for streaming messages from a `flatstream`.
 ///
@@ -36,6 +193,13 @@ use std::marker::PhantomData;
 /// The `messages()` method provides manual iteration control for cases where you
 /// need more complex control flow or want to process messages conditionally.
 /// Performance: Same as `process_all()` - both use zero-copy access.
+///
+/// Every successful frame also has a [`FrameReceipt`] available through
+/// [`read_message_with_receipt`](Self::read_message_with_receipt),
+/// [`process_all_with_receipt`](Self::process_all_with_receipt), or
+/// [`Messages::next_with_receipt`]. [`bytes_consumed`](Self::bytes_consumed)
+/// reports the next frame boundary. For indexed scatter reads, [`read_frame_at`]
+/// uses caller-owned scratch without constructing a `StreamReader`.
 ///
 /// ```rust
 /// # use flatstream::{StreamReader, DefaultDeframer, Result};
@@ -78,49 +242,46 @@ use std::marker::PhantomData;
 /// [`with_memory_policy`](Self::with_memory_policy) to shrink the buffer back
 /// to the policy's baseline capacity (`MemoryPolicy::baseline_capacity`,
 /// default 16 KiB). The shrink is deferred to the start of the next read, so a
-/// payload already returned is never invalidated.
-pub struct StreamReader<R: Read, D: Deframer> {
-    reader: R,
+/// payload already returned is never invalidated. Policy state is generic and
+/// statically dispatched; the zero-sized [`NoMemoryPolicy`] default compiles
+/// away.
+pub struct StreamReader<R: Read, D: Deframer, M = NoMemoryPolicy> {
+    reader: CountingReader<R>,
     deframer: D,
     // The reader owns its buffer, resizing as needed.
     // This addresses Lesson 4 and 16 for memory efficiency.
     buffer: Vec<u8>,
-    // Optional capacity-aware policy; one predictable branch per read when absent.
-    policy: Option<PolicySlot>,
-    pending_shrink: bool,
+    memory: M,
+    /// Base added to counted source bytes. Set before reading when the source
+    /// begins at a nonzero position.
+    start_offset: u64,
 }
 
-/// Installed-policy state: the policy plus its baseline (cached from
-/// `MemoryPolicy::baseline_capacity()` at installation so the steady-state gate
-/// is a plain integer compare).
-struct PolicySlot {
-    policy: Box<dyn MemoryPolicy>,
-    baseline_capacity: usize,
-}
-
-impl<R: Read, D: Deframer> StreamReader<R, D> {
+impl<R: Read, D: Deframer> StreamReader<R, D, NoMemoryPolicy> {
     /// Creates a new `StreamReader` with the given reader and deframing strategy.
     pub fn new(reader: R, deframer: D) -> Self {
         Self {
-            reader,
+            reader: CountingReader::new(reader),
             deframer,
             buffer: Vec::new(),
-            policy: None,
-            pending_shrink: false,
+            memory: NoMemoryPolicy,
+            start_offset: 0,
         }
     }
 
     /// Creates a new `StreamReader` with a pre-allocated buffer capacity.
     pub fn with_capacity(reader: R, deframer: D, capacity: usize) -> Self {
         Self {
-            reader,
+            reader: CountingReader::new(reader),
             deframer,
             buffer: Vec::with_capacity(capacity),
-            policy: None,
-            pending_shrink: false,
+            memory: NoMemoryPolicy,
+            start_offset: 0,
         }
     }
+}
 
+impl<R: Read, D: Deframer, M: ReaderMemoryBackend> StreamReader<R, D, M> {
     /// Installs a memory reclamation policy on this reader.
     ///
     /// After each successful read, the policy observes the payload size and the
@@ -132,76 +293,58 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// capacity exceeds that baseline — at or below it there is nothing to
     /// reclaim.
     #[must_use]
-    pub fn with_memory_policy<P: MemoryPolicy + 'static>(mut self, policy: P) -> Self {
-        self.policy = Some(PolicySlot {
-            baseline_capacity: policy.baseline_capacity(),
-            policy: Box::new(policy),
-        });
-        self
+    pub fn with_memory_policy<P: MemoryPolicy>(
+        self,
+        policy: P,
+    ) -> StreamReader<R, D, ReaderMemoryPolicy<P>> {
+        StreamReader {
+            reader: self.reader,
+            deframer: self.deframer,
+            buffer: self.buffer,
+            memory: ReaderMemoryPolicy::new(policy),
+            start_offset: self.start_offset,
+        }
     }
 
     /// Reads the next message into the internal buffer. This is the low-level
     /// alternative to using the processor or expert APIs.
     /// Returns Ok(Some(payload)) on success, Ok(None) on clean EOF.
     ///
-    /// The policy machinery is outlined into cold/uninlined helpers so this
-    /// hot path stays small enough to inline; without a policy installed the
-    /// per-read cost is two predictable, never-taken branches.
+    /// Memory policy dispatch is static; the default [`NoMemoryPolicy`] calls
+    /// below inline away.
     #[inline]
     pub fn read_message(&mut self) -> Result<Option<&[u8]>> {
-        // If a shrink was scheduled on a previous frame, perform it now
-        if self.pending_shrink {
-            self.apply_pending_shrink();
+        match self.read_message_with_receipt()? {
+            Some(frame) => Ok(Some(frame.payload)),
+            None => Ok(None),
         }
+    }
+
+    /// Reads one message and returns its exact wire bounds.
+    ///
+    /// The receipt is measured from this reader's configured start offset. It
+    /// includes the length prefix, optional checksum, and payload, so callers
+    /// can construct or verify indexes without duplicating framing arithmetic.
+    #[inline]
+    pub fn read_message_with_receipt(&mut self) -> Result<Option<ReadFrame<'_>>> {
+        self.memory.before_read(&mut self.buffer);
+        let frame_start = self.bytes_consumed();
         match self
             .deframer
             .read_and_deframe(&mut self.reader, &mut self.buffer)?
         {
             Some(n) => {
-                if self.policy.is_some() {
-                    self.evaluate_memory_policy(n);
-                }
-                Ok(Some(&self.buffer[..n]))
+                self.memory.after_read(self.buffer.capacity(), n);
+                let wire_len = self.bytes_consumed() - frame_start;
+                Ok(Some(ReadFrame {
+                    payload: &self.buffer[..n],
+                    receipt: FrameReceipt {
+                        frame_start,
+                        wire_len,
+                    },
+                }))
             }
             None => Ok(None),
-        }
-    }
-
-    /// Applies a reclaim scheduled by the previous read. Cold: runs at most
-    /// once per reclamation event, never on the steady-state path.
-    #[cold]
-    #[inline(never)]
-    fn apply_pending_shrink(&mut self) {
-        // `pending_shrink` is only ever set by an installed policy.
-        if let Some(slot) = self.policy.as_ref() {
-            self.buffer = Vec::with_capacity(slot.baseline_capacity);
-        }
-        self.pending_shrink = false;
-    }
-
-    /// Consults the installed policy after a successful read. Outlined
-    /// (`inline(never)`) to keep `read_message`'s inlinable body minimal for
-    /// readers without a policy.
-    #[inline(never)]
-    fn evaluate_memory_policy(&mut self, last_message_size: usize) {
-        let Some(slot) = self.policy.as_mut() else {
-            return;
-        };
-        let capacity = self.buffer.capacity();
-        // At or below the policy's baseline there is nothing to reclaim —
-        // skip the policy so its state cannot churn.
-        if capacity > slot.baseline_capacity {
-            if let Some(reason) = slot.policy.should_reset(last_message_size, capacity) {
-                // Schedule the shrink for the start of the *next* read so the
-                // payload about to be returned is never invalidated.
-                self.pending_shrink = true;
-                slot.policy.on_reclaim(&ReclamationInfo {
-                    reason,
-                    last_message_size,
-                    capacity_before: capacity,
-                    capacity_after: slot.baseline_capacity,
-                });
-            }
         }
     }
 
@@ -228,6 +371,17 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
         Ok(())
     }
 
+    /// Processes every frame with its exact wire receipt.
+    pub fn process_all_with_receipt<F>(&mut self, mut processor: F) -> Result<()>
+    where
+        for<'p> F: FnMut(ReadFrame<'p>) -> Result<()>,
+    {
+        while let Some(frame) = self.read_message_with_receipt()? {
+            processor(frame)?;
+        }
+        Ok(())
+    }
+
     /// Returns an iterator-like object for manual message processing.
     ///
     /// This provides the "expert path" for users who need more control over
@@ -235,7 +389,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     /// to the message payload, providing zero-copy access.
     ///
     /// Lifetimes: Each returned payload `&[u8]` is valid only until the next successful read.
-    pub fn messages(&mut self) -> Messages<'_, R, D> {
+    pub fn messages(&mut self) -> Messages<'_, R, D, M> {
         Messages { reader: self }
     }
 
@@ -243,7 +397,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
     ///
     /// This yields verified FlatBuffer roots using the `StreamDeserialize` trait
     /// while preserving zero-copy lifetimes tied to the reader.
-    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, T>
+    pub fn typed_messages<T>(&mut self) -> TypedMessages<'_, R, D, T, M>
     where
         for<'p> T: StreamDeserialize<'p>,
     {
@@ -346,14 +500,38 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
         })
     }
 
+    /// Number of source bytes consumed, plus the configured start offset.
+    ///
+    /// After a successful frame this is the offset where the next frame begins.
+    /// If a read fails mid-frame, it reflects bytes already consumed by that
+    /// failed attempt.
+    pub fn bytes_consumed(&self) -> u64 {
+        self.start_offset + self.reader.count
+    }
+
+    /// Sets the base used by [`bytes_consumed`](Self::bytes_consumed) and
+    /// receipts returned by [`read_message_with_receipt`](Self::read_message_with_receipt).
+    ///
+    /// Set this before reading when the wrapped source begins at a nonzero
+    /// stream position.
+    #[must_use]
+    pub fn with_start_offset(mut self, offset: u64) -> Self {
+        self.start_offset = offset;
+        self
+    }
+
     /// Returns a reference to the underlying reader.
     pub fn get_ref(&self) -> &R {
-        &self.reader
+        self.reader.get_ref()
     }
 
     /// Returns a mutable reference to the underlying reader.
+    ///
+    /// Reads and seeks performed directly through this reference bypass or
+    /// invalidate position accounting, so subsequent receipts may not match the
+    /// underlying source position.
     pub fn get_mut(&mut self) -> &mut R {
-        &mut self.reader
+        self.reader.get_mut()
     }
 
     /// Returns a reference to the deframer strategy.
@@ -373,7 +551,7 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
 
     /// Consume the `StreamReader`, returning the underlying reader.
     pub fn into_inner(self) -> R {
-        self.reader
+        self.reader.into_inner()
     }
 }
 
@@ -382,11 +560,11 @@ impl<R: Read, D: Deframer> StreamReader<R, D> {
 /// This struct provides the "expert path" for users who need more control over
 /// the iteration process. It borrows the `StreamReader` mutably, ensuring
 /// proper lifetime management.
-pub struct Messages<'a, R: Read, D: Deframer> {
-    reader: &'a mut StreamReader<R, D>,
+pub struct Messages<'a, R: Read, D: Deframer, M = NoMemoryPolicy> {
+    reader: &'a mut StreamReader<R, D, M>,
 }
 
-impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
+impl<'a, R: Read, D: Deframer, M: ReaderMemoryBackend> Messages<'a, R, D, M> {
     /// Returns the next message in the stream.
     ///
     /// # Returns
@@ -398,6 +576,12 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
         self.reader.read_message()
     }
 
+    /// Returns the next message with its exact wire receipt.
+    #[inline]
+    pub fn next_with_receipt(&mut self) -> Result<Option<ReadFrame<'_>>> {
+        self.reader.read_message_with_receipt()
+    }
+
     #[allow(clippy::should_implement_trait)]
     #[inline]
     pub fn next(&mut self) -> Result<Option<&[u8]>> {
@@ -406,15 +590,15 @@ impl<'a, R: Read, D: Deframer> Messages<'a, R, D> {
 }
 
 /// Typed iterator-like object yielding verified FlatBuffer roots.
-pub struct TypedMessages<'a, R: Read, D: Deframer, T>
+pub struct TypedMessages<'a, R: Read, D: Deframer, T, M = NoMemoryPolicy>
 where
     for<'p> T: StreamDeserialize<'p>,
 {
-    reader: &'a mut StreamReader<R, D>,
+    reader: &'a mut StreamReader<R, D, M>,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, R: Read, D: Deframer, T> TypedMessages<'a, R, D, T>
+impl<'a, R: Read, D: Deframer, T, M: ReaderMemoryBackend> TypedMessages<'a, R, D, T, M>
 where
     for<'p> T: StreamDeserialize<'p>,
 {

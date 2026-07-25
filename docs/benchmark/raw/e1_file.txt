@@ -1,0 +1,128 @@
+# e1_file
+# date:    2026-07-25T03:52:36Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench vectored_framing -- file/
+
+    Finished `bench` profile [optimized] target(s) in 0.12s
+     Running benches/vectored_framing.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/2ce7581716208fde57ea5c729fac24a3/cargo-target/release/deps/vectored_framing-3717d7fb03d2d657)
+Gnuplot not found, using plotters backend
+Benchmarking E1 Vectored Framing/file/default/vectored/64B
+Benchmarking E1 Vectored Framing/file/default/vectored/64B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/file/default/vectored/64B: Collecting 100 samples in estimated 9.1186 s (10k iterations)
+Benchmarking E1 Vectored Framing/file/default/vectored/64B: Analyzing
+E1 Vectored Framing/file/default/vectored/64B
+                        time:   [1.0385 ms 1.0396 ms 1.0408 ms]
+                        thrpt:  [960.84 Kelem/s 961.93 Kelem/s 962.95 Kelem/s]
+                 change:
+                        time:   [+55.723% +57.293% +58.604%] (p = 0.00 < 0.05)
+                        thrpt:  [-36.950% -36.425% -35.783%]
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  2 (2.00%) low severe
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Benchmarking E1 Vectored Framing/file/default/two_call/64B
+Benchmarking E1 Vectored Framing/file/default/two_call/64B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.6s, enable flat sampling, or reduce sample count to 50.
+Benchmarking E1 Vectored Framing/file/default/two_call/64B: Collecting 100 samples in estimated 9.6484 s (5050 iterations)
+Benchmarking E1 Vectored Framing/file/default/two_call/64B: Analyzing
+E1 Vectored Framing/file/default/two_call/64B
+                        time:   [1.9002 ms 1.9042 ms 1.9088 ms]
+                        thrpt:  [523.89 Kelem/s 525.15 Kelem/s 526.27 Kelem/s]
+                 change:
+                        time:   [-1.7398% +1.8042% +5.8361%] (p = 0.34 > 0.05)
+                        thrpt:  [-5.5143% -1.7722% +1.7706%]
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking E1 Vectored Framing/file/crc32/vectored/64B
+Benchmarking E1 Vectored Framing/file/crc32/vectored/64B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.5s, enable flat sampling, or reduce sample count to 60.
+Benchmarking E1 Vectored Framing/file/crc32/vectored/64B: Collecting 100 samples in estimated 5.4518 s (5050 iterations)
+Benchmarking E1 Vectored Framing/file/crc32/vectored/64B: Analyzing
+E1 Vectored Framing/file/crc32/vectored/64B
+                        time:   [1.0823 ms 1.0844 ms 1.0867 ms]
+                        thrpt:  [920.19 Kelem/s 922.20 Kelem/s 923.95 Kelem/s]
+                 change:
+                        time:   [-0.3482% -0.0214% +0.3277%] (p = 0.90 > 0.05)
+                        thrpt:  [-0.3266% +0.0214% +0.3495%]
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking E1 Vectored Framing/file/crc32/two_call/64B
+Benchmarking E1 Vectored Framing/file/crc32/two_call/64B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/file/crc32/two_call/64B: Collecting 100 samples in estimated 5.1956 s (2600 iterations)
+Benchmarking E1 Vectored Framing/file/crc32/two_call/64B: Analyzing
+E1 Vectored Framing/file/crc32/two_call/64B
+                        time:   [1.9909 ms 1.9954 ms 2.0009 ms]
+                        thrpt:  [499.79 Kelem/s 501.14 Kelem/s 502.29 Kelem/s]
+                 change:
+                        time:   [-0.6188% -0.2827% +0.0741%] (p = 0.12 > 0.05)
+                        thrpt:  [-0.0740% +0.2835% +0.6226%]
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking E1 Vectored Framing/file/default/vectored/4096B
+Benchmarking E1 Vectored Framing/file/default/vectored/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/file/default/vectored/4096B: Collecting 100 samples in estimated 7.0557 s (10k iterations)
+Benchmarking E1 Vectored Framing/file/default/vectored/4096B: Analyzing
+E1 Vectored Framing/file/default/vectored/4096B
+                        time:   [694.49 µs 695.58 µs 696.69 µs]
+                        thrpt:  [1.4353 Melem/s 1.4377 Melem/s 1.4399 Melem/s]
+                 change:
+                        time:   [-41.767% -40.329% -39.284%] (p = 0.00 < 0.05)
+                        thrpt:  [+64.702% +67.586% +71.724%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) low mild
+Benchmarking E1 Vectored Framing/file/default/two_call/4096B
+Benchmarking E1 Vectored Framing/file/default/two_call/4096B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.8s, enable flat sampling, or reduce sample count to 50.
+Benchmarking E1 Vectored Framing/file/default/two_call/4096B: Collecting 100 samples in estimated 9.8200 s (5050 iterations)
+Benchmarking E1 Vectored Framing/file/default/two_call/4096B: Analyzing
+E1 Vectored Framing/file/default/two_call/4096B
+                        time:   [2.3759 ms 2.5368 ms 2.7206 ms]
+                        thrpt:  [367.56 Kelem/s 394.20 Kelem/s 420.90 Kelem/s]
+                 change:
+                        time:   [+6.7691% +11.789% +18.700%] (p = 0.00 < 0.05)
+                        thrpt:  [-15.754% -10.546% -6.3399%]
+                        Performance has regressed.
+Found 12 outliers among 100 measurements (12.00%)
+  7 (7.00%) high mild
+  5 (5.00%) high severe
+Benchmarking E1 Vectored Framing/file/crc32/vectored/4096B
+Benchmarking E1 Vectored Framing/file/crc32/vectored/4096B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.1s, enable flat sampling, or reduce sample count to 50.
+Benchmarking E1 Vectored Framing/file/crc32/vectored/4096B: Collecting 100 samples in estimated 8.1308 s (5050 iterations)
+Benchmarking E1 Vectored Framing/file/crc32/vectored/4096B: Analyzing
+E1 Vectored Framing/file/crc32/vectored/4096B
+                        time:   [1.5401 ms 1.5455 ms 1.5516 ms]
+                        thrpt:  [644.50 Kelem/s 647.06 Kelem/s 649.31 Kelem/s]
+                 change:
+                        time:   [-0.1448% +0.5385% +1.2443%] (p = 0.12 > 0.05)
+                        thrpt:  [-1.2290% -0.5356% +0.1450%]
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking E1 Vectored Framing/file/crc32/two_call/4096B
+Benchmarking E1 Vectored Framing/file/crc32/two_call/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/file/crc32/two_call/4096B: Collecting 100 samples in estimated 5.1229 s (2000 iterations)
+Benchmarking E1 Vectored Framing/file/crc32/two_call/4096B: Analyzing
+E1 Vectored Framing/file/crc32/two_call/4096B
+                        time:   [2.5171 ms 2.5264 ms 2.5373 ms]
+                        thrpt:  [394.13 Kelem/s 395.83 Kelem/s 397.28 Kelem/s]
+                 change:
+                        time:   [+0.7910% +1.3466% +1.9474%] (p = 0.00 < 0.05)
+                        thrpt:  [-1.9102% -1.3287% -0.7848%]
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe

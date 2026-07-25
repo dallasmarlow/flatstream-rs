@@ -36,9 +36,9 @@ pub const MAX_WIRE_FRAME_LEN: usize = u32::MAX as usize;
 /// call per attempt — the header and the payload reach the sink together
 /// instead of as two separate `write_all`s. On a sink that implements
 /// `writev` (`File`, `TcpStream`) this halves the syscalls per frame; on one
-/// that does not, the standard-library fallback writes the first non-empty
-/// slice per call, so the behavior degrades to exactly the two-call shape it
-/// replaces.
+/// that does not, the standard-library fallback offers the first non-empty
+/// slice to `write`, preserving the same header-then-payload retry shape as
+/// the two `write_all`s it replaces.
 ///
 /// Hand-rolled because [`Write::write_all_vectored`] is still unstable on the
 /// MSRV (rust-lang/rust#70436). Three properties this loop must have, each of
@@ -186,11 +186,11 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
 
         // Assemble the full header ([4-byte length | checksum bytes]) in a
         // 12-byte stack scratch, then hand header and payload to the sink in
-        // one vectored call — one call per frame instead of the three this
-        // path would otherwise need. The bytes on the wire are identical
-        // (wire-format corpus tests). `C::SIZE` is an associated const, so the
-        // header length and the serialization width constant-fold by
-        // construction.
+        // one vectored call — one call per frame instead of the two used by
+        // the pre-E1 path (one for the assembled header, one for the payload).
+        // The bytes on the wire are identical (wire-format corpus tests).
+        // `C::SIZE` is an associated const, so the header length and the
+        // serialization width constant-fold by construction.
         //
         // On "copying" here: only header *metadata* is materialized — integers
         // must become little-endian bytes somewhere, and previously each
@@ -417,7 +417,7 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         buffer: &mut Vec<u8>,
     ) -> Result<Option<usize>> {
         // Read `[len | checksum]` as one header (write-path twin of the
-        // ChecksumFramer's single-write_all assembly). Safe only because
+        // ChecksumFramer's contiguous-header assembly). Safe only because
         // `read_header` distinguishes a clean frame boundary (zero bytes)
         // from a torn header — a plain `read_exact` over the merged header
         // could not tell those apart (spec §6). `C::SIZE` keeps the header
@@ -746,6 +746,45 @@ mod vectored_tests {
         }
     }
 
+    /// A partial vectored sink that injects one `Interrupted` error at a
+    /// selected call, allowing both retry branches to be exercised.
+    struct InterruptingVectored {
+        written: Vec<u8>,
+        limit: usize,
+        interrupt_on_call: usize,
+        calls: usize,
+    }
+
+    impl Write for InterruptingVectored {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.limit);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if self.calls == self.interrupt_on_call {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+
+            let mut budget = self.limit;
+            let mut total = 0;
+            for buf in bufs {
+                if budget == 0 {
+                    break;
+                }
+                let n = buf.len().min(budget);
+                self.written.extend_from_slice(&buf[..n]);
+                budget -= n;
+                total += n;
+            }
+            Ok(total)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     /// A sink that accepts nothing. The loop must surface `WriteZero` rather
     /// than spin forever.
     struct Stalled;
@@ -775,9 +814,10 @@ mod vectored_tests {
                 "payload len {}",
                 payload.len()
             );
-            // One call per byte, plus the call that reports the empty tail
-            // slice as consumed for a zero-length payload.
-            assert!(sink.calls >= 4 + payload.len());
+            // The fallback offers one non-empty slice per call, and this sink
+            // accepts one byte from it, so there is exactly one call per
+            // framed byte (including for an empty payload's 4-byte header).
+            assert_eq!(sink.calls, 4 + payload.len());
         }
     }
 
@@ -797,6 +837,39 @@ mod vectored_tests {
         assert_eq!(sink.written, expected_default(&payload));
         // 205 bytes at 3 per call: the frame genuinely spanned many calls.
         assert_eq!(sink.calls, (4 + payload.len()).div_ceil(3));
+    }
+
+    #[test]
+    fn interrupted_initial_write_is_retried() {
+        let payload = b"retry the initial write".as_slice();
+        let mut sink = InterruptingVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            interrupt_on_call: 1,
+            calls: 0,
+        };
+
+        DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+
+        assert_eq!(sink.calls, 2);
+        assert_eq!(sink.written, expected_default(payload));
+    }
+
+    #[test]
+    fn interrupted_remainder_write_is_retried_without_duplication() {
+        let payload = b"retry a partial remainder".as_slice();
+        let frame_len = 4 + payload.len();
+        let mut sink = InterruptingVectored {
+            written: Vec::new(),
+            limit: 3,
+            interrupt_on_call: 2,
+            calls: 0,
+        };
+
+        DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+
+        assert_eq!(sink.calls, frame_len.div_ceil(3) + 1);
+        assert_eq!(sink.written, expected_default(payload));
     }
 
     #[test]
@@ -871,7 +944,8 @@ mod vectored_tests {
         expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
         expected.extend_from_slice(payload);
         assert_eq!(sink.written, expected);
-        // [len|checksum] and payload travel together: one call, not three.
+        // [len|checksum] and payload travel together: one call, not the two
+        // used by the pre-E1 assembled-header path.
         assert_eq!(sink.calls, 1);
     }
 
@@ -895,6 +969,39 @@ mod vectored_tests {
         expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
         expected.extend_from_slice(payload);
         assert_eq!(sink.written, expected);
+    }
+
+    #[cfg(any(feature = "crc32", feature = "crc16"))]
+    fn assert_narrow_checksum_survives_partial_writes<C: Checksum>(checksum_alg: C) {
+        let payload = b"narrow checksum partial write".as_slice();
+        let checksum = checksum_alg.calculate(payload).to_le_bytes();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 5,
+            calls: 0,
+        };
+
+        ChecksumFramer::new(checksum_alg)
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&checksum[..C::SIZE]);
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+        assert!(sink.calls > 1);
+    }
+
+    #[cfg(feature = "crc32")]
+    #[test]
+    fn crc32_frame_survives_partial_writes_at_four_byte_width() {
+        assert_narrow_checksum_survives_partial_writes(crate::Crc32::new());
+    }
+
+    #[cfg(feature = "crc16")]
+    #[test]
+    fn crc16_frame_survives_partial_writes_at_two_byte_width() {
+        assert_narrow_checksum_survives_partial_writes(crate::Crc16::new());
     }
 
     #[test]

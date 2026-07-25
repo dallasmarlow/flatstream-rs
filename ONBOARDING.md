@@ -1,8 +1,8 @@
 # Building on flatstream — Application Onboarding Guide
 
-*Baseline: immutable tag `v0.2.7` (`0b9f486`, 2026-07-24). Audience:
-engineers building applications — first up, terminal-output journaling — on
-the flatstream library.*
+*Baseline: `v0.2.8` integration branch (2026-07-25). Audience: engineers
+building applications — first up, Palimpsest's terminal-output journal — on
+the flatstream library. Pin the reviewed release commit before deployment.*
 
 flatstream is a small, fast framing layer around FlatBuffers for streams
 (files, sockets, pipes). It writes and reads sequences of messages as
@@ -21,20 +21,22 @@ path to a correct journaling application.
 
 There are **no default features** — checksums are opt-in:
 
-The crate is not published to a registry. Pin production applications to the
-immutable release tag:
+The crate is not published to a registry. During integration, use a sibling
+checkout so the application compiles against the exact working branch:
 
 ```toml
 [dependencies]
-flatstream = { git = "https://github.com/dallasmarlow/flatstream-rs", tag = "v0.2.7", features = ["crc32"] }
+# From palimpsest/crates/palim-journal:
+flatstream = { path = "../../../flatstream-rs", version = "0.2.8", features = ["crc32"] }
 flatbuffers = "25.9.23"
 ```
 
-For local application development, use a path dependency instead:
+After peer review, pin deployment to the immutable release commit rather than
+the moving integration branch:
 
 ```toml
 [dependencies]
-flatstream = { path = "../flatstream-rs", features = ["crc32"] }
+flatstream = { git = "https://github.com/dallasmarlow/flatstream-rs", rev = "<reviewed-v0.2.8-commit>", version = "0.2.8", features = ["crc32"] }
 flatbuffers = "25.9.23"
 ```
 
@@ -57,7 +59,11 @@ are no compatibility shims; read release notes when bumping.
   `ChecksumFramer::new(Crc32::new())` = length + CRC-32 + payload. Adapters
   wrap any framer/deframer without copying: bounds, observers, validators.
   Writer and reader must be composed to match — the stream does not describe
-  itself yet (see §8).
+  itself yet (see §9).
+- **Optional policies are static.** `NoSync` and `NoMemoryPolicy` are zero-sized
+  defaults that compile away. Installing a sync or memory policy changes the
+  concrete writer/reader type and monomorphizes its decisions; there is no
+  boxed policy call on the hot path.
 - **Two size constants.** Readers accept payloads up to
   `DEFAULT_MAX_FRAME_LEN` (2 GiB — the FlatBuffers maximum buffer size, so
   every valid FlatBuffer works out of the box). `MAX_WIRE_FRAME_LEN`
@@ -99,9 +105,53 @@ Two write styles:
   you build payloads yourself.
 
 **Durability:** `flush()` flushes the `BufWriter` into the OS — it is *not*
-fsync. At durability points, flush and then call
-`writer.get_mut().get_ref().sync_data()` on the underlying file. One writer
-per stream — there is no multi-writer coordination, by design.
+fsync. For explicit transaction boundaries, `writer.sync_data()` /
+`writer.sync_all()` flush and synchronize a `Durable` sink and return the
+durable byte watermark. For automatic group commit, install a static policy:
+
+```rust
+use flatstream::{SyncEveryNFrames, SyncMode};
+use std::num::NonZeroU64;
+
+let policy =
+    SyncEveryNFrames::new(NonZeroU64::new(1_000).unwrap(), SyncMode::Data);
+let mut writer = writer.with_sync_policy(policy);
+```
+
+The default `NoSync` state is zero-sized and branch-free. A policy-enabled
+writer exposes `durable_watermark()`; compare receipts with `receipt.end()` to
+learn which frames a successful checkpoint covers. If automatic sync fails,
+`DurabilityFailed` reports that the triggering frame was already accepted, so
+do not blindly retry the write. One writer per stream — there is no multi-writer
+coordination, by design.
+
+**Palimpsest's boundary is a completed harvest, not an arbitrary frame count.**
+Its worker writes roughly 256-row frames, flushes once after the whole harvested
+RAM range is appended, and only then evicts those rows.
+
+The current `$TMPDIR` scrollback contract is **process-crash recovery**, not a
+power-loss-safe WAL. For that contract, keep the default `NoSync` writer and the
+existing once-per-harvest `flush()`; it makes indexed frames immediately
+readable and the OS page cache normally survives the Palimpsest process.
+
+If the product contract is strengthened, choose the checkpoint deliberately:
+
+- `sync_data()` in `finish_segment()` bounds power-loss exposure to the active
+  segment without putting fsync on every harvest.
+- `sync_data()` at the end of every `append()` is the stronger promise: no
+  harvested row is evicted from RAM before its frame is checkpointed.
+
+```rust
+let durable_through = writer.sync_data()?;
+debug_assert_eq!(durable_through, writer.bytes_written());
+// Under the stronger contract, only now may the engine evict harvested rows.
+```
+
+Use `sync_all()` when sealing a segment if file-length/metadata persistence is
+part of the deployment contract. Directory-entry and manifest durability
+require application-level filesystem handling beyond flatstream. On macOS,
+`sync_all()` has `std::fs::File::sync_all` semantics (`fsync`, not
+`F_FULLFSYNC`).
 
 ## 4. Reading
 
@@ -126,6 +176,10 @@ fn replay(file: std::fs::File) -> Result<u64> {
 - `process_all(|&[u8]|)` — drive the whole stream.
 - `reader.messages()` — iterator style, early exit friendly.
 - `read_message()` — one frame at a time.
+- `read_message_with_receipt()` — one frame plus its exact wire range;
+  `bytes_consumed()` is the next frame boundary after success.
+- `read_frame_at(&mut source, &deframer, offset, &mut scratch)` — stateless
+  indexed lookup. Reuse `scratch` across calls for zero-allocation steady state.
 - **Typed reads:** implement `StreamDeserialize` for your root type and use
   `reader.process_typed::<T, _>(|root| ...)` — the payload passes your
   schema's verifier before your callback sees the root. (The
@@ -137,8 +191,8 @@ fn replay(file: std::fs::File) -> Result<u64> {
   verification), `TypedValidator` (schema-aware), or your own `Validator`.
 - Long-running readers/writers can opt into buffer reclamation:
   `.with_memory_policy(AdaptiveWatermarkPolicy::new(..))` — otherwise the
-  internal buffer holds its high-water mark, which is the right default for
-  steady workloads.
+  zero-sized `NoMemoryPolicy` default keeps the high-water mark, which is the
+  right choice for Palimpsest's bounded frame sizes and steady replay workload.
 
 ## 5. Crash recovery — the contract to build on
 
@@ -178,7 +232,66 @@ The contract is deliberately strict — internalize it:
 `recover(reader, deframer)` is the non-seeking variant: it scans from the
 reader's current position and reports offsets relative to it.
 
-## 6. Batching: writing a varying number of events "at once"
+## 6. Tailing a file another process is still writing
+
+Recovery (§5) is for a journal whose writer has *stopped*. A follower reading a
+file that is **still being appended** faces a different, expected condition: it
+may reach a frame only partially on disk. `read_frame_at` is the primitive for
+this — it is stateless (it seeks to the offset on every call), so a torn read is
+never destructive and retrying is always safe:
+
+```rust,no_run
+use flatstream::{read_frame_at, ChecksumDeframer, Crc32, ErrorKind, Result};
+use std::fs::File;
+
+// Read one frame at `offset`, retrying while the writer is still appending.
+// Returns Ok(None) at a clean frame boundary — i.e. "caught up for now".
+fn tail_one(file: &mut File, offset: u64, scratch: &mut Vec<u8>) -> Result<Option<u64>> {
+    let deframer = ChecksumDeframer::new(Crc32::new()).with_max_frame_len(1 << 20);
+    loop {
+        match read_frame_at(file, &deframer, offset, scratch) {
+            Ok(Some(frame)) => {
+                // frame.payload is checksum-verified and borrowed from scratch;
+                // frame.receipt.end() is where the next frame begins.
+                return Ok(Some(frame.receipt.end()));
+            }
+            Ok(None) => return Ok(None), // clean boundary: nothing more yet
+            Err(e) if matches!(e.kind(), ErrorKind::UnexpectedEof) => {
+                // Only part of the frame is on disk. Wait for the appender —
+                // e.g. inotify/kqueue, or a bounded sleep — then retry the
+                // *same* offset. read_frame_at seeks back, so no state leaks.
+                wait_for_more_bytes();
+                continue;
+            }
+            Err(e) => return Err(e), // a real error, not a partial tail
+        }
+    }
+}
+# fn wait_for_more_bytes() {}
+```
+
+Internalize the boundary the contract draws:
+
+- **`UnexpectedEof` means "this read saw the end of the file mid-frame"** — a
+  description of *now*, **not** a claim the file is finalized. On a live file it
+  means "the rest hasn't been written yet"; retry the same offset. On a file
+  whose writer has stopped, the same condition is a torn tail — which is exactly
+  what `recover_file` interprets it as. The distinction is *who is asking*, not a
+  different error.
+- **`Ok(None)` at a frame boundary means "caught up"**, not "end of file
+  forever." A follower loops back and polls the same boundary offset later.
+- **Any other `Err` is a real fault** (a device error, a checksum mismatch on a
+  complete frame, an oversized length) and must not be retried as if bytes were
+  merely missing.
+- **Only `read_frame_at` is safe to retry.** A sequential `StreamReader` that
+  hit a short read has already consumed the partial bytes through its internal
+  counter; it cannot simply continue. Use the stateless point read for tailing,
+  or reopen and `recover_file` once the writer has stopped.
+
+The retry, clean-boundary, and device-error contracts are pinned on real files
+with separate writer/reader handles in `tests/live_tail.rs`.
+
+## 7. Batching: writing a varying number of events "at once"
 
 - **Recommended — schema-level batching.** One frame carries one FlatBuffer
   whose root holds a *vector* of events (`events:[Event]`, count varies per
@@ -197,46 +310,57 @@ reader's current position and reports offsets relative to it.
 Pick by replay semantics: batch-per-flush for all-or-nothing bursts,
 frame-per-event for keep-the-prefix recovery.
 
-## 7. The terminal-journaling profile (recommended)
+## 8. The Palimpsest journaling profile
 
-- **Framing:** `ChecksumFramer::new(Crc32::new())` / matching deframer —
-  4-byte integrity per frame, right size for small text chunks.
-- **Bound:** an explicit small `with_max_frame_len` (e.g. 1 MiB) on every
-  reader, including recovery.
-- **Schema (app-owned; the framing layer never sees it):**
+The production consumer lives at `/Users/dallas/repos/palimpsest`, primarily in
+`crates/palim-journal/src/lib.rs` and ADR-0013. Its current path dependency
+already compiles and all 13 journal tests pass against this branch.
 
-  ```text
-  table TerminalChunk {
-      sequence: uint64;             // continuity check during replay
-      monotonic_timestamp: uint64;
-      channel: uint8;               // stdout | stderr | pty
-      data: [ubyte];                // raw text/ANSI bytes, uninterpreted
-  }
-  ```
+- **Ownership:** one `ScrollbackJournal` per terminal session, owned by the
+  single terminal worker. Reads and writes are serialized; the UI never touches
+  journal I/O.
+- **Capture unit:** when RAM history crosses its threshold, Palimpsest harvests
+  the oldest rows and writes them oldest-first. A frame contains a FlatBuffer
+  `Frame { first_seq, rows:[Row], mean_ink }`, normally up to 256 rows and a
+  256 KiB soft payload target.
+- **Framing:** `ChecksumFramer<Crc32>` / matching deframer. Every reader and
+  recovery scan uses a 16 MiB hard `with_max_frame_len` ceiling.
+- **Segments:** 128 MiB rotation, 16 GiB session budget, whole-segment
+  retirement, and a 64-frame decoded LRU.
+- **Indexing:** the write path uses `write_finished_with_receipt`; the
+  `FrameReceipt::frame_start` is the frame's indexed offset. Use
+  `receipt.end()`/`range()` rather than repeating offset arithmetic.
+- **Resume:** each segment runs through `recover_file`; only a torn tail on the
+  final segment may be truncated. A sequential summary scan rebuilds the
+  in-memory index and verifies sequence continuity.
+- **Resume scan migration:** use `read_message_with_receipt()` and advance from
+  `frame.receipt.end()`. Remove the local `FRAME_WIRE_OVERHEAD` constant and
+  `8 + payload.len()` arithmetic.
+- **Durability:** `append()` currently flushes once per harvested range,
+  intentionally matching process-crash recovery for a temporary scrollback
+  cache. If requirements tighten, checkpoint sealed segments first; use
+  per-harvest `sync_data()` only when RAM eviction must wait for stable storage.
+- **Memory:** frame size and the decoded LRU are already bounded, so the static
+  `NoMemoryPolicy` defaults are appropriate unless measurements show a
+  high-water-mark problem.
 
-- **Reopen:** `recover_file` → truncate only on `TornTail` → resume (§5).
-- **Replay:** verify `sequence` continuity; a gap means frames were lost
-  *before* the journal (the stream layer cannot lose interior frames
-  silently when checksums are on).
-- flatstream does not become a raw-text log: the payload stays a FlatBuffer;
-  `data:[ubyte]` carries the raw bytes.
+## 9. What is NOT in this baseline — plan around it
 
-## 8. What is NOT in this baseline — plan around it
-
-- **Streams are not yet self-describing.** Writer and reader must agree on
-  the composition out-of-band. A **v3 stream header** (magic, version,
-  checksum identity — derived from your composition automatically) is the
-  very next library slice, and its byte layout is already locked.
-  **Treat journal files written against this baseline as disposable
-  development artifacts** — durable production journals begin when v3
-  lands, and nothing written after that will ever need migration.
+- **Streams are intentionally not self-describing.** No core preamble is
+  planned; writer and reader composition remains an out-of-band application
+  contract. Persistent consumers must carry a manifest/format-generation
+  marker and refuse unknown versions before constructing a deframer.
+  Palimpsest's segment-set manifest is the reference pattern; bump it on any
+  incompatible framing, checksum, or schema change.
 - No mmap/borrowed-slice source yet (planned); reads copy each frame once
   from the `Read` source into a reused buffer — payload *access* is
   zero-copy.
-- No sealed segments / indexes / footers yet (designed, deferred). No async.
-  No fsync scheduling (own your durability points, §3).
+- No library-managed sealed segments / indexes / footers yet (designed,
+  deferred). No async.
+  Durability cadence is local to one writer; there is no cross-stream commit
+  coordinator.
 
-## 9. Verifying your integration
+## 10. Verifying your integration
 
 The library's verification is local and scriptable — use it:
 
@@ -244,8 +368,9 @@ The library's verification is local and scriptable — use it:
 - `scripts/examples.sh` — every example self-asserts; read
   `examples/telemetry_agent.rs` (reference workload, schema-vector batching,
   typed reads), `examples/bounded_adapters_example.rs` (limits and the
-  errors they produce), and `examples/sized_checksums_example.rs` (exact
-  per-frame overhead, asserted).
+  errors they produce), `examples/sized_checksums_example.rs` (exact
+  per-frame overhead), and `examples/durability_policy.rs` (automatic/manual
+  checkpoints and watermarks).
 - `tests/recovery_tests.rs` — the recovery contract, pinned at every byte
   offset; mirror its reopen pattern in your app tests.
 - Wire-format details: `docs/WIRE_FORMAT_SPEC.md` (normative, with a Go
@@ -253,3 +378,14 @@ The library's verification is local and scriptable — use it:
 
 Write tests that assert outcomes, not printouts — that is the repo's bar,
 and your app inherits it.
+
+For Palimpsest specifically:
+
+```bash
+cd /Users/dallas/repos/palimpsest
+cargo test -p palim-journal
+```
+
+Run the journal crate plus `palim-term`'s resume/harvest tests after changing
+checkpoint semantics; the library gate cannot prove when the application is
+safe to evict rows from RAM.

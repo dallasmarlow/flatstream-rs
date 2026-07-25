@@ -1,0 +1,269 @@
+# a1_write_pipeline
+# date:    2026-07-25T03:49:22Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench write_pipeline_decomposition -- Decomposition
+
+    Finished `bench` profile [optimized] target(s) in 0.19s
+     Running benches/write_pipeline_decomposition.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/2ce7581716208fde57ea5c729fac24a3/cargo-target/release/deps/write_pipeline_decomposition-f9e76f5dd7df887e)
+Gnuplot not found, using plotters backend
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/64B
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/64B: Collecting 100 samples in estimated 5.0016 s (252k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/64B: Analyzing
+A1 Write Pipeline Decomposition/s1_harvest/64B
+                        time:   [19.745 µs 19.764 µs 19.784 µs]
+                        thrpt:  [50.546 Melem/s 50.596 Melem/s 50.645 Melem/s]
+                 change:
+                        time:   [-9.1524% -8.7288% -8.2861%] (p = 0.00 < 0.05)
+                        thrpt:  [+9.0347% +9.5635% +10.074%]
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low severe
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s2_build/64B
+Benchmarking A1 Write Pipeline Decomposition/s2_build/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s2_build/64B: Collecting 100 samples in estimated 5.0168 s (136k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s2_build/64B: Analyzing
+A1 Write Pipeline Decomposition/s2_build/64B
+                        time:   [36.758 µs 36.844 µs 36.953 µs]
+                        thrpt:  [27.062 Melem/s 27.141 Melem/s 27.205 Melem/s]
+                 change:
+                        time:   [-5.0655% -4.6634% -4.1574%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.3377% +4.8915% +5.3358%]
+                        Performance has improved.
+Found 11 outliers among 100 measurements (11.00%)
+  4 (4.00%) low mild
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/64B
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/64B: Collecting 100 samples in estimated 5.1710 s (126k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/64B: Analyzing
+A1 Write Pipeline Decomposition/s3_frame/64B
+                        time:   [40.623 µs 40.841 µs 41.043 µs]
+                        thrpt:  [24.364 Melem/s 24.485 Melem/s 24.617 Melem/s]
+                 change:
+                        time:   [-3.4037% -2.9416% -2.3835%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.4417% +3.0307% +3.5236%]
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/64B
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/64B: Collecting 100 samples in estimated 5.0924 s (101k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/64B: Analyzing
+A1 Write Pipeline Decomposition/s4_frame_crc32/64B
+                        time:   [50.653 µs 50.871 µs 51.085 µs]
+                        thrpt:  [19.575 Melem/s 19.658 Melem/s 19.742 Melem/s]
+                 change:
+                        time:   [-1.8574% -1.3799% -0.8685%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.8761% +1.3992% +1.8925%]
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/64B
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/64B: Collecting 100 samples in estimated 5.1641 s (81k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/64B: Analyzing
+A1 Write Pipeline Decomposition/s5_buffered_file/64B
+                        time:   [63.088 µs 63.534 µs 64.035 µs]
+                        thrpt:  [15.616 Melem/s 15.740 Melem/s 15.851 Melem/s]
+                 change:
+                        time:   [-3.0265% -2.2114% -1.3191%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.3367% +2.2614% +3.1209%]
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s6_index/64B
+Benchmarking A1 Write Pipeline Decomposition/s6_index/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s6_index/64B: Collecting 100 samples in estimated 5.1623 s (81k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s6_index/64B: Analyzing
+A1 Write Pipeline Decomposition/s6_index/64B
+                        time:   [63.349 µs 63.578 µs 63.816 µs]
+                        thrpt:  [15.670 Melem/s 15.729 Melem/s 15.786 Melem/s]
+                 change:
+                        time:   [-3.6619% -2.9238% -2.1331%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.1796% +3.0118% +3.8011%]
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/64B
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/64B: Collecting 100 samples in estimated 5.1941 s (1200 iterations)
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/64B: Analyzing
+A1 Write Pipeline Decomposition/s7_fsync/64B
+                        time:   [4.3254 ms 4.3652 ms 4.4048 ms]
+                        thrpt:  [227.02 Kelem/s 229.09 Kelem/s 231.19 Kelem/s]
+                 change:
+                        time:   [+2.9154% +4.8354% +6.7278%] (p = 0.00 < 0.05)
+                        thrpt:  [-6.3037% -4.6124% -2.8328%]
+                        Performance has regressed.
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/64B
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/64B: Collecting 100 samples in estimated 5.2611 s (101k iterations)
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/64B: Analyzing
+A1 Write Pipeline Decomposition/x_crc32_only/64B
+                        time:   [48.311 µs 48.472 µs 48.641 µs]
+                        thrpt:  [20.559 Melem/s 20.630 Melem/s 20.699 Melem/s]
+                 change:
+                        time:   [-0.9768% -0.2599% +0.3239%] (p = 0.47 > 0.05)
+                        thrpt:  [-0.3229% +0.2605% +0.9864%]
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low severe
+  4 (4.00%) high mild
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/64B
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/64B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/64B: Collecting 100 samples in estimated 5.0113 s (136k iterations)
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/64B: Analyzing
+A1 Write Pipeline Decomposition/x_frame_sink/64B
+                        time:   [36.573 µs 36.634 µs 36.701 µs]
+                        thrpt:  [27.247 Melem/s 27.297 Melem/s 27.343 Melem/s]
+                 change:
+                        time:   [-1.5589% -1.2424% -0.8940%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.9020% +1.2580% +1.5835%]
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  6 (6.00%) low mild
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/4096B
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/4096B: Collecting 100 samples in estimated 5.0513 s (252k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s1_harvest/4096B: Analyzing
+A1 Write Pipeline Decomposition/s1_harvest/4096B
+                        time:   [19.987 µs 20.020 µs 20.060 µs]
+                        thrpt:  [49.852 Melem/s 49.949 Melem/s 50.032 Melem/s]
+                 change:
+                        time:   [-3.0050% -2.5223% -2.0669%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.1105% +2.5875% +3.0981%]
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low severe
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s2_build/4096B
+Benchmarking A1 Write Pipeline Decomposition/s2_build/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s2_build/4096B: Collecting 100 samples in estimated 5.5299 s (50k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s2_build/4096B: Analyzing
+A1 Write Pipeline Decomposition/s2_build/4096B
+                        time:   [108.35 µs 108.85 µs 109.36 µs]
+                        thrpt:  [9.1444 Melem/s 9.1873 Melem/s 9.2293 Melem/s]
+                 change:
+                        time:   [-2.2629% -1.4741% -0.6757%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.6803% +1.4962% +2.3153%]
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/4096B
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/4096B: Collecting 100 samples in estimated 5.0649 s (30k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s3_frame/4096B: Analyzing
+A1 Write Pipeline Decomposition/s3_frame/4096B
+                        time:   [166.76 µs 167.05 µs 167.34 µs]
+                        thrpt:  [5.9760 Melem/s 5.9862 Melem/s 5.9966 Melem/s]
+                 change:
+                        time:   [-3.0956% -2.3409% -1.7043%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.7339% +2.3970% +3.1945%]
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/4096B
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/4096B: Collecting 100 samples in estimated 5.1661 s (10k iterations)
+Benchmarking A1 Write Pipeline Decomposition/s4_frame_crc32/4096B: Analyzing
+A1 Write Pipeline Decomposition/s4_frame_crc32/4096B
+                        time:   [518.01 µs 520.92 µs 524.30 µs]
+                        thrpt:  [1.9073 Melem/s 1.9197 Melem/s 1.9305 Melem/s]
+                 change:
+                        time:   [-0.0741% +0.8089% +1.7007%] (p = 0.08 > 0.05)
+                        thrpt:  [-1.6723% -0.8024% +0.0742%]
+                        No change in performance detected.
+Found 14 outliers among 100 measurements (14.00%)
+  2 (2.00%) low mild
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/4096B
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/4096B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.2s, enable flat sampling, or reduce sample count to 60.
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/4096B: Collecting 100 samples in estimated 6.2229 s (5050 iterations)
+Benchmarking A1 Write Pipeline Decomposition/s5_buffered_file/4096B: Analyzing
+A1 Write Pipeline Decomposition/s5_buffered_file/4096B
+                        time:   [1.1950 ms 1.2039 ms 1.2167 ms]
+                        thrpt:  [821.87 Kelem/s 830.64 Kelem/s 836.83 Kelem/s]
+                 change:
+                        time:   [-8.4750% -2.5023% +3.4291%] (p = 0.44 > 0.05)
+                        thrpt:  [-3.3154% +2.5666% +9.2598%]
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  5 (5.00%) high mild
+  8 (8.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s6_index/4096B
+Benchmarking A1 Write Pipeline Decomposition/s6_index/4096B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.9s, enable flat sampling, or reduce sample count to 60.
+Benchmarking A1 Write Pipeline Decomposition/s6_index/4096B: Collecting 100 samples in estimated 5.8906 s (5050 iterations)
+Benchmarking A1 Write Pipeline Decomposition/s6_index/4096B: Analyzing
+A1 Write Pipeline Decomposition/s6_index/4096B
+                        time:   [1.1956 ms 1.2016 ms 1.2086 ms]
+                        thrpt:  [827.37 Kelem/s 832.25 Kelem/s 836.40 Kelem/s]
+                 change:
+                        time:   [-7.8263% -1.7005% +4.0100%] (p = 0.61 > 0.05)
+                        thrpt:  [-3.8554% +1.7299% +8.4908%]
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) high mild
+  8 (8.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/4096B
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/4096B: Collecting 100 samples in estimated 5.6744 s (800 iterations)
+Benchmarking A1 Write Pipeline Decomposition/s7_fsync/4096B: Analyzing
+A1 Write Pipeline Decomposition/s7_fsync/4096B
+                        time:   [7.2979 ms 7.5345 ms 7.7904 ms]
+                        thrpt:  [128.36 Kelem/s 132.72 Kelem/s 137.03 Kelem/s]
+                 change:
+                        time:   [-0.9537% +2.4070% +6.0630%] (p = 0.17 > 0.05)
+                        thrpt:  [-5.7164% -2.3504% +0.9629%]
+                        No change in performance detected.
+Found 14 outliers among 100 measurements (14.00%)
+  7 (7.00%) high mild
+  7 (7.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/4096B
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/4096B: Collecting 100 samples in estimated 7.0237 s (15k iterations)
+Benchmarking A1 Write Pipeline Decomposition/x_crc32_only/4096B: Analyzing
+A1 Write Pipeline Decomposition/x_crc32_only/4096B
+                        time:   [465.25 µs 467.99 µs 471.36 µs]
+                        thrpt:  [2.1215 Melem/s 2.1368 Melem/s 2.1494 Melem/s]
+                 change:
+                        time:   [+1.4149% +2.4488% +3.5627%] (p = 0.00 < 0.05)
+                        thrpt:  [-3.4401% -2.3903% -1.3952%]
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/4096B
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/4096B: Warming up for 3.0000 s
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/4096B: Collecting 100 samples in estimated 5.4766 s (50k iterations)
+Benchmarking A1 Write Pipeline Decomposition/x_frame_sink/4096B: Analyzing
+A1 Write Pipeline Decomposition/x_frame_sink/4096B
+                        time:   [107.17 µs 107.58 µs 108.07 µs]
+                        thrpt:  [9.2534 Melem/s 9.2950 Melem/s 9.3309 Melem/s]
+                 change:
+                        time:   [-2.8150% -2.2088% -1.6050%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.6312% +2.2587% +2.8965%]
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe

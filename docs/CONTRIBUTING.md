@@ -58,9 +58,11 @@ than any style preference:
   high-water mark and is reused; no per-frame allocation or zeroing after that.
   The writer reuses one `FlatBufferBuilder`. Reclamation is an opt-in
   `MemoryPolicy`, off the hot path.
-- **Static dispatch by default.** Framing, checksums, and validation are generic
-  and monomorphized. Boxed/dynamic indirection is only ever an explicit, opt-in,
-  *measured* exception (`MemoryPolicy`, `CompositeValidator`, `TypedValidator`).
+- **Static dispatch by default.** Framing, checksums, sync policy, and memory
+  policy are generic and monomorphized. Boxed/dynamic indirection is only ever
+  an explicit, opt-in, labeled exception (`CompositeValidator`; typed
+  validation uses a function pointer). Measure either before making a cost
+  claim.
   Do not type-erase the framing kernel — see `docs/archive/V2_X_BOXED_TRAITS.md`
   for the standing rejection.
 - **`#![forbid(unsafe_code)]` by default.** The crate forbids unsafe in every
@@ -205,23 +207,43 @@ until a findings doc backs it.
 ## 6. Pre-3.0 backlog
 
 Each task is self-contained and public-safe. Pick one, confirm scope in review if
-it touches public API, and follow the definition of done. Rough priority is A1 →
-E1 → B → C → A2/A3 → D/E2, but coordinate with the maintainer. (A1 first because
-it tells you where the write cost actually is, which is what decides whether E1's
-vectored write is worth shipping.)
+it touches public API, and follow the definition of done.
 
-> **Done as of 2026-07-24:** A1 (`docs/benchmark/FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md`),
-> E1 (`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`), B1 (`tests/external_index.rs` +
-> README recipe). Their entries are kept below for the rationale and method;
-> each is marked with its outcome.
+**Current assignment order (2026-07-25):**
+
+1. **A4** — compression feasibility experiment using representative journal
+   payloads; benchmark only, no production adapter.
+2. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
+3. **A3** — generic `Read` copy-cost baseline.
+
+**Do not start implementation** of B3 (observability API) or E2 (checksum-inner
+composition) without resolving their semantic questions with the maintainer.
+
+**Contributor environment matters.** The reference-results lane (A3/A4 and
+extended C1/C2 runs) requires the maintainer's pinned Docker/Linux or trustworthy
+benchmark machine. A macOS contributor who can run `scripts/gate.sh` but cannot
+run Docker, Linux, Miri, fuzz, or stable benchmarks should take this lane:
+
+1. **B3 first deliverable only** — design note + self-asserting,
+   dependency-free example; no public API before sign-off.
+2. **E2 decision memo** — resolve/decline semantics; do not implement.
+
+Do not ask that contributor to collect or interpret performance numbers. They
+may add compile-checked benchmark code for a maintainer to run only when the
+task explicitly separates implementation from evidence.
+
+> **Done as of 2026-07-25:** A1, A2, C5, C6, E1, B1 (`tests/external_index.rs` +
+> README recipe), B2, C3, C4, D, E3, and E4.
 
 ### A. Experiments (produce committed findings docs)
 
 **A1 — Write-pipeline decomposition** — **DONE**, `docs/benchmark/FINDINGS_WRITE_PIPELINE_DECOMPOSITION.md`
-- **Outcome:** at 64 B, flatstream's framing + CRC-32 is 14.1% of a non-durable
-  record (framing alone 0.6%); the application's own harvest/build is 65.7%. With
-  `fsync`, everything else is 1.6% of the record. The consumer's attribution was
-  correct, and is now measured.
+- **Outcome:** in the isolated 64 B recheck, application harvest/build/index was
+  63.0% of the non-durable record, flatstream framing/copy + CRC-32 was 17.3%,
+  and buffered file output was 19.7%. At 4 KiB the shares shift to roughly 9%,
+  34%, and 57%; attribution is workload-specific. One `sync_data()` per 1,000
+  records made the non-sync pipeline 1.4% (64 B) / 16.0% (4 KiB) of elapsed
+  time. Raw output and the required 64 B cross-check re-run are committed.
 - **Goal:** In a realistic end-to-end write (the terminal-journaling shape is a
   good model), isolate flatstream's actual share of per-record cost from the
   application's.
@@ -239,15 +261,26 @@ vectored write is worth shipping.)
 - **Note:** phrase CRC32 as hardware-assisted *where SSE4.2/PCLMULQDQ is
   available, scalar fallback otherwise* — not universally accelerated.
 
-**A2 — Frame-receipt instruction-count characterization**
-- **Goal:** Nail the per-frame cost of the v0.2.8 frame-receipt path (the
-  internal counting writer) across framers, with instruction counts.
-- **Why:** v0.2.8 shipped with a wall-clock "no regression" result (see
-  `docs/DESIGN_v2_8.md` §6). Upgrade that to a noise-free counted delta.
+**A2 — Position-accounting instruction-count characterization** — **DONE**,
+`docs/benchmark/FINDINGS_POSITION_ACCOUNTING.md`
+- **Outcome:** discarded writer receipts cost 1.03–2.24 instructions/frame;
+  consumed writer receipts cost 5.28–6.10. Reader position accounting costs
+  53.91–96.16 instructions/frame, while explicitly consuming each read receipt
+  adds only 3.08–4.06. Wall-clock tests resolve no forward-read regression, so
+  no API split or optimization follows.
+- **Goal:** Nail the per-frame cost of writer receipts and reader position
+  tracking across default and checksummed framing.
+- **Why:** v0.2.8's wall-clock runs resolve no forward-read regression, but
+  counting wrappers and receipt arithmetic execute on every frame. Upgrade that
+  result to noise-free counted deltas.
 - **Method:** Extend `benches/instruction_count.rs` (run via
-  `scripts/instruction_counts.sh`) to compare `write_finished` vs
-  `write_finished_with_receipt` and default vs checksummed framers.
-- **Deliverable:** findings doc with the per-frame instruction delta.
+  `scripts/instruction_counts.sh`) with paired benchmark-only baselines:
+  (a) direct framer write versus `StreamWriter`/receipt accounting, and
+  (b) direct deframer loop versus counted `StreamReader`; consume payload bytes
+  through `black_box` so LLVM cannot erase the read. Cover default and CRC-32.
+- **Deliverable:** findings doc with writer/read deltas per frame and the pinned
+  environment fingerprint. Do not infer a production percentage from a mock
+  sink.
 
 **A3 — Read-path copy cost**
 - **Goal:** Quantify the one unavoidable copy (generic `Read` → reader buffer)
@@ -255,6 +288,26 @@ vectored write is worth shipping.)
 - **Why:** Establishes a public baseline for the future borrowed-slice/mmap
   source, which is already acknowledged as future work in `docs/DESIGN_v2_7.md`.
 - **Deliverable:** findings doc; no code change required beyond the bench.
+
+**A4 — Compression feasibility for journal payloads (experiment only)**
+- **Goal:** Determine whether compression is worth a future explicit format,
+  without weakening zero-copy language or adding a runtime dependency first.
+- **Method:** In a benchmark-only target, compare uncompressed, LZ4, and a
+  low-latency Zstandard level over 4 KiB, 64 KiB, and ~256 KiB payloads.
+  Include (a) representative Palimpsest frame payloads, (b) synthetic highly
+  compressible data, and (c) incompressible bytes. Measure encode, decode,
+  end-to-end buffered-file throughput, and wire-size ratio in paired isolated
+  runs. Use caller-owned reusable compression/decompression buffers.
+- **Questions the findings must answer:** whether saved write bytes repay
+  codec CPU; whether frame-sized latency stays bounded; and how much the
+  answer depends on payload distribution.
+- **Explicitly out of scope:** production `CompressionFramer`, new wire bytes,
+  codec negotiation, or claims of zero-copy decompression. Compression requires
+  a decompressed output buffer, compressed/decompressed size limits,
+  decompression-bomb protection, and an application manifest entry because the
+  core stream is intentionally headerless.
+- **Deliverable:** committed benchmark + raw snapshots + findings document.
+  A null result or “application-level compression only” is valid.
 
 ### B. Polish
 
@@ -264,7 +317,7 @@ vectored write is worth shipping.)
 
 **B1 — External-index recipe** — **DONE**, `tests/external_index.rs` + README
 "Frame offsets for external indexing"
-- **Outcome:** seven tests pin contiguity, byte-exactness, `with_start_offset`
+- **Outcome:** the integration suite pins contiguity, byte-exactness, `with_start_offset`
   append semantics, checksum-inclusive `wire_len`, and torn-tail survival. The
   `get_mut()` counter-bypass is now an asserted, documented hazard rather than
   folklore.
@@ -284,14 +337,31 @@ vectored write is worth shipping.)
   cites them. That document now opens with a provenance banner marking it a
   historical record and pointing at `docs/benchmark/` for reproducible numbers.
   Its title also claimed "v1 to v2.6" while covering v2.7.
-- **Snippets:** all five `ignore`d rustdoc snippets now compile (11 doctests,
-  0 ignored). Four were in `writer.rs` — the module whose API changed in 2.8.
+- **Snippets:** all previously `ignore`d rustdoc snippets now compile, and the
+  doctest suite has no ignored cases. Several were in `writer.rs` — the module
+  whose API changed in 2.8.
 - **The real find:** the README's snippets were never compiled by anything, and
-  **17 of 29 did not build**. Four ASCII diagrams used untagged fences, which
+  many did not build. ASCII diagrams used untagged fences, which
   rustdoc treats as Rust; one paragraph was indented four spaces and so was also
-  parsed as code; the rest were missing imports or `?`-in-`main`. All 19
-  compilable snippets now pass, 5 are `rust,ignore` because they need generated
-  schema code. `scripts/readme_doctests.sh` enforces this and runs in the gate.
+  parsed as code; the rest were missing imports or `?`-in-`main`. All snippets
+  that can run standalone now pass; those requiring generated schema code are
+  explicitly `rust,ignore`. `scripts/readme_doctests.sh` enforces the runnable
+  set and runs in the gate.
+
+**B3 — Observability boundary recipe** *(design sign-off before public API)*
+- **Goal:** Give applications one standard, dependency-free pattern for timing
+  frame writes, reads, batches, and durability checkpoints, while keeping OTEL
+  and metrics crates out of flatstream.
+- **Resolve first:** `ObserverFramer` runs before delegated I/O and therefore
+  cannot report success, receipt bounds, or latency. Decide whether the correct
+  deliverable is only an application recipe/wrapper or a generic post-operation
+  hook with explicit success/failure events.
+- **Constraints:** no OTEL dependency; no span per frame by default; callback
+  cost exists only in the installed concrete type; errors must not be reported
+  as successful frames; durability failure occurs after bytes were accepted.
+- **First deliverable:** a short design note and self-asserting example using
+  generic callbacks translated to mock metrics. Implement public types only
+  after maintainer approval, then add an overhead benchmark and findings.
 
 ### C. Test and robustness hardening
 
@@ -301,12 +371,14 @@ vectored write is worth shipping.)
   bytes must never panic or allocate past the configured bound.
 
 **C2 — Miri coverage on read-path boundaries**
-- Extend `scripts/miri.sh` coverage over the reader's buffer/offset arithmetic.
-  Coverage is expected to grow here; document any boundary the `--lib` run does
-  not currently exercise.
+- Extend Miri beyond `--lib` so `tests/positioned_reads.rs` exercises
+  caller-scratch borrowing, receipt bounds, one-byte reads, and retry after a
+  partial frame. Keep the run targeted enough to remain practical.
+- Document any integration boundary Miri cannot execute; ordinary gate coverage
+  is not a substitute for explicitly stating the gap.
 
 **C3 — Self-assert audit of examples** — **DONE** (2026-07-24)
-- **Outcome:** seven examples were print-only or under-asserted and now assert:
+- **Outcome:** the print-only or under-asserted examples now assert:
   `validation_example` (round-trip equality + write-path rejection leaves the
   sink empty), `adaptive_policy` (records reclamation events and pins the
   hysteresis to message 10), `bounded_adapters_example` (rejected writes leak no
@@ -319,9 +391,11 @@ vectored write is worth shipping.)
   compiled out of release builds, on a counter that incremented even for skipped
   zips).
 - **The gap behind the gap:** `scripts/gate.sh` only ever *compiled* examples
-  (`clippy --all-targets`), so every assertion in `examples/` was inert in CI.
-  The gate now runs each example, deriving the list from the directory so new
-  examples are covered on arrival.
+  (`clippy --all-targets`), so every assertion in `examples/` was inert in the
+  gate. The gate now runs every non-mutating example and derives the list from
+  the directory. The corpus-generating `ingest_lobster` is compile-checked by
+  default and executes under `RUN_LOBSTER_INGEST=1` when its verified local ZIPs
+  are present.
 - Audit every `examples/*.rs` for the self-assert rule (§1). Any example whose
   "success" is only a `println!` gets a real assertion or is removed.
 
@@ -333,7 +407,8 @@ vectored write is worth shipping.)
   guarded by a continuous, noisy measurement.
 - **Outcome:** a test-only counting global allocator (`#[global_allocator]` is
   per-binary, so nothing shipped is affected) with a thread-local armed counter.
-  Seven tests: the expert, receipt, and checksummed write loops and the read loop
+  The integration suite checks that simple, expert, receipt, checksummed, and
+  static-sync-policy write loops plus the read loop
   each allocate and realloc **exactly zero** times in steady state; growth past
   the high-water mark costs, and the frame after it does not; and two harness
   self-tests prove a nonzero result is reachable, so the zero-assertions cannot
@@ -347,35 +422,97 @@ vectored write is worth shipping.)
   already-allocated buffer reports a clean zero here — and remain covered by A3
   and the README's scoping note.
 
-### D. Small feature — reader-side offset reporting *(design sign-off first)*
+**C5 — Seekable live-file retry hardening** — **DONE**, `tests/live_tail.rs` +
+ONBOARDING §6
+- **Outcome:** four integration tests on real tempfiles with separate
+  append/read handles. The partial-frame retry is parameterized over the framing
+  scheme and cuts each frame at several interior points (mid-length-prefix,
+  post-header, mid-payload, one-byte-short): each cut reads as `UnexpectedEof`,
+  and after the remainder is appended out-of-band the same offset reads
+  byte-exact with a receipt naming the whole frame. Default and CRC-32 both
+  covered. Clean EOF at the trailing frame boundary is pinned as `Ok(None)`, and
+  an injected non-EOF device error (`PermissionDenied`) propagates as `Io`, never
+  collapsed into `UnexpectedEof`. No new public error variant; gate green on
+  macOS.
+- **Goal:** Pin the distinction between “EOF observed now” and “source is
+  finalized” without adding an ambiguous `IncompleteFrame` error kind.
+- **Method:** Add a real-tempfile test with separate writer/reader handles:
+  write part of a default and CRC-32 frame, assert `read_frame_at` returns
+  `UnexpectedEof`, append the remainder, then retry the same absolute offset and
+  assert byte-exact payload + receipt. Also pin clean EOF at a frame boundary
+  and a non-EOF device error.
+- **Contract:** the stateless point-read retry is safe because every call seeks
+  back to the frame start. Do not imply that a partially consumed sequential
+  `StreamReader` can simply continue.
+- **Deliverable:** integration tests plus a short live-file tailing recipe in
+  ONBOARDING; no new public error variant.
 
-- **Goal:** Give `StreamReader` the forward-path counterpart to the writer's
-  v0.2.8 receipts: a `bytes_consumed()` position accessor and a way to learn the
-  byte offset of each frame as it is read (e.g. an offset alongside the payload in
-  the `Messages` iterator). This lets a consumer build or verify an external index
-  on the read side.
-- **Why:** Symmetry with `StreamWriter::bytes_written()` / `FrameReceipt`
-  (`docs/DESIGN_v2_8.md` §2), and it is purely additive.
-- **Explicitly out of scope:** random access / `seek`-based reads
-  (`read_frame_at`, `seek_to`). That work is deliberately deferred and must not
-  be pulled forward here — this task instruments only the normal forward read.
-- **Process:** confirm the exact API shape in review before implementing (§5),
-  then implement with self-asserting tests and a `docs/DESIGN_v2_x.md` note.
+**C6 — Position-accounting fault semantics** — **DONE**,
+`tests/position_accounting_faults.rs`
+- **Outcome:** six self-asserting tests pin all five cases. (a) A custom
+  `read_vectored` deframer (`VectoredDeframer`) yields receipts byte-for-byte
+  equal to the writer's on both the sequential and `read_frame_at` paths, since
+  `CountingReader` tallies `read_vectored` returns. (b) A mid-frame truncation
+  surfaces `UnexpectedEof` while `bytes_consumed` retains every byte the failed
+  read consumed — no rollback to the frame start. (c) An injected
+  `PermissionDenied` device error propagates intact and adds nothing to the
+  counter; only bytes actually returned are counted. (d) A raw read *and* a seek
+  through `get_mut` leave the counter stale, so the next receipt provably
+  mismatches the true source position — the behavior `get_mut`'s rustdoc already
+  warns about, so no doc change was needed. (e) A nonzero `with_start_offset`
+  composes with an installed `SizeThresholdPolicy`: receipts stay base-relative
+  and exact across a buffer reclamation that shrinks the internal buffer
+  mid-stream. `scripts/gate.sh` green on macOS; no public API added.
+- **Goal:** Pin what `bytes_consumed` and receipts mean under short reads,
+  vectored custom deframers, direct source access, and I/O failure.
+- **Cases:** (a) a custom deframer that uses `read_vectored` still produces exact
+  receipt bounds; (b) successful bytes consumed before `UnexpectedEof` advance
+  `bytes_consumed`; (c) a device error counts only bytes actually returned;
+  (d) reads or seeks through `StreamReader::get_mut` demonstrably bypass or
+  invalidate accounting, matching its rustdoc warning; and (e) nonzero
+  `with_start_offset` composes with an installed static memory policy.
+- **Constraints:** tests must use deterministic local readers/tempfiles, no
+  sleeps, no benchmark claims, and no new public API unless a test exposes an
+  unresolvable contract defect.
+- **Deliverable:** self-asserting integration/unit tests and any rustdoc
+  clarification they prove necessary; `scripts/gate.sh` green on macOS.
+
+### D. Positioned reads — **DONE**
+
+- **Outcome:** `StreamReader` exposes `bytes_consumed`,
+  `with_start_offset`, receipt-aware low-level/processor/iterator paths, and a
+  stateless `read_frame_at` over `Read + Seek` with caller-owned scratch.
+- **Why:** writer receipts removed write-side wire arithmetic, but Palimpsest's
+  resume scan still reconstructed checksum/header widths manually and allocated
+  a reader buffer for each point lookup.
+- **Allocation result:** fresh-reader-per-lookup allocates each frame; warmed
+  `read_frame_at` allocates zero times. Forward position tracking has no resolved
+  wall-clock regression in the paired benchmark.
+- **I/O result:** source buffering is workload-dependent. At 4 KiB a retained
+  `BufReader<File>` outperforms bare-file point lookup; by 64 KiB the two
+  caller-scratch forms converge and slightly beat the allocating baseline.
+- **Live-file boundary:** `UnexpectedEof` describes what the current read
+  observed, not whether the file is finalized. A follower retries
+  `read_frame_at` with the same absolute offset after more bytes arrive; recovery
+  interprets the same condition as a torn tail only after writing has stopped.
+- **Evidence:** `tests/positioned_reads.rs`, `tests/allocation.rs`, and
+  `docs/benchmark/FINDINGS_POSITIONED_READS.md`.
 
 ### E. Carried forward from earlier plans
 
-**E1 — Single-`writev` framing (vectored write)** — **DONE**, `docs/benchmark/FINDINGS_VECTORED_FRAMING.md`
+**E1 — Single-`writev` framing (vectored write)** — **DONE**,
+`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`
 - **Outcome:** adopted as the default in `DefaultFramer`/`ChecksumFramer`, not
-  gated. 2.5–2.8× faster per frame on a raw `File`, 2.0× on loopback TCP, and
-  +0.71 ns/record (+6.8%) on 64 B frames through `BufWriter` — 1.1% of a
-  realistic record, which the maintainer-set bar accepts for a µs-scale win
-  elsewhere. `CountingWriter::write_vectored` shipped with it; see the findings
-  doc §4.1 for the silent receipt-corruption bug this would otherwise have been.
+  gated. Every raw-File/TCP pair improved (1.63–3.65× on this machine; one
+  surprising arm rechecked at 2.12×). CRC-32/64 B through `BufWriter` repeatedly
+  cost ~7% / 1.3 ns more; the default/64 B and both 4 KiB buffered arms were
+  inconsistent and are reported as inconclusive. `CountingWriter::write_vectored`
+  shipped with it; see the findings doc §F3.
 - **Goal:** emit each frame's header (`[len]`, or `[len | checksum]`) and its
   payload in **one `write_vectored` call** instead of two `write_all`s, inside the
   **existing** `DefaultFramer`/`ChecksumFramer` — no new framer types. Two
-  `IoSlice`s (three with a checksum) point at the stack header bytes and the
-  borrowed payload: one call, still zero-copy, byte-for-byte identical output (no
+  `IoSlice`s point at the complete stack header and the borrowed payload in
+  both cases: one call, still zero-copy, byte-for-byte identical output (no
   wire change).
 - **Why:** on unbuffered sinks (a raw `File`, a `TcpStream`) this halves syscalls
   per frame for high-frequency small writes. It is a call-count / syscall win, not
@@ -430,11 +567,46 @@ vectored write is worth shipping.)
   the 3.0 work (§7). A documented **"declined, with rationale"** is a valid
   outcome; decide before writing code.
 
+**E3 — Static durability policies** — **DONE**, `src/durability.rs` +
+`tests/durability.rs` + `docs/benchmark/FINDINGS_SYNC_POLICY.md`
+- **Goal:** make flush-before-sync and group-commit cadence library contracts
+  rather than application folklore, while keeping the default write path
+  branch-free and statically dispatched.
+- **Shape:** `Durable` sinks; zero-sized `NoSync`; frame-, byte-, and
+  interval-based `SyncPolicy` implementations; static `or` composition;
+  automatic and manual `sync_data`/`sync_all`; durable watermarks expressed in
+  the same coordinate system as `FrameReceipt::end()`.
+- **Failure contract:** a policy checkpoint runs after a complete frame is
+  accepted. `DurabilityFailed` records the attempted/previous watermarks and
+  triggering frame so callers cannot mistake a sync failure for an unwritten
+  frame and duplicate it on retry.
+- **Invariants:** no implementation for in-memory sinks; no unsafe or runtime
+  dependency; the default state is zero-sized; policy-enabled simple/expert
+  loops remain zero-allocation in steady state.
+- **Measured outcome:** the default `NoSync` specialization remains the
+  zero-overhead baseline. Installing a non-triggering static policy costs
+  ~0.281 ns / 30.1 instructions per frame in the mock-sink workloads and zero
+  steady-state allocations. Real file elapsed time scales with checkpoint count;
+  see the findings for explicit cadences and portability limits.
+
+**E4 — Static memory-policy dispatch** — **DONE**,
+`docs/benchmark/FINDINGS_STATIC_MEMORY_POLICY.md`
+- **Goal:** remove the per-frame `Option` branch, boxed `MemoryPolicy`, and boxed
+  custom-builder factory without weakening writer/reader reclamation semantics.
+- **Shape:** zero-sized `NoMemoryPolicy` defaults; concrete
+  `WriterMemoryPolicy<P, F>` / `ReaderMemoryPolicy<P>` states; generic builder
+  factories; memory and sync policies compose in either installation order.
+- **Measured outcome:** the default writer drops 8.21 instructions/frame versus
+  the old optional-box carrier. A static gate-open no-op has no resolvable
+  writer wall-clock delta and costs 18.14 instructions/frame for the real
+  capacity/gate/decision work. Reader rechecks show no regression.
+
 ---
 
 ## 7. Out of scope
 
 Do not begin, in the course of these tasks: any on-disk/durable format change,
-higher-level data constructs, random-access/seek reads, or anything that alters
-the normative wire bytes. That work is 3.0-line, maintainer-directed, and tracked
-separately. If a backlog task seems to require it, stop and raise it in review.
+higher-level data constructs, or anything that alters the normative wire bytes.
+The stateless `read_frame_at` primitive is the maintainer-approved exception:
+it seeks existing v0.2 frames without changing their format. Broader container
+or format work remains maintainer-directed.

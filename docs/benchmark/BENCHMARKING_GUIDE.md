@@ -1,5 +1,11 @@
 # FlatStream-RS Benchmarking Guide
 
+> **Current evidence rule (2026-07-24):** use `scripts/bench_isolated.sh` and
+> compare A/B arms collected inside the same isolated run, as specified by
+> `docs/CONTRIBUTING.md` §4. Saved cross-run Criterion baselines described in
+> historical sections below remain useful for local regression triage, but are
+> not sufficient provenance for a published performance claim.
+
 ## Overview
 
 This guide covers the comprehensive benchmarking strategy for `flatstream-rs`, including performance regression detection, comparative analysis against other serialization libraries, and detailed performance analysis methodologies.

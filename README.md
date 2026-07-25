@@ -12,7 +12,7 @@ FlatStream is a small framing layer that adds stream boundaries and optional int
 
 FlatStream is a small framing layer around FlatBuffers for streams (files/sockets). It writes and reads sequences of messages with a minimal header and optional checksums, while preserving zero-copy access to each FlatBuffer payload as a `&[u8]`.
 
-Two claims, scoped precisely: **"zero-copy" refers to payload access** — payloads are yielded as borrowed slices out of the reader's reusable buffer with no second payload copy or deserialization. A generic `Read` source copies each frame once into that buffer; growth may allocate, while warmed high-water-mark processing allocates nothing. A borrowed-slice/mmap source path, copy-free after the source is mapped, is planned. **Dispatch is static** on the framing/checksum/validation paths in their default configurations; deliberate exceptions when opted into: `MemoryPolicy` (one boxed call while it is consulted above its baseline; a gate-open benchmark measured ~1 ns over the no-policy path), `CompositeValidator` (one boxed call per composed validator; unmeasured), and `TypedValidator` (a function-pointer call).
+Two claims, scoped precisely: **"zero-copy" refers to payload access** — payloads are yielded as borrowed slices out of the reader's reusable buffer with no second payload copy or deserialization. A generic `Read` source copies each frame once into that buffer; growth may allocate, while warmed high-water-mark processing allocates nothing. A borrowed-slice/mmap source path, copy-free after the source is mapped, is planned. **Dispatch is static** for framing, checksums, sync policy, and memory policy; the zero-sized `NoSync`/`NoMemoryPolicy` defaults compile away. Deliberate opt-in indirection remains only in `CompositeValidator` (one boxed call per composed validator; unmeasured) and `TypedValidator` (a function-pointer call).
 
 ## Wire format (at a glance)
 
@@ -88,10 +88,9 @@ sequenceDiagram
   App->>Builder: serialize(T)
   Builder-->>App: finished_data(&[u8])
   App->>Writer: write_finished(&mut Builder)
-  Writer->>Framer: make_header(len[, checksum])
-  Framer-->>Writer: [len][opt checksum]
-  Writer->>OS: write_all(header)
-  Writer->>OS: write_all(payload)
+  Writer->>Framer: frame_and_write(sink, payload)
+  Framer->>OS: write_vectored([header, payload])
+  Note over Framer,OS: Partial writes are retried until the frame is complete
   App->>Writer: flush()
   Note over OS: Later / other process
   participant Reader as StreamReader
@@ -127,13 +126,15 @@ sequenceDiagram
 |---|---|
 | `StreamWriter<W, F>` | Writes messages using a `Framer` to a `Write` impl |
 | `StreamReader<R, D>` | Reads messages using a `Deframer` from a `Read` impl (yields `&[u8]`) |
+| `ReadFrame` / `read_frame_at` | Receipt-aware forward reads and zero-allocation-steady-state indexed lookup |
 | `Framer` | Defines how to encode `[len][opt checksum][payload]` |
 | `Deframer` | Defines how to decode `[len][opt checksum][payload]` |
 | `Checksum` | Pluggable integrity algorithm (e.g., `xxhash64`, `crc32`, `crc16`) |
 | `BoundedFramer` / `max_frame_len` | Enforce max payload size on write / read (read defaults to the FlatBuffers maximum, 2 GiB; tighten with `with_max_frame_len`, or raise it toward the `u32` wire ceiling for raw non-FlatBuffer formats) |
 | `Observer*` adapters | Invoke user callback with `&[u8]` slice (no allocation) |
 | `Validating*` adapters | Ensure payload safety via the `Validator` trait |
-| `MemoryPolicy` | Opt-in buffer reclamation for long-running processes (`with_memory_policy`) |
+| `MemoryPolicy` | Static opt-in buffer reclamation; `NoMemoryPolicy` is the zero-sized default |
+| `SyncPolicy` / `Durable` | Statically dispatched durability checkpoints with a confirmed byte watermark |
 
 ## Payload Validation
 
@@ -286,7 +287,6 @@ The core types (`StreamWriter`/`StreamReader`) are generic over these traits. Th
 
 - ***Pragmatic Performance:*** The StreamWriter offers two modes: a simple, convenient API for common use cases, and an expert-level API that provides fine-grained control over the FlatBufferBuilder lifecycle. This allows developers to avoid common performance pitfalls like memory bloat when dealing with mixed message sizes.
 
- 
 
 ## Writing Modes: Simple vs Expert
 
@@ -417,10 +417,11 @@ library that faces untrusted bytes. Run `instruction_counts.sh` when a
 Criterion result looks like it moved but the machine is suspect: wall-clock
 on a workstation swings several percent run-to-run, while instruction counts
 are stable within one recorded compiler/dependency/target/tool environment.
-Counts from different environments are not comparable. For wall-clock comparisons, use Criterion baselines
-(`cargo bench --locked -- --save-baseline <name>`, later
-`cargo bench --locked -- --baseline <name>`);
-baselines live in `target/criterion` and are machine-local.
+Counts from different environments are not comparable. Criterion baselines
+(`--save-baseline` / `--baseline`) remain useful for local regression triage and
+live in machine-local `target/criterion`, but published wall-clock claims use
+A/B arms from one isolated `scripts/bench_isolated.sh` run; see
+`docs/CONTRIBUTING.md` §4.
 
 ### Running the gate in a clean container
 
@@ -575,6 +576,7 @@ the receipt-returning write methods instead of computing offsets by hand:
 let receipt = stream_writer.write_with_receipt(&event)?;         // simple mode
 let receipt = stream_writer.write_finished_with_receipt(&mut b)?; // expert mode
 index.push((event_id, receipt.frame_start));
+let next_frame_start = receipt.end();
 // stream_writer.bytes_written() is the running stream offset.
 ```
 
@@ -583,17 +585,38 @@ checksum + payload) for any framer, so callers never duplicate the wire layout.
 Writers that only ever call `write_finished` can spell their type as the
 lifetime-free alias `OwnedStreamWriter<W, F>`.
 
-Reading a frame back is a seek to `frame_start` followed by a single
-`read_message` — the recorded offset is the first byte of the length prefix, so a
-fresh reader lands on a frame boundary:
+Read indexed frames with one caller-owned scratch buffer. After it reaches the
+largest frame used by the workload, point lookups allocate nothing:
 
 ```rust,ignore
-use std::io::{Seek, SeekFrom};
+use flatstream::read_frame_at;
 
 let mut file = File::open("journal.bin")?;
-file.seek(SeekFrom::Start(frame_start))?;
-let mut reader = StreamReader::new(file, DefaultDeframer::new());
-let payload = reader.read_message()?.expect("a frame begins at the indexed offset");
+let mut scratch = Vec::new();
+let frame = read_frame_at(
+    &mut file,
+    &DefaultDeframer::new(),
+    frame_start,
+    &mut scratch,
+)?
+.expect("a frame begins at the indexed offset");
+assert_eq!(frame.receipt.frame_start, frame_start);
+let payload = frame.payload;
+```
+
+`read_frame_at` leaves the source positioned after the frame. A retained
+`BufReader<File>` can reduce syscall count for small frames even though each
+seek invalidates its buffered position; benchmark it against a bare `File`.
+`FINDINGS_POSITIONED_READS.md` records the trade-off.
+
+Forward scans can obtain the same receipts without seeking:
+
+```rust,ignore
+while let Some(frame) = reader.read_message_with_receipt()? {
+    index.push(frame.receipt);
+    process(frame.payload)?;
+}
+assert_eq!(reader.bytes_consumed(), index.last().unwrap().end());
 ```
 
 Three properties make the index trustworthy, each pinned by
@@ -606,7 +629,7 @@ Three properties make the index trustworthy, each pinned by
   be built with `with_start_offset(existing_len)`; otherwise receipts are
   relative to the current session and the index silently points into the wrong
   frames.
-- **Torn-tail safety.** After a crash, `recover_stream` reports a truncation
+- **Torn-tail safety.** After a crash, `recover`/`recover_file` reports a truncation
   point; every index entry whose `frame_start + wire_len` is at or below that
   point still resolves. Drop the entries above it and the index remains valid.
 
@@ -842,7 +865,7 @@ or MAC in addition to the matching checksum deframer and schema validation.
         builder.finish(offset, None);
         stream_writer.write_finished(&mut builder)?;
         stream_writer.flush()?;
-        
+
         Ok(())
     }
 }
@@ -866,30 +889,105 @@ Which to choose depends on your failure model (what corruption you expect and wh
 
 For long-running applications handling mixed message sizes, `StreamWriter` and `StreamReader` support configurable memory reclamation via the `MemoryPolicy` trait.
 
-By default, no policy is installed and the writer retains the largest buffer capacity seen. To prevent memory bloat after large message bursts, install an `AdaptiveWatermarkPolicy` to reset the internal builder once high capacity is no longer needed. The baseline capacity is policy configuration — a policy decides both *when* to reclaim and *what* to shrink back to. The policy is consulted once per message, and only while capacity exceeds its baseline; the machinery is outlined off the hot paths, so without a policy the residual cost is a predictable, never-taken branch.
+By default, the zero-sized `NoMemoryPolicy` is selected and the writer retains
+the largest buffer capacity seen. Installing an `AdaptiveWatermarkPolicy`
+changes the concrete writer/reader policy type; calls are monomorphized and
+inlineable. The baseline capacity is policy configuration — a policy decides
+both *when* to reclaim and *what* to shrink back to — and policy logic runs only
+while capacity exceeds that baseline.
 
 ```rust
-use flatstream::{AdaptiveWatermarkPolicy, DefaultFramer, OwnedStreamWriter, StreamWriter};
+use flatstream::{AdaptiveWatermarkPolicy, DefaultFramer, StreamWriter};
 
-fn with_policy<W: std::io::Write>(file: W) -> OwnedStreamWriter<W, DefaultFramer> {
-    let policy = AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024);
-    StreamWriter::new(file, DefaultFramer).with_memory_policy(policy)
-}
+let file = Vec::new();
+let policy = AdaptiveWatermarkPolicy::new(4, 5).with_baseline(16 * 1024);
+let writer = StreamWriter::new(file, DefaultFramer).with_memory_policy(policy);
+# let _ = writer;
 ```
 
 Policies apply to buffers the library owns — the writer's simple mode (`write()`) and the reader's internal buffer. In expert mode (`write_finished()`) you own the builder, so reclamation is your call. For custom allocators, see `with_memory_policy_and_factory`.
 
-**Measured cost** (2026/07/23, Criterion, macOS/Apple Silicon, Rust 1.97.1,
+**Measured cost** (2026/07/25, Criterion, macOS/Apple Silicon, Rust 1.97.1,
 sink writer, 100-byte messages; raw output in
-`bench_results.memory_policy.txt`):
+`docs/benchmark/raw/e4_memory_writer.txt`):
 
 | Configuration | `write()` per message |
 |---|---|
-| No policy installed (default) | ~8.5 ns |
-| No-op policy installed (boxed-call cost) | ~9.4 ns |
-| `AdaptiveWatermarkPolicy` installed, not firing | ~10.9 ns |
+| `NoMemoryPolicy` default | 8.329 ns |
+| Static gate-open no-op | 8.353 ns (no resolved difference) |
+| Static adaptive policy, not firing | 10.826 ns |
 
-The reclaim itself trades a bounded re-growth cost for footprint: in a worst-case oscillation benchmark (a 1 MB burst followed by 1,100 small messages, forcing a reclaim every cycle), the adaptive writer runs ~2.6× the CPU of an unbounded one (~1.17 ms vs ~0.45 ms per 10-cycle iteration) in exchange for dropping the steady-state footprint from 1 MB to the 16 KB baseline. Real workloads with rare bursts pay the re-growth once per burst, not continuously — and the baseline gate guarantees a policy can never thrash at steady state.
+Pinned instruction counts show the default refactor removed 8.21 instructions
+per frame from the old optional-box implementation; an installed gate-open
+no-op costs 18.14 instructions/frame for the capacity probe, baseline gate, and
+inlined decision. Reader rechecks found no regression. Full methodology:
+`docs/benchmark/FINDINGS_STATIC_MEMORY_POLICY.md`.
+
+The reclaim itself trades a bounded re-growth cost for footprint: in a
+worst-case oscillation benchmark (a 1 MB burst followed by 1,100 small messages,
+forcing a reclaim every cycle), the adaptive writer spends additional CPU in
+exchange for dropping the steady-state footprint from 1 MB to the 16 KB
+baseline. Real workloads with rare bursts pay the re-growth once per burst, not
+continuously. The isolated ten-cycle run measured 1.167 ms adaptive versus
+0.427 ms unbounded (2.73×); this is allocator churn, not dispatch.
+
+### Durability Policies
+
+`flush()` only moves bytes through userspace buffering; it does not promise
+stable storage. For files, FlatStream exposes that distinction through
+`Durable` and statically dispatched `SyncPolicy` implementations:
+
+```rust
+use flatstream::{DefaultFramer, StreamWriter, SyncEveryNFrames, SyncMode};
+use std::fs::File;
+use std::io::BufWriter;
+use std::num::NonZeroU64;
+
+# fn main() -> flatstream::Result<()> {
+# let path = std::env::temp_dir().join(format!("flatstream-readme-{}.bin", std::process::id()));
+let file = File::create(&path)?;
+let policy =
+    SyncEveryNFrames::new(NonZeroU64::new(1_000).unwrap(), SyncMode::Data);
+let mut writer =
+    StreamWriter::new(BufWriter::new(file), DefaultFramer)
+        .with_sync_policy(policy);
+
+let receipt = writer.write_with_receipt(&"event")?;
+if writer
+    .durable_watermark()
+    .is_some_and(|mark| receipt.end() <= mark)
+{
+    // This frame is covered by a successful checkpoint.
+}
+
+// Force a checkpoint at a transaction boundary.
+let durable_through = writer.sync_all()?;
+assert_eq!(durable_through, writer.bytes_written());
+# drop(writer);
+# std::fs::remove_file(path)?;
+# Ok(())
+# }
+```
+
+The default `NoSync` state is zero-sized and has no policy branch or dynamic
+dispatch. Installing a policy changes the writer's concrete type and is only
+available when its sink implements `Durable`; in-memory sinks deliberately do
+not claim durability. Policies can trigger every frame, every N frames, every N
+wire bytes, or by monotonic interval, and can be combined with
+`SyncPolicyExt::or`.
+
+Measured on the committed E3 harness, an installed non-triggering policy costs
+about 0.281 ns / 30.1 instructions per frame and zero steady-state allocations;
+the default specialization pays none of that policy work. Real sync latency is
+storage- and cadence-specific—see
+`docs/benchmark/FINDINGS_SYNC_POLICY.md`.
+
+An automatic checkpoint runs only after a complete frame has been accepted.
+If it fails, `ErrorKind::DurabilityFailed` includes the attempted watermark,
+the previous successful watermark, and the triggering frame coordinates:
+blindly retrying that write would duplicate a frame already present in the
+stream. On macOS, `sync_all` has the same write-cache limitation as
+`std::fs::File::sync_all` (`fsync`, not `F_FULLFSYNC`).
 
 ## Wire Format Specification
 
@@ -926,7 +1024,14 @@ While FlatStream is optimized for high performance, achieving the lowest latency
 
 If you provide an unbuffered handle (like a raw `std::fs::File` or `std::net::TcpStream`), every write operation may result in a system call, significantly increasing latency and reducing throughput.
 
-**Default recommendation**: Buffer file or network handles with `std::io::BufWriter`/`BufReader`, then measure. Buffering reduces small-write/read syscall pressure, but it adds staging; a future measure-gated vectored-write path may favor raw vector-capable sinks, while the planned slice/mmap reader avoids the `Read` path entirely.
+**Default recommendation**: Buffer file or network handles with
+`std::io::BufWriter`/`BufReader`, then measure. Buffering reduces small-write/read
+syscall pressure, but it adds staging. The built-in framers already use vectored
+writes: isolated E1 runs improved every raw-File/TCP pair, while the
+CRC-32/64 B `BufWriter` pair repeatedly cost about 1.3 ns more and the other
+buffered arms were inconclusive. See
+`docs/benchmark/FINDINGS_VECTORED_FRAMING.md`; the planned slice/mmap reader
+avoids the `Read` path entirely.
 
 ```rust
 use std::fs::File;

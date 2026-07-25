@@ -2,21 +2,25 @@
 //!
 //! # Benchmark Purpose
 //!
-//! `DefaultFramer`/`ChecksumFramer` now emit each frame's header and payload
-//! in **one** `write_vectored` call instead of two `write_all`s. The claim to
-//! test is narrow and mechanical: on a sink that implements `writev` this
-//! halves the syscalls per frame, so it should win on **unbuffered** sinks and
-//! do nothing measurable on a `BufWriter` (already memcpy-batched). It is a
-//! call-count win, not a copy win — zero-copy already held.
+//! `DefaultFramer` and `ChecksumFramer<Crc32>` now emit each frame's assembled
+//! header and payload in **one** `write_vectored` call instead of the pre-E1
+//! pair of `write_all`s. The claim to test is narrow and mechanical: on a sink
+//! that implements `writev` this halves the syscalls per frame, so it should
+//! win on **unbuffered** sinks and do nothing measurable on a `BufWriter`
+//! (already memcpy-batched). It is a call-count win, not a copy win —
+//! zero-copy already held.
 //!
 //! # Design: both arms in one process
 //!
-//! The baseline is `TwoCallFramer` below, a verbatim replica of the pre-E1
-//! `DefaultFramer` body, implementing the same public `Framer` trait. Running
-//! both arms in a single binary means one build, one machine, one thermal
-//! state — strictly better evidence than comparing two Criterion baselines
-//! across a code change, and immune to the "baselines are machine-local and
-//! die with `cargo clean`" caveat in `docs/CONTRIBUTING.md` §4.
+//! The baselines are `TwoCallFramer` and, with the `crc32` feature,
+//! `TwoCallCrc32Framer`: replicas of the corresponding pre-E1 bodies,
+//! including their length guards. Every `default` or `crc32` pair uses the
+//! same payload and sink instance; only the framing write shape differs.
+//! Running both arms in a single binary means one build, one machine, one
+//! thermal state — strictly better evidence than comparing two Criterion
+//! baselines across a code change, and immune to the "baselines are
+//! machine-local and die with `cargo clean`" caveat in
+//! `docs/CONTRIBUTING.md` §4.
 //!
 //! Both arms go through `StreamWriter`, so the vectored arm also pays for
 //! `CountingWriter::write_vectored` — the receipt accounting is inside the
@@ -39,11 +43,14 @@
 //! Run with:
 //! ```text
 //! cargo bench --bench vectored_framing
+//! cargo bench --bench vectored_framing --features crc32  # includes CRC32 pair
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{DefaultFramer, Framer, Result, StreamWriter};
+#[cfg(feature = "crc32")]
+use flatstream::{checksum::Checksum, ChecksumFramer, Crc32};
+use flatstream::{DefaultFramer, Error, Framer, Result, StreamWriter};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -60,8 +67,57 @@ struct TwoCallFramer;
 
 impl Framer for TwoCallFramer {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        if payload.len() > u32::MAX as usize {
+            return Err(Error::invalid_frame_with(
+                "payload length exceeds 32-bit header limit",
+                Some(payload.len()),
+                None,
+                Some(u32::MAX as usize),
+            ));
+        }
         let payload_len = payload.len() as u32;
         writer.write_all(&payload_len.to_le_bytes())?;
+        writer.write_all(payload)?;
+        Ok(())
+    }
+}
+
+/// The pre-E1 `ChecksumFramer<Crc32>`: one write for its already-assembled
+/// `[length | checksum]` header and one for the payload.
+#[cfg(feature = "crc32")]
+struct TwoCallCrc32Framer {
+    checksum_alg: Crc32,
+}
+
+#[cfg(feature = "crc32")]
+impl TwoCallCrc32Framer {
+    fn new() -> Self {
+        Self {
+            checksum_alg: Crc32::new(),
+        }
+    }
+}
+
+#[cfg(feature = "crc32")]
+impl Framer for TwoCallCrc32Framer {
+    fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+        if payload.len() > u32::MAX as usize {
+            return Err(Error::invalid_frame_with(
+                "payload length exceeds 32-bit header limit",
+                Some(payload.len()),
+                None,
+                Some(u32::MAX as usize),
+            ));
+        }
+        let payload_len = payload.len() as u32;
+        let checksum = self.checksum_alg.calculate(payload);
+
+        let mut header = [0u8; 12];
+        header[..4].copy_from_slice(&payload_len.to_le_bytes());
+        let checksum_field: &mut [u8; 8] = (&mut header[4..12]).try_into().unwrap();
+        self.checksum_alg.write_bytes(checksum, checksum_field);
+
+        writer.write_all(&header[..4 + Crc32::SIZE])?;
         writer.write_all(payload)?;
         Ok(())
     }
@@ -132,39 +188,87 @@ fn vectored_framing(c: &mut Criterion) {
     for size in PAYLOAD_SIZES {
         let mut builder = finished_builder(size);
 
-        // --- raw File: one syscall per write_all, so two per frame before ----
-        {
-            let file = tempfile::tempfile().expect("scratch file");
-            group.bench_function(BenchmarkId::new("file/vectored", format!("{size}B")), |b| {
-                b.iter(|| {
-                    (&file).seek(SeekFrom::Start(0)).unwrap();
-                    drive(&file, DefaultFramer, &mut builder);
-                });
-            });
-            group.bench_function(BenchmarkId::new("file/two_call", format!("{size}B")), |b| {
-                b.iter(|| {
-                    (&file).seek(SeekFrom::Start(0)).unwrap();
-                    drive(&file, TwoCallFramer, &mut builder);
-                });
-            });
-        }
-
-        // --- loopback TcpStream ----------------------------------------------
-        {
-            let link = Loopback::new();
-            group.bench_function(BenchmarkId::new("tcp/vectored", format!("{size}B")), |b| {
-                b.iter(|| drive(&link.client, DefaultFramer, &mut builder));
-            });
-            group.bench_function(BenchmarkId::new("tcp/two_call", format!("{size}B")), |b| {
-                b.iter(|| drive(&link.client, TwoCallFramer, &mut builder));
-            });
-        }
-
-        // --- BufWriter<File>: expected to be a wash ---------------------------
+        // Each adjacent label pair shares this File and payload; only the
+        // framing write shape differs.
         {
             let file = tempfile::tempfile().expect("scratch file");
             group.bench_function(
-                BenchmarkId::new("bufwriter/vectored", format!("{size}B")),
+                BenchmarkId::new("file/default/vectored", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(&file, DefaultFramer, &mut builder);
+                    });
+                },
+            );
+            group.bench_function(
+                BenchmarkId::new("file/default/two_call", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(&file, TwoCallFramer, &mut builder);
+                    });
+                },
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("file/crc32/vectored", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(&file, ChecksumFramer::new(Crc32::new()), &mut builder);
+                    });
+                },
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("file/crc32/two_call", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(&file, TwoCallCrc32Framer::new(), &mut builder);
+                    });
+                },
+            );
+        }
+
+        // Each adjacent label pair shares this loopback connection and payload.
+        {
+            let link = Loopback::new();
+            group.bench_function(
+                BenchmarkId::new("tcp/default/vectored", format!("{size}B")),
+                |b| b.iter(|| drive(&link.client, DefaultFramer, &mut builder)),
+            );
+            group.bench_function(
+                BenchmarkId::new("tcp/default/two_call", format!("{size}B")),
+                |b| b.iter(|| drive(&link.client, TwoCallFramer, &mut builder)),
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("tcp/crc32/vectored", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        drive(
+                            &link.client,
+                            ChecksumFramer::new(Crc32::new()),
+                            &mut builder,
+                        )
+                    })
+                },
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("tcp/crc32/two_call", format!("{size}B")),
+                |b| b.iter(|| drive(&link.client, TwoCallCrc32Framer::new(), &mut builder)),
+            );
+        }
+
+        // Each adjacent label pair shares this File and payload; BufWriter is
+        // expected to make both write shapes equivalent.
+        {
+            let file = tempfile::tempfile().expect("scratch file");
+            group.bench_function(
+                BenchmarkId::new("bufwriter/default/vectored", format!("{size}B")),
                 |b| {
                     b.iter(|| {
                         (&file).seek(SeekFrom::Start(0)).unwrap();
@@ -173,11 +277,39 @@ fn vectored_framing(c: &mut Criterion) {
                 },
             );
             group.bench_function(
-                BenchmarkId::new("bufwriter/two_call", format!("{size}B")),
+                BenchmarkId::new("bufwriter/default/two_call", format!("{size}B")),
                 |b| {
                     b.iter(|| {
                         (&file).seek(SeekFrom::Start(0)).unwrap();
                         drive(BufWriter::new(&file), TwoCallFramer, &mut builder);
+                    });
+                },
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("bufwriter/crc32/vectored", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(
+                            BufWriter::new(&file),
+                            ChecksumFramer::new(Crc32::new()),
+                            &mut builder,
+                        );
+                    });
+                },
+            );
+            #[cfg(feature = "crc32")]
+            group.bench_function(
+                BenchmarkId::new("bufwriter/crc32/two_call", format!("{size}B")),
+                |b| {
+                    b.iter(|| {
+                        (&file).seek(SeekFrom::Start(0)).unwrap();
+                        drive(
+                            BufWriter::new(&file),
+                            TwoCallCrc32Framer::new(),
+                            &mut builder,
+                        );
                     });
                 },
             );

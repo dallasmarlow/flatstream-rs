@@ -1,0 +1,53 @@
+# e3_sync_dispatch
+# date:    2026-07-25T05:10:00Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --locked --bench sync_policy -- Dispatch
+
+   Compiling flatstream v0.2.8 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 1.12s
+     Running benches/sync_policy.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/2ce7581716208fde57ea5c729fac24a3/cargo-target/release/deps/sync_policy-996fef5a0629fb95)
+Gnuplot not found, using plotters backend
+Benchmarking Sync Policy Dispatch/default_no_sync
+Benchmarking Sync Policy Dispatch/default_no_sync: Warming up for 3.0000 s
+Benchmarking Sync Policy Dispatch/default_no_sync: Collecting 100 samples in estimated 5.0056 s (2.3M iterations)
+Benchmarking Sync Policy Dispatch/default_no_sync: Analyzing
+Sync Policy Dispatch/default_no_sync
+                        time:   [2.1382 µs 2.1413 µs 2.1441 µs]
+                        thrpt:  [466.40 Melem/s 467.02 Melem/s 467.69 Melem/s]
+                 change:
+                        time:   [+1.8966% +2.2864% +2.6321%] (p = 0.00 < 0.05)
+                        thrpt:  [-2.5646% -2.2353% -1.8613%]
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low severe
+  7 (7.00%) low mild
+  2 (2.00%) high mild
+Benchmarking Sync Policy Dispatch/static_policy_not_due
+Benchmarking Sync Policy Dispatch/static_policy_not_due: Warming up for 3.0000 s
+Benchmarking Sync Policy Dispatch/static_policy_not_due: Collecting 100 samples in estimated 5.0055 s (2.1M iterations)
+Benchmarking Sync Policy Dispatch/static_policy_not_due: Analyzing
+Sync Policy Dispatch/static_policy_not_due
+                        time:   [2.4199 µs 2.4227 µs 2.4252 µs]
+                        thrpt:  [412.34 Melem/s 412.76 Melem/s 413.25 Melem/s]
+                 change:
+                        time:   [+1.7932% +1.9913% +2.1827%] (p = 0.00 < 0.05)
+                        thrpt:  [-2.1361% -1.9524% -1.7617%]
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high severe
+Benchmarking Sync Policy Dispatch/static_policy_one_checkpoint
+Benchmarking Sync Policy Dispatch/static_policy_one_checkpoint: Warming up for 3.0000 s
+Benchmarking Sync Policy Dispatch/static_policy_one_checkpoint: Collecting 100 samples in estimated 5.0014 s (2.1M iterations)
+Benchmarking Sync Policy Dispatch/static_policy_one_checkpoint: Analyzing
+Sync Policy Dispatch/static_policy_one_checkpoint
+                        time:   [2.4323 µs 2.4392 µs 2.4468 µs]
+                        thrpt:  [408.70 Melem/s 409.96 Melem/s 411.14 Melem/s]
+                 change:
+                        time:   [+1.4942% +1.7454% +2.0135%] (p = 0.00 < 0.05)
+                        thrpt:  [-1.9737% -1.7155% -1.4722%]
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe

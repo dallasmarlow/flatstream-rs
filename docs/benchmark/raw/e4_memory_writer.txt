@@ -1,0 +1,61 @@
+# e4_memory_writer
+# date:    2026-07-25T05:06:10Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --locked --bench memory_policy_benchmarks -- policy_overhead
+
+   Compiling flatstream v0.2.8 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 1.00s
+     Running benches/memory_policy_benchmarks.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/2ce7581716208fde57ea5c729fac24a3/cargo-target/release/deps/memory_policy_benchmarks-8db1848d7a744022)
+Gnuplot not found, using plotters backend
+Benchmarking policy_overhead/no_policy
+Benchmarking policy_overhead/no_policy: Warming up for 3.0000 s
+Benchmarking policy_overhead/no_policy: Collecting 100 samples in estimated 5.0000 s (595M iterations)
+Benchmarking policy_overhead/no_policy: Analyzing
+policy_overhead/no_policy
+                        time:   [8.3091 ns 8.3285 ns 8.3500 ns]
+                        thrpt:  [119.76 Melem/s 120.07 Melem/s 120.35 Melem/s]
+                 change:
+                        time:   [-11.055% -10.362% -9.7417%] (p = 0.00 < 0.05)
+                        thrpt:  [+10.793% +11.559% +12.429%]
+                        Performance has improved.
+Benchmarking policy_overhead/static_noop_policy
+Benchmarking policy_overhead/static_noop_policy: Warming up for 3.0000 s
+Benchmarking policy_overhead/static_noop_policy: Collecting 100 samples in estimated 5.0000 s (600M iterations)
+Benchmarking policy_overhead/static_noop_policy: Analyzing
+policy_overhead/static_noop_policy
+                        time:   [8.3337 ns 8.3526 ns 8.3732 ns]
+                        thrpt:  [119.43 Melem/s 119.72 Melem/s 119.99 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low severe
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking policy_overhead/static_adaptive_policy_inactive
+Benchmarking policy_overhead/static_adaptive_policy_inactive: Warming up for 3.0000 s
+Benchmarking policy_overhead/static_adaptive_policy_inactive: Collecting 100 samples in estimated 5.0000 s (476M iterations)
+Benchmarking policy_overhead/static_adaptive_policy_inactive: Analyzing
+policy_overhead/static_adaptive_policy_inactive
+                        time:   [10.774 ns 10.826 ns 10.884 ns]
+                        thrpt:  [91.878 Melem/s 92.366 Melem/s 92.817 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking reader_policy_overhead/no_policy
+Benchmarking reader_policy_overhead/no_policy: Warming up for 3.0000 s
+Benchmarking reader_policy_overhead/no_policy: Collecting 100 samples in estimated 5.0254 s (939k iterations)
+Benchmarking reader_policy_overhead/no_policy: Analyzing
+reader_policy_overhead/no_policy
+                        time:   [5.2865 µs 5.3122 µs 5.3460 µs]
+                        thrpt:  [187.06 Melem/s 188.24 Melem/s 189.16 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking reader_policy_overhead/static_noop_policy
+Benchmarking reader_policy_overhead/static_noop_policy: Warming up for 3.0000 s
+Benchmarking reader_policy_overhead/static_noop_policy: Collecting 100 samples in estimated 5.0161 s (909k iterations)
+Benchmarking reader_policy_overhead/static_noop_policy: Analyzing
+reader_policy_overhead/static_noop_policy
+                        time:   [5.2310 µs 5.2455 µs 5.2608 µs]
+                        thrpt:  [190.08 Melem/s 190.64 Melem/s 191.17 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low severe

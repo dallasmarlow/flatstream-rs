@@ -1,0 +1,90 @@
+# e5_positioned_reads
+# date:    2026-07-25T19:05:24Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench positioned_reads -- Positioned
+
+   Compiling flatstream v0.2.8 (/Users/dallas/repos/flatstream-rs)
+    Finished `bench` profile [optimized] target(s) in 0.80s
+     Running benches/positioned_reads.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/d07501f02f79b9d3e085ed31647e3cb3/cargo-target/release/deps/positioned_reads-2b1c95a9ab3785a3)
+Gnuplot not found, using plotters backend
+Benchmarking Positioned Reads/fresh_stream_reader/4096
+Benchmarking Positioned Reads/fresh_stream_reader/4096: Warming up for 3.0000 s
+Benchmarking Positioned Reads/fresh_stream_reader/4096: Collecting 100 samples in estimated 5.0021 s (4.8M iterations)
+Benchmarking Positioned Reads/fresh_stream_reader/4096: Analyzing
+Positioned Reads/fresh_stream_reader/4096
+                        time:   [1.0366 µs 1.0392 µs 1.0425 µs]
+                        thrpt:  [959.21 Kelem/s 962.24 Kelem/s 964.66 Kelem/s]
+                 change:
+                        time:   [-0.7652% -0.3040% +0.1892%] (p = 0.24 > 0.05)
+                        thrpt:  [-0.1889% +0.3050% +0.7711%]
+                        No change in performance detected.
+Found 15 outliers among 100 measurements (15.00%)
+  2 (2.00%) low severe
+  2 (2.00%) low mild
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+Benchmarking Positioned Reads/read_frame_at/4096
+Benchmarking Positioned Reads/read_frame_at/4096: Warming up for 3.0000 s
+Benchmarking Positioned Reads/read_frame_at/4096: Collecting 100 samples in estimated 5.0015 s (3.2M iterations)
+Benchmarking Positioned Reads/read_frame_at/4096: Analyzing
+Positioned Reads/read_frame_at/4096
+                        time:   [1.5796 µs 1.5843 µs 1.5898 µs]
+                        thrpt:  [629.00 Kelem/s 631.21 Kelem/s 633.08 Kelem/s]
+                 change:
+                        time:   [-0.9311% -0.3630% +0.2250%] (p = 0.22 > 0.05)
+                        thrpt:  [-0.2245% +0.3643% +0.9398%]
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+Benchmarking Positioned Reads/read_frame_at_buffered/4096
+Benchmarking Positioned Reads/read_frame_at_buffered/4096: Warming up for 3.0000 s
+Benchmarking Positioned Reads/read_frame_at_buffered/4096: Collecting 100 samples in estimated 5.0042 s (4.5M iterations)
+Benchmarking Positioned Reads/read_frame_at_buffered/4096: Analyzing
+Positioned Reads/read_frame_at_buffered/4096
+                        time:   [1.1120 µs 1.1154 µs 1.1194 µs]
+                        thrpt:  [893.37 Kelem/s 896.53 Kelem/s 899.26 Kelem/s]
+Found 15 outliers among 100 measurements (15.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  9 (9.00%) high severe
+Benchmarking Positioned Reads/fresh_stream_reader/65536
+Benchmarking Positioned Reads/fresh_stream_reader/65536: Warming up for 3.0000 s
+Benchmarking Positioned Reads/fresh_stream_reader/65536: Collecting 100 samples in estimated 5.0464 s (465k iterations)
+Benchmarking Positioned Reads/fresh_stream_reader/65536: Analyzing
+Positioned Reads/fresh_stream_reader/65536
+                        time:   [10.810 µs 10.834 µs 10.863 µs]
+                        thrpt:  [92.060 Kelem/s 92.305 Kelem/s 92.510 Kelem/s]
+                 change:
+                        time:   [+1.0512% +1.4063% +1.7608%] (p = 0.00 < 0.05)
+                        thrpt:  [-1.7303% -1.3868% -1.0403%]
+                        Performance has regressed.
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) low severe
+  3 (3.00%) low mild
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+Benchmarking Positioned Reads/read_frame_at/65536
+Benchmarking Positioned Reads/read_frame_at/65536: Warming up for 3.0000 s
+Benchmarking Positioned Reads/read_frame_at/65536: Collecting 100 samples in estimated 5.0424 s (490k iterations)
+Benchmarking Positioned Reads/read_frame_at/65536: Analyzing
+Positioned Reads/read_frame_at/65536
+                        time:   [10.241 µs 10.291 µs 10.355 µs]
+                        thrpt:  [96.569 Kelem/s 97.168 Kelem/s 97.647 Kelem/s]
+                 change:
+                        time:   [+0.7568% +1.4749% +2.3721%] (p = 0.00 < 0.05)
+                        thrpt:  [-2.3171% -1.4535% -0.7511%]
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  2 (2.00%) low mild
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+Benchmarking Positioned Reads/read_frame_at_buffered/65536
+Benchmarking Positioned Reads/read_frame_at_buffered/65536: Warming up for 3.0000 s
+Benchmarking Positioned Reads/read_frame_at_buffered/65536: Collecting 100 samples in estimated 5.0116 s (480k iterations)
+Benchmarking Positioned Reads/read_frame_at_buffered/65536: Analyzing
+Positioned Reads/read_frame_at_buffered/65536
+                        time:   [10.215 µs 10.315 µs 10.434 µs]
+                        thrpt:  [95.842 Kelem/s 96.945 Kelem/s 97.891 Kelem/s]

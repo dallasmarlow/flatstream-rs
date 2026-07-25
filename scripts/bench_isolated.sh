@@ -53,4 +53,15 @@ echo "== $SLUG -> $OUT"
 echo "   Close other work first; this measurement is only as good as the machine is idle."
 cargo bench "${CARGO_ARGS[@]}" --bench "$BENCH" -- $FILTER 2>&1 | tee -a "$OUT"
 
+# Criterion separates benchmark groups with blank lines. Keep the raw snapshot
+# newline-terminated without trailing blank records so `git diff --check` stays
+# meaningful for generated evidence too.
+python3 - "$OUT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+path.write_text(path.read_text().rstrip() + "\n")
+PY
+
 echo "== wrote $OUT"

@@ -1,0 +1,119 @@
+# e1_tcp
+# date:    2026-07-25T03:54:22Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench vectored_framing -- tcp/
+
+    Finished `bench` profile [optimized] target(s) in 0.14s
+     Running benches/vectored_framing.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/2ce7581716208fde57ea5c729fac24a3/cargo-target/release/deps/vectored_framing-3717d7fb03d2d657)
+Gnuplot not found, using plotters backend
+Benchmarking E1 Vectored Framing/tcp/default/vectored/64B
+Benchmarking E1 Vectored Framing/tcp/default/vectored/64B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.4s, enable flat sampling, or reduce sample count to 50.
+Benchmarking E1 Vectored Framing/tcp/default/vectored/64B: Collecting 100 samples in estimated 8.4244 s (5050 iterations)
+Benchmarking E1 Vectored Framing/tcp/default/vectored/64B: Analyzing
+E1 Vectored Framing/tcp/default/vectored/64B
+                        time:   [1.6865 ms 1.7581 ms 1.8317 ms]
+                        thrpt:  [545.94 Kelem/s 568.81 Kelem/s 592.96 Kelem/s]
+                 change:
+                        time:   [-2.3422% +1.9378% +6.4670%] (p = 0.39 > 0.05)
+                        thrpt:  [-6.0742% -1.9010% +2.3984%]
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking E1 Vectored Framing/tcp/default/two_call/64B
+Benchmarking E1 Vectored Framing/tcp/default/two_call/64B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/default/two_call/64B: Collecting 100 samples in estimated 5.2658 s (1500 iterations)
+Benchmarking E1 Vectored Framing/tcp/default/two_call/64B: Analyzing
+E1 Vectored Framing/tcp/default/two_call/64B
+                        time:   [3.2008 ms 3.2904 ms 3.3866 ms]
+                        thrpt:  [295.28 Kelem/s 303.91 Kelem/s 312.42 Kelem/s]
+                 change:
+                        time:   [-27.031% -24.538% -21.538%] (p = 0.00 < 0.05)
+                        thrpt:  [+27.450% +32.517% +37.044%]
+                        Performance has improved.
+Found 15 outliers among 100 measurements (15.00%)
+  13 (13.00%) high mild
+  2 (2.00%) high severe
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/64B
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/64B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.6s, enable flat sampling, or reduce sample count to 50.
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/64B: Collecting 100 samples in estimated 8.5750 s (5050 iterations)
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/64B: Analyzing
+E1 Vectored Framing/tcp/crc32/vectored/64B
+                        time:   [1.6447 ms 1.7042 ms 1.7697 ms]
+                        thrpt:  [565.08 Kelem/s 586.79 Kelem/s 608.03 Kelem/s]
+                 change:
+                        time:   [-23.247% -20.837% -18.227%] (p = 0.00 < 0.05)
+                        thrpt:  [+22.290% +26.322% +30.288%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/64B
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/64B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/64B: Collecting 100 samples in estimated 5.0890 s (1400 iterations)
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/64B: Analyzing
+E1 Vectored Framing/tcp/crc32/two_call/64B
+                        time:   [3.0953 ms 3.1694 ms 3.2514 ms]
+                        thrpt:  [307.56 Kelem/s 315.51 Kelem/s 323.07 Kelem/s]
+                 change:
+                        time:   [-29.980% -27.549% -25.174%] (p = 0.00 < 0.05)
+                        thrpt:  [+33.643% +38.024% +42.815%]
+                        Performance has improved.
+Found 13 outliers among 100 measurements (13.00%)
+  5 (5.00%) high mild
+  8 (8.00%) high severe
+Benchmarking E1 Vectored Framing/tcp/default/vectored/4096B
+Benchmarking E1 Vectored Framing/tcp/default/vectored/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/default/vectored/4096B: Collecting 100 samples in estimated 5.0485 s (2400 iterations)
+Benchmarking E1 Vectored Framing/tcp/default/vectored/4096B: Analyzing
+E1 Vectored Framing/tcp/default/vectored/4096B
+                        time:   [1.8573 ms 1.9144 ms 1.9753 ms]
+                        thrpt:  [506.25 Kelem/s 522.37 Kelem/s 538.41 Kelem/s]
+                 change:
+                        time:   [-27.278% -24.479% -21.589%] (p = 0.00 < 0.05)
+                        thrpt:  [+27.533% +32.413% +37.510%]
+                        Performance has improved.
+Found 17 outliers among 100 measurements (17.00%)
+  13 (13.00%) high mild
+  4 (4.00%) high severe
+Benchmarking E1 Vectored Framing/tcp/default/two_call/4096B
+Benchmarking E1 Vectored Framing/tcp/default/two_call/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/default/two_call/4096B: Collecting 100 samples in estimated 5.1726 s (1400 iterations)
+Benchmarking E1 Vectored Framing/tcp/default/two_call/4096B: Analyzing
+E1 Vectored Framing/tcp/default/two_call/4096B
+                        time:   [3.5748 ms 3.6861 ms 3.8011 ms]
+                        thrpt:  [263.08 Kelem/s 271.29 Kelem/s 279.74 Kelem/s]
+                 change:
+                        time:   [-25.589% -23.091% -20.139%] (p = 0.00 < 0.05)
+                        thrpt:  [+25.218% +30.024% +34.389%]
+                        Performance has improved.
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/4096B
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/4096B: Collecting 100 samples in estimated 5.0373 s (2100 iterations)
+Benchmarking E1 Vectored Framing/tcp/crc32/vectored/4096B: Analyzing
+E1 Vectored Framing/tcp/crc32/vectored/4096B
+                        time:   [2.4718 ms 2.5375 ms 2.6076 ms]
+                        thrpt:  [383.49 Kelem/s 394.09 Kelem/s 404.57 Kelem/s]
+                 change:
+                        time:   [-21.346% -18.873% -16.274%] (p = 0.00 < 0.05)
+                        thrpt:  [+19.438% +23.264% +27.139%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/4096B
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/4096B: Warming up for 3.0000 s
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/4096B: Collecting 100 samples in estimated 5.3998 s (1300 iterations)
+Benchmarking E1 Vectored Framing/tcp/crc32/two_call/4096B: Analyzing
+E1 Vectored Framing/tcp/crc32/two_call/4096B
+                        time:   [4.0716 ms 4.1869 ms 4.3112 ms]
+                        thrpt:  [231.95 Kelem/s 238.84 Kelem/s 245.60 Kelem/s]
+                 change:
+                        time:   [-22.957% -20.439% -17.785%] (p = 0.00 < 0.05)
+                        thrpt:  [+21.632% +25.690% +29.797%]
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
