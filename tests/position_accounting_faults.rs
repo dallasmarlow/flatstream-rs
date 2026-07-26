@@ -1,15 +1,20 @@
 //! C6 — Position-accounting fault semantics.
 //!
-//! `bytes_consumed`, the [`FrameReceipt`] a reader hands back, and the receipt
-//! [`read_frame_at`] computes from a seek all rest on one invariant: the
-//! [`StreamReader`]'s internal `CountingReader` counts exactly the bytes the
-//! source *returns*, no more and no less. These tests pin what that invariant
-//! means at the edges the happy-path suites never reach:
+//! Two distinct accounting mechanisms sit behind the [`FrameReceipt`]s these
+//! tests check. On the sequential [`StreamReader`] path, `bytes_consumed` and
+//! every receipt rest on one invariant: the reader's internal `CountingReader`
+//! counts exactly the bytes the source *returns*, no more and no less. The
+//! stateless [`read_frame_at`] path uses no counter at all — it derives its
+//! receipt from the seekable source's `stream_position()` after parsing. Both
+//! must agree with the writer's recorded receipts frame-for-frame. These tests
+//! pin what that means at the edges the happy-path suites never reach:
 //!
 //! - (a) a **custom deframer that reads its payload with `read_vectored`** is
-//!   counted just as precisely as one using `read`, because the counting
-//!   wrapper forwards and tallies `read_vectored` too — so its receipts are
-//!   byte-for-byte the ones a `DefaultFramer` write recorded.
+//!   accounted just as precisely as one using `read`: on the sequential path
+//!   because the counting wrapper forwards and tallies `read_vectored` too, and
+//!   on the `read_frame_at` path because those vectored reads leave the cursor
+//!   exactly where `stream_position()` measures the frame end. Its receipts are
+//!   byte-for-byte the ones a `DefaultFramer` write recorded on both paths.
 //! - (b) bytes a frame **successfully consumed before a torn tail**
 //!   (`UnexpectedEof`) still advance `bytes_consumed`; a mid-frame EOF does not
 //!   roll the counter back to the frame start.

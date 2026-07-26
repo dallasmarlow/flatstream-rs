@@ -145,6 +145,19 @@ quietly lose the vectored path rather than misbehave.
 - **Fluent builder objects — remain rejected/archived** (`docs/archive/V2_X_FLUENT_BUILDER.md`).
   The consumer report did not ask for a builder; the `FramerExt`/`DeframerExt`
   extension methods already provide the useful, fluent portion.
+- **Checksum framer/deframer inner composition (E2) — declined**
+  (`docs/planning/E2_CHECKSUM_COMPOSITION.md`). Every payload-level adapter
+  already composes around a terminal `ChecksumFramer` with identical checksum
+  coverage; the only capability inner-composition would add is a change to what
+  the checksum covers, which is a normative wire-format decision reserved for
+  3.0. Keep the checksum framers terminal.
+- **Observability post-operation hook (B3) — deferred, sign-off-gated**
+  (`docs/planning/B3_OBSERVABILITY_BOUNDARY.md`). The operation boundary
+  already returns everything a framer-level hook cannot see — the `Result`,
+  the `FrameReceipt`, and `DurabilityFailed` watermarks — so the shipped
+  deliverable is a caller-side recipe (`examples/observability_boundary.rs`),
+  no public API and nothing on the hot path. A first-party hook remains a
+  separate proposal per the note's §7.
 
 ## 7. Verification
 

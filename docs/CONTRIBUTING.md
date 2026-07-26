@@ -216,24 +216,24 @@ it touches public API, and follow the definition of done.
 2. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
 3. **A3** — generic `Read` copy-cost baseline.
 
-**Do not start implementation** of B3 (observability API) or E2 (checksum-inner
-composition) without resolving their semantic questions with the maintainer.
+The B3/E2 semantic questions are now resolved on paper: B3's first deliverable
+shipped (a public post-operation hook remains sign-off-gated; see the design
+note's §7) and E2 is declined. Do not start a B3 hook implementation without
+maintainer sign-off.
 
 **Contributor environment matters.** The reference-results lane (A3/A4 and
 extended C1/C2 runs) requires the maintainer's pinned Docker/Linux or trustworthy
-benchmark machine. A macOS contributor who can run `scripts/gate.sh` but cannot
-run Docker, Linux, Miri, fuzz, or stable benchmarks should take this lane:
+benchmark machine. The macOS-contributor lane (B3 first deliverable, E2 decision
+memo) is complete as of 2026-07-28.
 
-1. **B3 first deliverable only** — design note + self-asserting,
-   dependency-free example; no public API before sign-off.
-2. **E2 decision memo** — resolve/decline semantics; do not implement.
-
-Do not ask that contributor to collect or interpret performance numbers. They
-may add compile-checked benchmark code for a maintainer to run only when the
-task explicitly separates implementation from evidence.
+Do not ask a benchmark-incapable contributor to collect or interpret performance
+numbers. They may add compile-checked benchmark code for a maintainer to run
+only when the task explicitly separates implementation from evidence.
 
 > **Done as of 2026-07-25:** A1, A2, C5, C6, E1, B1 (`tests/external_index.rs` +
 > README recipe), B2, C3, C4, D, E3, and E4.
+> **Done as of 2026-07-28:** B3 first deliverable (design note + example; public
+> hook still sign-off-gated) and E2 (declined with rationale).
 
 ### A. Experiments (produce committed findings docs)
 
@@ -348,7 +348,20 @@ task explicitly separates implementation from evidence.
   explicitly `rust,ignore`. `scripts/readme_doctests.sh` enforces the runnable
   set and runs in the gate.
 
-**B3 — Observability boundary recipe** *(design sign-off before public API)*
+**B3 — Observability boundary recipe** — **first deliverable DONE** (2026-07-28),
+`docs/planning/B3_OBSERVABILITY_BOUNDARY.md` + `examples/observability_boundary.rs`
+- **Outcome:** the "resolve first" question is resolved as *application recipe
+  at the operation boundary* — `ObserverFramer`/`ObserverDeframer` are payload
+  observers (callback before write I/O / after successful reads, payload slice
+  only) and cannot report success, receipt bounds, latency, or durability. The
+  receipt-returning write/read APIs and `DurabilityFailed` watermarks already
+  expose all of those at the call site, so the recipe is a caller-side wrapper:
+  no public API, no dependency, nothing on the hot path. The example asserts
+  success/failure separation, contiguous receipt ranges on both sides, and that
+  a failed durability checkpoint classifies separately with
+  `attempted_watermark` equal to the bytes the sink accepted. A first-party
+  post-operation hook is **deferred, sign-off-gated** (note §7;
+  `docs/DESIGN_v2_8.md` §6).
 - **Goal:** Give applications one standard, dependency-free pattern for timing
   frame writes, reads, batches, and durability checkpoints, while keeping OTEL
   and metrics crates out of flatstream.
@@ -451,8 +464,10 @@ ONBOARDING §6
 `tests/position_accounting_faults.rs`
 - **Outcome:** six self-asserting tests pin all five cases. (a) A custom
   `read_vectored` deframer (`VectoredDeframer`) yields receipts byte-for-byte
-  equal to the writer's on both the sequential and `read_frame_at` paths, since
-  `CountingReader` tallies `read_vectored` returns. (b) A mid-frame truncation
+  equal to the writer's on both the sequential and `read_frame_at` paths — on
+  the sequential path `CountingReader` tallies `read_vectored` returns, and on
+  the point-read path the vectored reads leave the cursor where `read_frame_at`
+  measures the frame end via `stream_position()`. (b) A mid-frame truncation
   surfaces `UnexpectedEof` while `bytes_consumed` retains every byte the failed
   read consumed — no rollback to the frame start. (c) An injected
   `PermissionDenied` device error propagates intact and adds nothing to the
@@ -550,7 +565,16 @@ ONBOARDING §6
   non-vectored path; partial-write loop driven by a one-byte-at-a-time writer) +
   a findings doc.
 
-**E2 — Checksum framer/deframer inner composition** *(smaller; the question is merit, not compat)*
+**E2 — Checksum framer/deframer inner composition** — **DECLINED** (2026-07-28),
+`docs/planning/E2_CHECKSUM_COMPOSITION.md`
+- **Outcome:** the backlog's explicitly valid "declined, with rationale" result.
+  Every existing adapter is a payload-level pass-through, so wrapping around a
+  terminal `ChecksumFramer` (already supported) checksums the identical bytes
+  any inner-composition would; a terminal inner would double the length prefix;
+  and the one genuinely new capability — checksumming *transformed* bytes —
+  changes what the checksum covers, a normative wire-format decision reserved
+  for 3.0. Recorded in `docs/DESIGN_v2_8.md` §6; revisit only if 3.0 or an
+  approved payload-transforming adapter demonstrates the need.
 - **Goal:** let `ChecksumFramer`/`ChecksumDeframer` optionally wrap an inner
   `Framer`/`Deframer`, the way `BoundedFramer<F>` / `ObserverFramer<F, C>` already
   do, so a checksum can sit mid-chain rather than only as a terminal. Breaking the

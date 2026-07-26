@@ -1,6 +1,6 @@
 # v0.2.8 release handoff and next steps
 
-**Updated:** 2026-07-25  
+**Updated:** 2026-07-26  
 **Source of truth for task acceptance:** `docs/CONTRIBUTING.md`
 
 ## Current state
@@ -11,6 +11,11 @@ reproducible A1/A2/E1/E3/E4/E5 findings.
 
 Latest completed contributor work:
 
+- **C6:** position-accounting fault semantics — six self-asserting tests
+  (`tests/position_accounting_faults.rs`) over a custom `read_vectored` deframer,
+  retained bytes before `UnexpectedEof`, device errors counting only returned
+  bytes, `get_mut` bypass/seek hazards, and start offsets exact across memory
+  reclamation. No public API added.
 - **A2:** position-accounting instruction counts, including DCE-resistant
   writer/read baselines and committed pinned raw output.
 - **C5:** real-file live-tail retry behavior over separate handles for default
@@ -37,19 +42,13 @@ external format manifest.
 
 ## Next macOS contributor queue
 
-### 1. C6 — position-accounting fault semantics
-
-Code/test task. Pin vectored custom deframer accounting, bytes counted before
-`UnexpectedEof`/device faults, `get_mut` bypass behavior, and start offsets with
-static memory policy. No public API by default.
-
-### 2. B3 — observability boundary first deliverable
+### 1. B3 — observability boundary first deliverable
 
 Design + example task. Produce a dependency-free, self-asserting recipe for
 post-operation success/failure events and durability checkpoints. Do not add
 OTEL or a public hook until the maintainer approves semantics.
 
-### 3. E2 — checksum composition decision memo
+### 2. E2 — checksum composition decision memo
 
 Design task. Decide what a checksum could cover when nested around/inside
 adapters and whether any new capability merits a type-signature change. A

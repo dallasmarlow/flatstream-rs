@@ -56,12 +56,11 @@ surprising result.
 
 ## Current work lanes
 
-For a macOS contributor with `gate.sh` but no Docker/Linux/stable benchmark
-environment:
-
-1. C6 position-accounting fault semantics.
-2. B3 observability design note + dependency-free self-asserting example only.
-3. E2 checksum-composition decision memo only.
+The macOS contributor lane is complete (2026-07-28): B3 shipped its design note
+(`docs/planning/B3_OBSERVABILITY_BOUNDARY.md`) plus self-asserting example
+(`examples/observability_boundary.rs`) — a public post-operation hook stays
+sign-off-gated — and E2 is declined
+(`docs/planning/E2_CHECKSUM_COMPOSITION.md`).
 
 Maintainer/reference-machine work:
 
