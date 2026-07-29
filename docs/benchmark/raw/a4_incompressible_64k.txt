@@ -1,0 +1,106 @@
+# a4_incompressible_64k
+# date:    2026-07-29T01:28:22Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --locked --bench compression_feasibility -- 
+
+    Finished `bench` profile [optimized] target(s) in 0.15s
+     Running benches/compression_feasibility.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/e8f9bd7bf4c13889e99c8aa3662cbd6f/cargo-target/release/deps/compression_feasibility-dfcd6becd686f1e8)
+Gnuplot not found, using plotters backend
+# A4_INPUT distribution=incompressible size=64KiB bytes=65536 sha256=94390ee32e8f62481fc5d8071308b774bfdd480b23240f263a467f43b22c9e4c lz4_bytes=65794 lz4_ratio=1.003937 zstd1_bytes=65546 zstd1_ratio=1.000153
+Benchmarking A4 Compression/incompressible/64KiB/encode/uncompressed
+Benchmarking A4 Compression/incompressible/64KiB/encode/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/encode/uncompressed: Collecting 100 samples in estimated 5.0000 s (8.0B iterations)
+Benchmarking A4 Compression/incompressible/64KiB/encode/uncompressed: Analyzing
+A4 Compression/incompressible/64KiB/encode/uncompressed
+                        time:   [622.44 ps 623.81 ps 625.25 ps]
+                        thrpt:  [ 97618 GiB/s  97842 GiB/s  98058 GiB/s]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/encode/lz4
+Benchmarking A4 Compression/incompressible/64KiB/encode/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/encode/lz4: Collecting 100 samples in estimated 5.0064 s (2.1M iterations)
+Benchmarking A4 Compression/incompressible/64KiB/encode/lz4: Analyzing
+A4 Compression/incompressible/64KiB/encode/lz4
+                        time:   [2.4128 µs 2.4147 µs 2.4166 µs]
+                        thrpt:  [25.257 GiB/s 25.276 GiB/s 25.297 GiB/s]
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/encode/zstd1
+Benchmarking A4 Compression/incompressible/64KiB/encode/zstd1: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/encode/zstd1: Collecting 100 samples in estimated 5.0198 s (818k iterations)
+Benchmarking A4 Compression/incompressible/64KiB/encode/zstd1: Analyzing
+A4 Compression/incompressible/64KiB/encode/zstd1
+                        time:   [6.1174 µs 6.1253 µs 6.1332 µs]
+                        thrpt:  [9.9516 GiB/s 9.9644 GiB/s 9.9773 GiB/s]
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/decode/uncompressed
+Benchmarking A4 Compression/incompressible/64KiB/decode/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/decode/uncompressed: Collecting 100 samples in estimated 5.0000 s (8.0B iterations)
+Benchmarking A4 Compression/incompressible/64KiB/decode/uncompressed: Analyzing
+A4 Compression/incompressible/64KiB/decode/uncompressed
+                        time:   [621.88 ps 622.90 ps 623.97 ps]
+                        thrpt:  [ 97818 GiB/s  97986 GiB/s  98146 GiB/s]
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) low mild
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/decode/lz4
+Benchmarking A4 Compression/incompressible/64KiB/decode/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/decode/lz4: Collecting 100 samples in estimated 5.0009 s (7.9M iterations)
+Benchmarking A4 Compression/incompressible/64KiB/decode/lz4: Analyzing
+A4 Compression/incompressible/64KiB/decode/lz4
+                        time:   [632.53 ns 633.93 ns 635.56 ns]
+                        thrpt:  [96.034 GiB/s 96.281 GiB/s 96.494 GiB/s]
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) low mild
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/decode/zstd1
+Benchmarking A4 Compression/incompressible/64KiB/decode/zstd1: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/decode/zstd1: Collecting 100 samples in estimated 5.0005 s (8.7M iterations)
+Benchmarking A4 Compression/incompressible/64KiB/decode/zstd1: Analyzing
+A4 Compression/incompressible/64KiB/decode/zstd1
+                        time:   [571.66 ns 572.24 ns 572.81 ns]
+                        thrpt:  [106.55 GiB/s 106.66 GiB/s 106.77 GiB/s]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/uncompressed
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/uncompressed: Collecting 100 samples in estimated 5.2186 s (20k iterations)
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/uncompressed: Analyzing
+A4 Compression/incompressible/64KiB/buffered_file/uncompressed
+                        time:   [262.57 µs 266.49 µs 272.91 µs]
+                        thrpt:  [28.626 GiB/s 29.317 GiB/s 29.754 GiB/s]
+Found 14 outliers among 100 measurements (14.00%)
+  5 (5.00%) high mild
+  9 (9.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/lz4
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/lz4: Collecting 100 samples in estimated 8.2088 s (10k iterations)
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/lz4: Analyzing
+A4 Compression/incompressible/64KiB/buffered_file/lz4
+                        time:   [811.95 µs 814.57 µs 817.34 µs]
+                        thrpt:  [9.5584 GiB/s 9.5910 GiB/s 9.6219 GiB/s]
+Found 13 outliers among 100 measurements (13.00%)
+  6 (6.00%) high mild
+  7 (7.00%) high severe
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/zstd1
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/zstd1: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.1s, enable flat sampling, or reduce sample count to 60.
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/zstd1: Collecting 100 samples in estimated 6.1201 s (5050 iterations)
+Benchmarking A4 Compression/incompressible/64KiB/buffered_file/zstd1: Analyzing
+A4 Compression/incompressible/64KiB/buffered_file/zstd1
+                        time:   [1.2183 ms 1.2231 ms 1.2318 ms]
+                        thrpt:  [6.3421 GiB/s 6.3875 GiB/s 6.4128 GiB/s]
+Found 11 outliers among 100 measurements (11.00%)
+  5 (5.00%) high mild
+  6 (6.00%) high severe

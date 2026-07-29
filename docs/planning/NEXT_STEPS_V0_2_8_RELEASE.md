@@ -1,6 +1,6 @@
 # v0.2.8 release handoff and next steps
 
-**Updated:** 2026-07-26  
+**Updated:** 2026-07-28
 **Source of truth for task acceptance:** `docs/CONTRIBUTING.md`
 
 ## Current state
@@ -11,6 +11,9 @@ reproducible A1/A2/E1/E3/E4/E5 findings.
 
 Latest completed contributor work:
 
+- **A4:** compression feasibility — schema-exact modeled Palimpsest fixtures
+  saved substantial bytes, but LZ4/Zstandard level 1 slowed the current
+  buffered, flush-only file path; no production adapter follows.
 - **C6:** position-accounting fault semantics — six self-asserting tests
   (`tests/position_accounting_faults.rs`) over a custom `read_vectored` deframer,
   retained bytes before `UnexpectedEof`, device errors counting only returned
@@ -56,8 +59,6 @@ documented decline is acceptable; implementation is not authorized.
 
 ## Maintainer/reference-machine queue
 
-- **A4 compression feasibility:** benchmark representative Palimpsest and
-  synthetic payloads with reusable LZ4/Zstd scratch. No production format first.
 - **C2 Miri expansion:** run positioned-read integration boundaries under Miri.
 - **A3 read-copy cost:** quantify generic `Read` → reusable buffer cost.
 
@@ -66,6 +67,7 @@ documented decline is acceptable; implementation is not authorized.
 - No core stream preamble; applications version composition out of band.
 - No `IncompleteFrame` error kind; source lifecycle determines whether
   `UnexpectedEof` is transient or a torn finalized tail.
-- No transparent compression adapter without A4 evidence and explicit
+- No transparent compression adapter: A4 found byte savings but worse current
+  buffered-file throughput, and any explicit format still requires
   compressed/decompressed bounds and checksum semantics.
 - No OTEL runtime dependency in the core crate.

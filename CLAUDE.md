@@ -62,9 +62,13 @@ The macOS contributor lane is complete (2026-07-28): B3 shipped its design note
 sign-off-gated — and E2 is declined
 (`docs/planning/E2_CHECKSUM_COMPOSITION.md`).
 
+A4 is complete (2026-07-28):
+`docs/benchmark/FINDINGS_COMPRESSION_FEASIBILITY.md` records substantial
+modeled-payload byte savings but slower buffered-file throughput, so no
+production compression adapter follows.
+
 Maintainer/reference-machine work:
 
-- A4 compression feasibility benchmark (no production adapter first).
 - C2 positioned-read Miri expansion.
 - A3 generic `Read` copy-cost benchmark.
 

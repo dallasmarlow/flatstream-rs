@@ -72,6 +72,10 @@ rand = "0.8"
 csv = "1.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+# A4 experiment only: these codecs compile for benchmarks/tests but are not
+# dependencies of the published library target.
+lz4_flex = "0.14.0"
+zstd = "0.13.3"
 
 [[bench]]
 name = "benchmarks"
@@ -149,6 +153,10 @@ harness = false
 name = "positioned_reads"
 harness = false
 required-features = ["crc32"]
+
+[[bench]]
+name = "compression_feasibility"
+harness = false
 
 [[bench]]
 name = "instruction_count"

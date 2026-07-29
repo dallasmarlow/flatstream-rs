@@ -1,0 +1,141 @@
+# a4_palimpsest_4k
+# date:    2026-07-29T01:43:15Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --locked --bench compression_feasibility -- 
+
+    Finished `bench` profile [optimized] target(s) in 0.06s
+     Running benches/compression_feasibility.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/e8f9bd7bf4c13889e99c8aa3662cbd6f/cargo-target/release/deps/compression_feasibility-dfcd6becd686f1e8)
+Gnuplot not found, using plotters backend
+# A4_INPUT distribution=palimpsest size=4KiB bytes=4080 sha256=f043cf145ffd29dd37ff5238d266fb44219e7085b5696d30d7267873f766f1e4 lz4_bytes=2232 lz4_ratio=0.547059 zstd1_bytes=1505 zstd1_ratio=0.368873
+Benchmarking A4 Compression/palimpsest/4KiB/encode/uncompressed
+Benchmarking A4 Compression/palimpsest/4KiB/encode/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/encode/uncompressed: Collecting 100 samples in estimated 5.0000 s (8.4B iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/encode/uncompressed: Analyzing
+A4 Compression/palimpsest/4KiB/encode/uncompressed
+                        time:   [591.85 ps 594.43 ps 597.19 ps]
+                        thrpt:  [6362.8 GiB/s 6392.3 GiB/s 6420.2 GiB/s]
+                 change:
+                        time:   [-1.7615% -1.3672% -0.9485%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.9576% +1.3862% +1.7931%]
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+Benchmarking A4 Compression/palimpsest/4KiB/encode/lz4
+Benchmarking A4 Compression/palimpsest/4KiB/encode/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/encode/lz4: Collecting 100 samples in estimated 5.0068 s (1.7M iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/encode/lz4: Analyzing
+A4 Compression/palimpsest/4KiB/encode/lz4
+                        time:   [2.9402 µs 2.9492 µs 2.9606 µs]
+                        thrpt:  [1.2835 GiB/s 1.2884 GiB/s 1.2924 GiB/s]
+                 change:
+                        time:   [+49.715% +50.317% +50.945%] (p = 0.00 < 0.05)
+                        thrpt:  [-33.751% -33.474% -33.206%]
+                        Performance has regressed.
+Found 16 outliers among 100 measurements (16.00%)
+  3 (3.00%) low mild
+  4 (4.00%) high mild
+  9 (9.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/encode/zstd1
+Benchmarking A4 Compression/palimpsest/4KiB/encode/zstd1: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/encode/zstd1: Collecting 100 samples in estimated 5.0099 s (616k iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/encode/zstd1: Analyzing
+A4 Compression/palimpsest/4KiB/encode/zstd1
+                        time:   [7.9406 µs 7.9574 µs 7.9764 µs]
+                        thrpt:  [487.81 MiB/s 488.98 MiB/s 490.01 MiB/s]
+                 change:
+                        time:   [+12.344% +12.821% +13.316%] (p = 0.00 < 0.05)
+                        thrpt:  [-11.751% -11.364% -10.988%]
+                        Performance has regressed.
+Found 12 outliers among 100 measurements (12.00%)
+  3 (3.00%) low mild
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/decode/uncompressed
+Benchmarking A4 Compression/palimpsest/4KiB/decode/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/decode/uncompressed: Collecting 100 samples in estimated 5.0000 s (8.4B iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/decode/uncompressed: Analyzing
+A4 Compression/palimpsest/4KiB/decode/uncompressed
+                        time:   [593.95 ps 595.77 ps 597.86 ps]
+                        thrpt:  [6355.7 GiB/s 6377.9 GiB/s 6397.5 GiB/s]
+                 change:
+                        time:   [-3.9295% -3.3225% -2.6138%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.6840% +3.4367% +4.0902%]
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/decode/lz4
+Benchmarking A4 Compression/palimpsest/4KiB/decode/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/decode/lz4: Collecting 100 samples in estimated 5.0000 s (6.9M iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/decode/lz4: Analyzing
+A4 Compression/palimpsest/4KiB/decode/lz4
+                        time:   [725.15 ns 726.68 ns 728.30 ns]
+                        thrpt:  [5.2173 GiB/s 5.2290 GiB/s 5.2400 GiB/s]
+                 change:
+                        time:   [+33.776% +34.199% +34.622%] (p = 0.00 < 0.05)
+                        thrpt:  [-25.718% -25.484% -25.248%]
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low severe
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/decode/zstd1
+Benchmarking A4 Compression/palimpsest/4KiB/decode/zstd1: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/decode/zstd1: Collecting 100 samples in estimated 5.0005 s (1.4M iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/decode/zstd1: Analyzing
+A4 Compression/palimpsest/4KiB/decode/zstd1
+                        time:   [3.5530 µs 3.5669 µs 3.5846 µs]
+                        thrpt:  [1.0600 GiB/s 1.0653 GiB/s 1.0695 GiB/s]
+                 change:
+                        time:   [+14.555% +14.976% +15.470%] (p = 0.00 < 0.05)
+                        thrpt:  [-13.397% -13.025% -12.706%]
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low severe
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/uncompressed
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/uncompressed: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/uncompressed: Collecting 100 samples in estimated 6.2740 s (15k iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/uncompressed: Analyzing
+A4 Compression/palimpsest/4KiB/buffered_file/uncompressed
+                        time:   [387.57 µs 388.67 µs 389.95 µs]
+                        thrpt:  [20.034 GiB/s 20.100 GiB/s 20.158 GiB/s]
+                 change:
+                        time:   [-4.7551% -2.4380% -0.4027%] (p = 0.03 < 0.05)
+                        thrpt:  [+0.4044% +2.4990% +4.9924%]
+                        Change within noise threshold.
+Found 11 outliers among 100 measurements (11.00%)
+  6 (6.00%) high mild
+  5 (5.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/lz4
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/lz4: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/lz4: Collecting 100 samples in estimated 5.2376 s (800 iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/lz4: Analyzing
+A4 Compression/palimpsest/4KiB/buffered_file/lz4
+                        time:   [6.5258 ms 6.5511 ms 6.5947 ms]
+                        thrpt:  [1.1846 GiB/s 1.1925 GiB/s 1.1972 GiB/s]
+                 change:
+                        time:   [+48.281% +50.488% +52.082%] (p = 0.00 < 0.05)
+                        thrpt:  [-34.246% -33.550% -32.560%]
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/zstd1
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/zstd1: Warming up for 3.0000 s
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/zstd1: Collecting 100 samples in estimated 5.0673 s (300 iterations)
+Benchmarking A4 Compression/palimpsest/4KiB/buffered_file/zstd1: Analyzing
+A4 Compression/palimpsest/4KiB/buffered_file/zstd1
+                        time:   [16.911 ms 16.942 ms 16.978 ms]
+                        thrpt:  [471.20 MiB/s 472.18 MiB/s 473.05 MiB/s]
+                 change:
+                        time:   [+11.732% +12.235% +12.678%] (p = 0.00 < 0.05)
+                        thrpt:  [-11.252% -10.901% -10.501%]
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe

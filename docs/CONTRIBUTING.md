@@ -209,22 +209,21 @@ until a findings doc backs it.
 Each task is self-contained and public-safe. Pick one, confirm scope in review if
 it touches public API, and follow the definition of done.
 
-**Current assignment order (2026-07-25):**
+**Current assignment order (2026-07-28):**
 
-1. **A4** — compression feasibility experiment using representative journal
-   payloads; benchmark only, no production adapter.
-2. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
-3. **A3** — generic `Read` copy-cost baseline.
+1. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
+2. **A3** — generic `Read` copy-cost baseline.
 
 The B3/E2 semantic questions are now resolved on paper: B3's first deliverable
 shipped (a public post-operation hook remains sign-off-gated; see the design
-note's §7) and E2 is declined. Do not start a B3 hook implementation without
-maintainer sign-off.
+note's §7), E2 is declined, and A4's benchmark-only compression experiment is
+complete. Do not start a B3 hook or production compression implementation
+without maintainer sign-off.
 
-**Contributor environment matters.** The reference-results lane (A3/A4 and
-extended C1/C2 runs) requires the maintainer's pinned Docker/Linux or trustworthy
-benchmark machine. The macOS-contributor lane (B3 first deliverable, E2 decision
-memo) is complete as of 2026-07-28.
+**Contributor environment matters.** The reference-results lane (A3 and extended
+C1/C2 runs; A4 used the same lane) requires the maintainer's pinned Docker/Linux
+or trustworthy benchmark machine. The macOS-contributor lane (B3 first
+deliverable, E2 decision memo) is complete as of 2026-07-28.
 
 Do not ask a benchmark-incapable contributor to collect or interpret performance
 numbers. They may add compile-checked benchmark code for a maintainer to run
@@ -233,7 +232,8 @@ only when the task explicitly separates implementation from evidence.
 > **Done as of 2026-07-25:** A1, A2, C5, C6, E1, B1 (`tests/external_index.rs` +
 > README recipe), B2, C3, C4, D, E3, and E4.
 > **Done as of 2026-07-28:** B3 first deliverable (design note + example; public
-> hook still sign-off-gated) and E2 (declined with rationale).
+> hook still sign-off-gated), E2 (declined with rationale), and A4 (compression
+> feasibility benchmark; no production adapter).
 
 ### A. Experiments (produce committed findings docs)
 
@@ -289,7 +289,15 @@ only when the task explicitly separates implementation from evidence.
   source, which is already acknowledged as future work in `docs/DESIGN_v2_7.md`.
 - **Deliverable:** findings doc; no code change required beyond the bench.
 
-**A4 — Compression feasibility for journal payloads (experiment only)**
+**A4 — Compression feasibility for journal payloads (experiment only)** —
+**DONE**, `docs/benchmark/FINDINGS_COMPRESSION_FEASIBILITY.md`
+- **Outcome:** modeled schema-exact Palimpsest frames retained 23–55% of current
+  wire bytes, but LZ4/Zstandard level 1 made the current buffered, flush-only
+  file path 15–44× slower. Even the closest highly-compressible 64 KiB control
+  remained 20% / 33% slower on the required recheck. Incompressible data
+  expanded. No core adapter, codec dependency, or wire change follows; any
+  application-level follow-up needs real anonymized traces plus a raw fallback,
+  decoded-size limits, bomb protection, checksum semantics, and a manifest bump.
 - **Goal:** Determine whether compression is worth a future explicit format,
   without weakening zero-copy language or adding a runtime dependency first.
 - **Method:** In a benchmark-only target, compare uncompressed, LZ4, and a

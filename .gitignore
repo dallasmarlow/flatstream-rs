@@ -1,5 +1,7 @@
 /target
 *.bin
+# A4's three deterministic benchmark inputs only; keep other binary output ignored.
+!benches/a4_palimpsest_*.bin
 .DS_Store
 .ssh/
 tests/corpus/**/*-counts.txt
