@@ -21,13 +21,16 @@
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    read_frame_at, DefaultDeframer, DefaultFramer, Durable, StreamReader, StreamSerialize,
-    StreamWriter, SyncEveryNFrames, SyncMode,
+    read_frame_at, DefaultDeframer, DefaultFramer, DeframerExt, Durable, Framer, PostWriteEvent,
+    PostWriteOutcome, StreamReader, StreamSerialize, StreamWriter, SyncEveryNFrames, SyncMode,
+    TableRootValidator,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::io::Cursor;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 // --- The counting allocator -------------------------------------------------
 
@@ -278,6 +281,44 @@ fn steady_state_simple_write_allocates_nothing() {
 }
 
 #[test]
+fn installed_post_write_observer_allocates_nothing_per_frame() {
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    build(&mut builder, MAX_PAYLOAD);
+    let observed = Arc::new(AtomicUsize::new(0));
+    let observer_count = Arc::clone(&observed);
+    let mut writer = StreamWriter::new(FixedSink::new(1 << 20), DefaultFramer)
+        .with_post_write_observer(move |event: PostWriteEvent<'_>| {
+            assert!(matches!(event.outcome, PostWriteOutcome::Succeeded(_)));
+            observer_count.fetch_add(1, Ordering::Relaxed);
+        });
+
+    for _ in 0..WARMUP {
+        writer.write_finished(&mut builder).unwrap();
+    }
+    let before = observed.load(Ordering::Relaxed);
+
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write_finished(&mut builder).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "installed post-write observer"
+    );
+    assert_eq!(
+        observed.load(Ordering::Relaxed) - before,
+        MEASURED,
+        "observer fires exactly once per measured frame"
+    );
+}
+
+#[test]
 fn static_sync_policy_allocates_nothing_even_when_it_checkpoints() {
     let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
     build(&mut builder, MAX_PAYLOAD);
@@ -409,6 +450,59 @@ fn steady_state_read_allocates_nothing() {
             reallocs: 0
         },
         "steady-state read"
+    );
+}
+
+#[test]
+fn steady_state_validating_read_allocates_nothing() {
+    // The rustdoc for the validation layer claims structural validation "adds no
+    // allocations on the success path." Every other steady-state claim in the
+    // crate is enforced by this harness; this one was enforced by nothing. Bring
+    // it under the counter: a validating read over valid table roots must
+    // allocate zero times once the reader buffer is warm. This also guards the
+    // claim against a future `flatbuffers` upgrade silently making the verifier
+    // allocate — the current verifier carries no owned buffer on the ok path.
+    let table = {
+        let mut b = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+        let start = b.start_table();
+        let root = b.end_table(start);
+        b.finish(root, None);
+        b.finished_data().to_vec()
+    };
+
+    // Frame the raw table bytes directly so the on-wire payload is a real table
+    // root the validator accepts. All frames are identical, so the reader buffer
+    // reaches its high-water mark during warmup and never regrows.
+    let mut bytes = Vec::new();
+    for _ in 0..(WARMUP + MEASURED) {
+        DefaultFramer.frame_and_write(&mut bytes, &table).unwrap();
+    }
+
+    let deframer = DefaultDeframer::new().with_validator(TableRootValidator::new());
+    let mut reader = StreamReader::new(Cursor::new(&bytes), deframer);
+    for _ in 0..WARMUP {
+        assert!(reader.read_message().unwrap().is_some());
+    }
+
+    let (counts, read) = measure(|| {
+        let mut read = 0usize;
+        while let Some(payload) = reader.read_message().unwrap() {
+            read += payload.len().min(1);
+        }
+        read
+    });
+
+    assert_eq!(
+        read, MEASURED,
+        "warmup + measured frames must tile the stream"
+    );
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "validating read"
     );
 }
 

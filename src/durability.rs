@@ -6,13 +6,11 @@
 //! changes the writer's concrete type, so the default [`NoSync`] path remains a
 //! zero-sized, branch-free specialization.
 
-use crate::policy::{Clock, MonotonicClock};
 use crate::writer::FrameReceipt;
 use crate::{Error, Result};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::num::NonZeroU64;
-use std::time::Duration;
 
 /// A write sink that can push accepted bytes toward stable storage.
 ///
@@ -203,54 +201,6 @@ impl SyncPolicy for SyncEveryBytes {
     #[inline]
     fn on_synced(&mut self, _durable_watermark: u64) {
         self.pending = 0;
-    }
-}
-
-/// Requests a checkpoint once a monotonic interval has elapsed.
-#[derive(Debug, Clone)]
-pub struct SyncEveryInterval<C: Clock = MonotonicClock> {
-    interval: Duration,
-    last_sync: Duration,
-    clock: C,
-    mode: SyncMode,
-}
-
-impl SyncEveryInterval {
-    /// Creates an interval policy using the production monotonic clock.
-    pub fn new(interval: Duration, mode: SyncMode) -> Self {
-        let clock = MonotonicClock::new();
-        let last_sync = clock.now();
-        Self {
-            interval,
-            last_sync,
-            clock,
-            mode,
-        }
-    }
-}
-
-impl<C: Clock> SyncEveryInterval<C> {
-    /// Creates an interval policy with an injected deterministic clock.
-    pub fn with_clock(interval: Duration, mode: SyncMode, clock: C) -> Self {
-        let last_sync = clock.now();
-        Self {
-            interval,
-            last_sync,
-            clock,
-            mode,
-        }
-    }
-}
-
-impl<C: Clock> SyncPolicy for SyncEveryInterval<C> {
-    #[inline]
-    fn observe(&mut self, _info: SyncInfo) -> Option<SyncMode> {
-        (self.clock.now().saturating_sub(self.last_sync) >= self.interval).then_some(self.mode)
-    }
-
-    #[inline]
-    fn on_synced(&mut self, _durable_watermark: u64) {
-        self.last_sync = self.clock.now();
     }
 }
 

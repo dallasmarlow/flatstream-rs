@@ -1,24 +1,25 @@
 # v0.2.8 release handoff and next steps
 
-**Updated:** 2026-07-28
+**Updated:** 2026-07-29
 **Source of truth for task acceptance:** `docs/CONTRIBUTING.md`
 
 ## Current state
 
 The v0.2.8 implementation now includes writer/reader receipts, positioned point
-reads, vectored framing, static sync/memory policies, strict recovery, and
-reproducible A1/A2/E1/E3/E4/E5 findings.
+reads, vectored framing, static sync/memory policies, post-write observation,
+strict recovery, and reproducible benchmark findings.
 
 Latest completed contributor work:
 
 - **A4:** compression feasibility — schema-exact modeled Palimpsest fixtures
   saved substantial bytes, but LZ4/Zstandard level 1 slowed the current
   buffered, flush-only file path; no production adapter follows.
-- **C6:** position-accounting fault semantics — six self-asserting tests
+- **C6:** position-accounting fault semantics — four self-asserting tests
   (`tests/position_accounting_faults.rs`) over a custom `read_vectored` deframer,
   retained bytes before `UnexpectedEof`, device errors counting only returned
-  bytes, `get_mut` bypass/seek hazards, and start offsets exact across memory
-  reclamation. No public API added.
+  bytes, and start offsets exact across memory reclamation. The later pre-review
+  correction removed direct reader/writer access rather than preserving its
+  accounting hazards.
 - **A2:** position-accounting instruction counts, including DCE-resistant
   writer/read baselines and committed pinned raw output.
 - **C5:** real-file live-tail retry behavior over separate handles for default
@@ -35,7 +36,9 @@ external format manifest.
 3. On the reference machine, run Docker/MSRV, Miri, or fuzz only when the final
    diff changes those boundaries; report exactly what was run.
 4. Verify Palimpsest against the final pinned revision and update its manifest/
-   migration notes for any incompatible application format change.
+   migration notes for any incompatible application format change. Its current
+   module/ADR policy lists still name the removed `SyncEveryInterval`; delete
+   those references when repinning (runtime code does not use it).
 5. Peer review should focus on:
    - receipt and byte-position semantics after partial I/O;
    - live-file retry versus finalized recovery;
@@ -43,19 +46,18 @@ external format manifest.
    - static-policy type composition;
    - benchmark isolation and raw provenance.
 
-## Next macOS contributor queue
+## Completed macOS contributor queue
 
-### 1. B3 — observability boundary first deliverable
+### B3 — post-write observability
 
-Design + example task. Produce a dependency-free, self-asserting recipe for
-post-operation success/failure events and durability checkpoints. Do not add
-OTEL or a public hook until the maintainer approves semantics.
+The design/example first deliverable was followed by an approved, statically
+dispatched `PostWriteObserver`. It reports final success/failure, receipts,
+latency, and accepted-but-not-durable outcomes without an OTEL dependency.
 
-### 2. E2 — checksum composition decision memo
+### E2 — checksum composition decision memo
 
-Design task. Decide what a checksum could cover when nested around/inside
-adapters and whether any new capability merits a type-signature change. A
-documented decline is acceptable; implementation is not authorized.
+Declined with rationale: payload-transforming checksum composition remains a
+wire-format decision.
 
 ## Maintainer/reference-machine queue
 

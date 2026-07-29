@@ -14,7 +14,8 @@
 use flatstream::*;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
+use std::rc::Rc;
 
 struct CountingAlloc;
 
@@ -54,6 +55,33 @@ fn count_allocs(f: impl FnOnce()) -> usize {
     TL_COUNT.with(|c| c.get())
 }
 
+struct Rewindable<'a> {
+    bytes: &'a [u8],
+    position: Rc<Cell<usize>>,
+}
+
+impl Read for Rewindable<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let position = self.position.get();
+        let remaining = &self.bytes[position..];
+        let n = remaining.len().min(buf.len());
+        buf[..n].copy_from_slice(&remaining[..n]);
+        self.position.set(position + n);
+        Ok(n)
+    }
+}
+
+fn rewindable(bytes: &[u8]) -> (Rewindable<'_>, Rc<Cell<usize>>) {
+    let position = Rc::new(Cell::new(0));
+    (
+        Rewindable {
+            bytes,
+            position: Rc::clone(&position),
+        },
+        position,
+    )
+}
+
 #[test]
 fn zero_alloc_in_process_all_and_messages() {
     // Purpose: Verify no heap allocations occur during steady-state read paths
@@ -64,16 +92,18 @@ fn zero_alloc_in_process_all_and_messages() {
     }
 
     // process_all path: warm to high-water, rewind, measure a full pass.
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let (source, position) = rewindable(&out);
+    let mut r = StreamReader::new(source, DefaultDeframer::new());
     r.process_all(|_| Ok(())).unwrap();
-    r.get_mut().set_position(0);
+    position.set(0);
     let n = count_allocs(|| r.process_all(|_| Ok(())).unwrap());
     assert_eq!(n, 0, "steady-state process_all should not allocate");
 
     // messages() path
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let (source, position) = rewindable(&out);
+    let mut r = StreamReader::new(source, DefaultDeframer::new());
     r.process_all(|_| Ok(())).unwrap();
-    r.get_mut().set_position(0);
+    position.set(0);
     let n = count_allocs(|| {
         let mut it = r.messages();
         while let Some(_p) = it.next().unwrap() {}
@@ -107,16 +137,18 @@ fn zero_alloc_in_typed_paths() {
     }
 
     // process_typed
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let (source, position) = rewindable(&out);
+    let mut r = StreamReader::new(source, DefaultDeframer::new());
     r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap();
-    r.get_mut().set_position(0);
+    position.set(0);
     let n = count_allocs(|| r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap());
     assert_eq!(n, 0, "steady-state process_typed should not allocate");
 
     // typed_messages iterator
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new());
+    let (source, position) = rewindable(&out);
+    let mut r = StreamReader::new(source, DefaultDeframer::new());
     r.process_typed::<StrRoot, _>(|_| Ok(())).unwrap();
-    r.get_mut().set_position(0);
+    position.set(0);
     let n = count_allocs(|| {
         let mut it = r.typed_messages::<StrRoot>();
         while let Some(_root) = it.next().unwrap() {}
@@ -155,11 +187,12 @@ fn zero_alloc_steady_state_with_policy_installed() {
             sw.write(&"payload").unwrap();
         }
     }
-    let mut r = StreamReader::new(Cursor::new(&out), DefaultDeframer::new()).with_memory_policy(
+    let (source, position) = rewindable(&out);
+    let mut r = StreamReader::new(source, DefaultDeframer::new()).with_memory_policy(
         policy::AdaptiveWatermarkPolicy::new(1_000_000, u32::MAX).with_baseline(1),
     );
     r.process_all(|_| Ok(())).unwrap();
-    r.get_mut().set_position(0);
+    position.set(0);
     let n = count_allocs(|| r.process_all(|_| Ok(())).unwrap());
     assert_eq!(
         n, 0,

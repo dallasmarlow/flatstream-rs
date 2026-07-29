@@ -283,7 +283,7 @@ fn decomposition(c: &mut Criterion) {
                     index.push((chunk.sequence, receipt));
                 }
                 writer.flush().unwrap();
-                writer.get_ref().get_ref().sync_data().unwrap();
+                writer.into_inner().get_ref().sync_data().unwrap();
                 black_box(&index);
             });
         });

@@ -1,15 +1,13 @@
-// Example purpose: B3 observability recipe. Shows the *operation boundary* —
-// not the payload-inspection point — as the correct place to observe frame
-// writes, reads, and their success/failure. `ObserverFramer` fires its callback
-// before I/O and so cannot report success, receipt bounds, or latency; the
-// receipt-returning writer/reader APIs can. See
+// Example purpose: B3 post-write observability. `ObserverFramer` remains a
+// payload-inspection adapter that fires before I/O; `PostWriteObserver` is the
+// operation boundary that reports final success/failure, receipt bounds, and
+// latency after framing and automatic durability resolve. See
 // `docs/planning/B3_OBSERVABILITY_BOUNDARY.md`.
 //
-//! A dependency-free observability recipe built entirely on flatstream's public
-//! receipt APIs. No OTEL, no metrics crate, nothing added to flatstream's hot
-//! path: the application wraps its own `write` / `read` call site, where both
-//! the `Result` (success vs. failure) and the `FrameReceipt` (frame bounds) are
-//! in hand and a timer brackets the real I/O.
+//! Dependency-free post-operation observation with static dispatch. No OTEL or
+//! metrics crate: a concrete callback translates `PostWriteEvent`s into local
+//! counters. The default writer carries a zero-sized `NoPostWriteObserver` and
+//! performs no clock reads or callbacks.
 //!
 //! The key property asserted here is the one `ObserverFramer` cannot provide: a
 //! write that fails increments a *failure* counter and leaves the success
@@ -19,8 +17,8 @@
 //! accepted by the sink, which is exactly why the caller must not re-emit them.
 
 use flatstream::{
-    DefaultDeframer, DefaultFramer, Durable, ErrorKind, Result, StreamReader, StreamWriter,
-    SyncEveryFrame, SyncMode,
+    DefaultDeframer, DefaultFramer, Durable, ErrorKind, PostWriteEvent, PostWriteOutcome, Result,
+    StreamReader, StreamWriter, SyncEveryFrame, SyncMode,
 };
 use std::io::{Cursor, Write};
 
@@ -45,24 +43,22 @@ struct WriteTelemetry {
 }
 
 impl WriteTelemetry {
-    /// Records the outcome of one `write_with_receipt` call. This is the whole
-    /// recipe: branch on the `Result` so a failure can never land on the
-    /// success counters.
-    fn record(&mut self, outcome: &Result<flatstream::FrameReceipt>) {
-        match outcome {
-            Ok(receipt) => {
+    fn record(&mut self, event: PostWriteEvent<'_>) {
+        match event.outcome {
+            PostWriteOutcome::Succeeded(receipt) => {
                 self.frames_ok += 1;
                 self.bytes_ok += receipt.wire_len;
                 self.ranges.push(receipt.range());
             }
-            Err(e) => {
+            PostWriteOutcome::SerializationFailed(_) | PostWriteOutcome::WriteFailed(_) => {
                 self.frames_failed += 1;
-                // Distinguish "bytes never fully written" from "bytes written
-                // but not made durable" — they demand different recovery.
+            }
+            PostWriteOutcome::DurabilityFailed { error, .. } => {
+                self.frames_failed += 1;
                 if let ErrorKind::DurabilityFailed {
                     attempted_watermark,
                     ..
-                } = e.kind()
+                } = error.kind()
                 {
                     self.durability_failures += 1;
                     self.unsynced_watermark = Some(*attempted_watermark);
@@ -144,25 +140,22 @@ fn happy_path_write_then_read() -> Result<()> {
 
     let mut buf = Vec::new();
     let mut tel = WriteTelemetry::default();
+    let writer_bytes;
     {
-        let mut writer = StreamWriter::new(Cursor::new(&mut buf), DefaultFramer);
+        let mut writer = StreamWriter::new(Cursor::new(&mut buf), DefaultFramer)
+            .with_post_write_observer(|event: PostWriteEvent<'_>| tel.record(event));
         for m in messages {
-            // The recipe: observe at the boundary, timing the real I/O call.
-            // (A production wrapper would sample a clock around this line; we
-            // omit the clock so the example stays deterministic.)
-            let outcome = writer.write_with_receipt(&m);
-            tel.record(&outcome);
-            outcome?; // propagate any real error after recording it
+            writer.write_with_receipt(&m)?;
         }
         writer.flush()?;
-        // The recorded byte total must equal the writer's own accounting.
-        assert_eq!(tel.bytes_ok, writer.bytes_written());
+        writer_bytes = writer.bytes_written();
     }
 
     // Property 1: every frame recorded once, no failures.
     assert_eq!(tel.frames_ok, messages.len() as u64);
     assert_eq!(tel.frames_failed, 0);
     assert_eq!(tel.durability_failures, 0);
+    assert_eq!(tel.bytes_ok, writer_bytes);
 
     // Property 2: recorded ranges tile the stream contiguously from offset 0
     // and cover exactly the bytes on the wire.
@@ -214,32 +207,30 @@ fn failure_is_never_counted_as_success() -> Result<()> {
     };
 
     let mut tel = WriteTelemetry::default();
-    let mut writer = StreamWriter::new(sink, DefaultFramer);
+    let first_receipt;
+    let error;
+    {
+        let mut writer = StreamWriter::new(sink, DefaultFramer)
+            .with_post_write_observer(|event: PostWriteEvent<'_>| tel.record(event));
 
-    let first_outcome = writer.write_with_receipt(&first);
-    tel.record(&first_outcome);
-    first_outcome.expect("first frame fits under the sink's byte limit");
-
-    let bytes_after_first = tel.bytes_ok;
-    let ok_after_first = tel.frames_ok;
-
-    // Second write must fail at the sink; record it and confirm classification.
-    let second_outcome = writer.write_with_receipt(&"this-frame-cannot-be-written");
-    tel.record(&second_outcome);
-    match second_outcome {
-        Err(e) => assert!(
-            matches!(e.kind(), ErrorKind::Io(_)),
-            "expected an Io failure from the refusing sink, got {:?}",
-            e.kind()
-        ),
-        Ok(r) => panic!("write unexpectedly succeeded: {r:?}"),
+        first_receipt = writer
+            .write_with_receipt(&first)
+            .expect("first frame fits under the sink's byte limit");
+        error = writer
+            .write_with_receipt(&"this-frame-cannot-be-written")
+            .expect_err("second frame must be refused");
     }
+    assert!(
+        matches!(error.kind(), ErrorKind::Io(_)),
+        "expected an Io failure from the refusing sink, got {:?}",
+        error.kind()
+    );
 
     // The failure landed on the failure counter and nowhere else.
     assert_eq!(tel.frames_failed, 1);
-    assert_eq!(tel.frames_ok, ok_after_first, "success count must not move");
+    assert_eq!(tel.frames_ok, 1, "success count must not move");
     assert_eq!(
-        tel.bytes_ok, bytes_after_first,
+        tel.bytes_ok, first_receipt.wire_len,
         "recorded bytes must not move on failure"
     );
     // This particular failure is not a durability failure — the bytes were
@@ -254,7 +245,7 @@ fn failure_is_never_counted_as_success() -> Result<()> {
     Ok(())
 }
 
-/// Property 5 — the durability half of the recipe: with an automatic sync
+/// Property 5 — the durability half of the hook: with an automatic sync
 /// policy installed, a failed checkpoint surfaces as `Err(DurabilityFailed)`
 /// from the write call itself. The telemetry must classify it as a durability
 /// failure — distinct from an I/O refusal, because its bytes are already on the
@@ -262,15 +253,12 @@ fn failure_is_never_counted_as_success() -> Result<()> {
 fn durability_failure_is_classified_and_bytes_were_accepted() -> Result<()> {
     let mut tel = WriteTelemetry::default();
     let mut writer = StreamWriter::new(UnsyncableSink::default(), DefaultFramer)
+        .with_post_write_observer(|event: PostWriteEvent<'_>| tel.record(event))
         .with_sync_policy(SyncEveryFrame::new(SyncMode::Data));
 
-    let outcome = writer.write_with_receipt(&"accepted-but-not-durable");
-    tel.record(&outcome);
-
-    let err = match outcome {
-        Err(e) => e,
-        Ok(r) => panic!("checkpoint against an unsyncable sink must fail: {r:?}"),
-    };
+    let err = writer
+        .write_with_receipt(&"accepted-but-not-durable")
+        .expect_err("checkpoint against an unsyncable sink must fail");
     match err.kind() {
         ErrorKind::DurabilityFailed {
             attempted_watermark,

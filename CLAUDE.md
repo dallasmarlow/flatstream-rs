@@ -16,10 +16,20 @@ the quality bar, gate, findings format, and currently assignable work.
 
 - Writer and reader `FrameReceipt` positions (`end`/`range`,
   `bytes_written`/`bytes_consumed`, start offsets).
-- `read_frame_at` with caller-owned scratch and receipt-aware forward APIs.
+- `read_frame_at` with caller-owned scratch, one initial seek, and read-counted
+  receipt length; receipt-aware forward APIs.
 - Single-`write_vectored` built-in framing with partial-write handling.
-- Static durability policies and durable watermarks.
+- `Error` → `io::Error` preserves underlying I/O kinds and `UnexpectedEof`;
+  other library/protocol failures map to `InvalidData` with the original error
+  retained as the inner payload.
+- Static frame/byte durability policies and durable watermarks; time-based
+  checkpoints are application-scheduled manual syncs, not per-frame clock reads.
 - Static memory policies; `NoSync` and `NoMemoryPolicy` are zero-sized defaults.
+- Statically dispatched `PostWriteObserver` with a zero-sized default and
+  explicit success/write-failure/durability-failure outcomes.
+- Reader/writer direct source/sink access (`get_ref`/`get_mut`) is intentionally
+  absent; consume with `into_inner` before out-of-band I/O, then reconstruct
+  with the correct offset.
 - Strict torn-tail recovery: only `UnexpectedEof` authorizes truncation after
   writing has stopped.
 
@@ -34,6 +44,8 @@ partial frame.
   into the reusable reader/scratch buffer.
 - Zero-allocation claims apply after buffers reach their high-water mark.
 - Static dispatch is the default. Do not add boxed hot-path policy calls.
+- `Write::is_write_vectored` remains unstable (`can_vector`) on stable/beta
+  Rust as of 2026-07-29; do not gate framing on it or move the crate to nightly.
 - Default builds forbid unsafe code; `unsafe_typed` is the sole opt-out.
 - Tests/examples must assert bytes, round trips, counts, or error kinds.
 - No new runtime dependency or performance claim without evidence and review.
@@ -56,11 +68,9 @@ surprising result.
 
 ## Current work lanes
 
-The macOS contributor lane is complete (2026-07-28): B3 shipped its design note
-(`docs/planning/B3_OBSERVABILITY_BOUNDARY.md`) plus self-asserting example
-(`examples/observability_boundary.rs`) — a public post-operation hook stays
-sign-off-gated — and E2 is declined
-(`docs/planning/E2_CHECKSUM_COMPOSITION.md`).
+The macOS contributor lane is complete: B3 shipped its design note, statically
+dispatched post-write hook, self-asserting example/tests, and overhead findings;
+E2 is declined (`docs/planning/E2_CHECKSUM_COMPOSITION.md`).
 
 A4 is complete (2026-07-28):
 `docs/benchmark/FINDINGS_COMPRESSION_FEASIBILITY.md` records substantial

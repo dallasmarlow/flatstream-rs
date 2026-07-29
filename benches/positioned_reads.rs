@@ -3,12 +3,31 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    read_frame_at, ChecksumDeframer, ChecksumFramer, Crc32, Deframer, StreamReader, StreamWriter,
+    read_frame_at, ChecksumDeframer, ChecksumFramer, Crc32, Deframer, Result, StreamReader,
+    StreamWriter,
 };
-use std::io::{BufReader, Seek, SeekFrom};
+use std::cell::Cell;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::rc::Rc;
 
 const FRAME_COUNT: usize = 1_000;
 const PAYLOAD_SIZES: [usize; 2] = [4096, 64 * 1024];
+
+struct Rewindable<'a> {
+    bytes: &'a [u8],
+    position: Rc<Cell<usize>>,
+}
+
+impl Read for Rewindable<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let position = self.position.get();
+        let remaining = &self.bytes[position..];
+        let n = remaining.len().min(buf.len());
+        buf[..n].copy_from_slice(&remaining[..n]);
+        self.position.set(position + n);
+        Ok(n)
+    }
+}
 
 fn finished_builder(size: usize) -> FlatBufferBuilder<'static> {
     let mut builder = FlatBufferBuilder::new();
@@ -50,6 +69,20 @@ fn build_wire(size: usize) -> Vec<u8> {
     wire
 }
 
+fn read_frame_at_with_stream_position<R: Read + Seek, D: Deframer>(
+    source: &mut R,
+    deframer: &D,
+    offset: u64,
+    scratch: &mut Vec<u8>,
+) -> Result<Option<(usize, u64)>> {
+    source.seek(SeekFrom::Start(offset))?;
+    let Some(payload_len) = deframer.read_and_deframe(source, scratch)? else {
+        return Ok(None);
+    };
+    let end = source.stream_position()?;
+    Ok(Some((payload_len, end - offset)))
+}
+
 fn positioned_reads(c: &mut Criterion) {
     let mut group = c.benchmark_group("Positioned Reads");
     group.throughput(Throughput::Elements(1));
@@ -70,6 +103,38 @@ fn positioned_reads(c: &mut Criterion) {
                 black_box(reader.read_message().unwrap().unwrap().len())
             });
         });
+
+        let (position_file, position_offsets) = build_file(size);
+        let mut position_file = position_file.into_file();
+        let mut position_index = 0usize;
+        let mut position_scratch = Vec::new();
+        read_frame_at_with_stream_position(
+            &mut position_file,
+            &ChecksumDeframer::new(Crc32::new()),
+            position_offsets[0],
+            &mut position_scratch,
+        )
+        .unwrap()
+        .unwrap();
+        group.bench_function(
+            BenchmarkId::new("read_frame_at_stream_position", size),
+            |b| {
+                b.iter(|| {
+                    let offset = position_offsets[position_index % position_offsets.len()];
+                    position_index += 1;
+                    black_box(
+                        read_frame_at_with_stream_position(
+                            &mut position_file,
+                            &ChecksumDeframer::new(Crc32::new()),
+                            offset,
+                            &mut position_scratch,
+                        )
+                        .unwrap()
+                        .unwrap(),
+                    )
+                });
+            },
+        );
 
         let (point_file, point_offsets) = build_file(size);
         let mut point_file = point_file.into_file();
@@ -157,14 +222,19 @@ fn forward_position_tracking(c: &mut Criterion) {
             });
         });
 
+        let counted_position = Rc::new(Cell::new(0));
+        let counted_source = Rewindable {
+            bytes: &wire,
+            position: Rc::clone(&counted_position),
+        };
         let mut counted = StreamReader::with_capacity(
-            std::io::Cursor::new(&wire),
+            counted_source,
             ChecksumDeframer::new(Crc32::new()),
             size + 64,
         );
         group.bench_function(BenchmarkId::new("stream_reader_counted", size), |b| {
             b.iter(|| {
-                counted.get_mut().set_position(0);
+                counted_position.set(0);
                 let mut frames = 0usize;
                 counted
                     .process_all(|payload| {
@@ -181,5 +251,17 @@ fn forward_position_tracking(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, positioned_reads, forward_position_tracking);
+fn selected_benchmarks(c: &mut Criterion) {
+    match std::env::var("POSITIONED_READS_CASE").ok().as_deref() {
+        None => {
+            positioned_reads(c);
+            forward_position_tracking(c);
+        }
+        Some("point") => positioned_reads(c),
+        Some("forward") => forward_position_tracking(c),
+        Some(other) => panic!("unknown POSITIONED_READS_CASE {other:?}; expected point or forward"),
+    }
+}
+
+criterion_group!(benches, selected_benchmarks);
 criterion_main!(benches);

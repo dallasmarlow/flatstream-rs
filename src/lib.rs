@@ -129,8 +129,8 @@ pub mod writer;
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
 pub use durability::{
-    AnySync, Durable, NoSync, SyncEveryBytes, SyncEveryFrame, SyncEveryInterval, SyncEveryNFrames,
-    SyncInfo, SyncMode, SyncPolicy, SyncPolicyExt, Syncing,
+    AnySync, Durable, NoSync, SyncEveryBytes, SyncEveryFrame, SyncEveryNFrames, SyncInfo, SyncMode,
+    SyncPolicy, SyncPolicyExt, Syncing,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use framing::{
@@ -151,8 +151,8 @@ pub use validation::{
     CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };
 pub use writer::{
-    BuilderFactory, DefaultBuilderFactory, FrameReceipt, OwnedStreamWriter, StreamWriter,
-    WriterMemoryPolicy,
+    BuilderFactory, DefaultBuilderFactory, FrameReceipt, NoPostWriteObserver, OwnedStreamWriter,
+    PostWriteEvent, PostWriteObserver, PostWriteOutcome, StreamWriter, WriterMemoryPolicy,
 };
 
 #[cfg(feature = "xxhash")]

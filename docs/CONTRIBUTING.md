@@ -214,16 +214,15 @@ it touches public API, and follow the definition of done.
 1. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
 2. **A3** — generic `Read` copy-cost baseline.
 
-The B3/E2 semantic questions are now resolved on paper: B3's first deliverable
-shipped (a public post-operation hook remains sign-off-gated; see the design
-note's §7), E2 is declined, and A4's benchmark-only compression experiment is
-complete. Do not start a B3 hook or production compression implementation
-without maintainer sign-off.
+The B3/E2 semantic questions are resolved: B3's statically dispatched
+post-write hook shipped after maintainer sign-off, E2 is declined, and A4's
+benchmark-only compression experiment is complete. Do not start production
+compression implementation without maintainer sign-off.
 
 **Contributor environment matters.** The reference-results lane (A3 and extended
 C1/C2 runs; A4 used the same lane) requires the maintainer's pinned Docker/Linux
 or trustworthy benchmark machine. The macOS-contributor lane (B3 first
-deliverable, E2 decision memo) is complete as of 2026-07-28.
+deliverable and approved post-write follow-up, E2 decision memo) is complete.
 
 Do not ask a benchmark-incapable contributor to collect or interpret performance
 numbers. They may add compile-checked benchmark code for a maintainer to run
@@ -231,9 +230,9 @@ only when the task explicitly separates implementation from evidence.
 
 > **Done as of 2026-07-25:** A1, A2, C5, C6, E1, B1 (`tests/external_index.rs` +
 > README recipe), B2, C3, C4, D, E3, and E4.
-> **Done as of 2026-07-28:** B3 first deliverable (design note + example; public
-> hook still sign-off-gated), E2 (declined with rationale), and A4 (compression
+> **Done as of 2026-07-28:** E2 (declined with rationale) and A4 (compression
 > feasibility benchmark; no production adapter).
+> **Done as of 2026-07-29:** B3 post-write hook after maintainer sign-off.
 
 ### A. Experiments (produce committed findings docs)
 
@@ -319,16 +318,19 @@ only when the task explicitly separates implementation from evidence.
 
 ### B. Polish
 
-> The `io::Error` conversion semantics are **settled** (2026-07-24): keep
-> `io::Error::other` — uniform kind, no lost context. Rationale in
-> `docs/DESIGN_v2_8.md` §3. Not an open task.
+> The `io::Error` conversion semantics were revised by owner direction on
+> 2026-07-29: preserve an underlying `Io` kind, map flatstream
+> `UnexpectedEof` to `io::ErrorKind::UnexpectedEof`, and classify other
+> library/protocol failures as `InvalidData`, while retaining the complete
+> flatstream error as the inner payload. Rationale in `docs/DESIGN_v2_8.md` §3.
 
 **B1 — External-index recipe** — **DONE**, `tests/external_index.rs` + README
 "Frame offsets for external indexing"
 - **Outcome:** the integration suite pins contiguity, byte-exactness, `with_start_offset`
-  append semantics, checksum-inclusive `wire_len`, and torn-tail survival. The
-  `get_mut()` counter-bypass is now an asserted, documented hazard rather than
-  folklore.
+  append semantics, checksum-inclusive `wire_len`, and torn-tail survival.
+  Direct source/sink access was removed in the pre-review correction round:
+  `File` supports I/O through shared references, so removing only `get_mut`
+  would not have closed the accounting escape hatch.
 - Promote `examples/external_index.rs` into (a) an integration test under
   `tests/` asserting index-contiguity and seek-based random-access correctness,
   and (b) a short README recipe. This is the pattern every index-building
@@ -356,20 +358,17 @@ only when the task explicitly separates implementation from evidence.
   explicitly `rust,ignore`. `scripts/readme_doctests.sh` enforces the runnable
   set and runs in the gate.
 
-**B3 — Observability boundary recipe** — **first deliverable DONE** (2026-07-28),
-`docs/planning/B3_OBSERVABILITY_BOUNDARY.md` + `examples/observability_boundary.rs`
-- **Outcome:** the "resolve first" question is resolved as *application recipe
-  at the operation boundary* — `ObserverFramer`/`ObserverDeframer` are payload
-  observers (callback before write I/O / after successful reads, payload slice
-  only) and cannot report success, receipt bounds, latency, or durability. The
-  receipt-returning write/read APIs and `DurabilityFailed` watermarks already
-  expose all of those at the call site, so the recipe is a caller-side wrapper:
-  no public API, no dependency, nothing on the hot path. The example asserts
-  success/failure separation, contiguous receipt ranges on both sides, and that
-  a failed durability checkpoint classifies separately with
-  `attempted_watermark` equal to the bytes the sink accepted. A first-party
-  post-operation hook is **deferred, sign-off-gated** (note §7;
-  `docs/DESIGN_v2_8.md` §6).
+**B3 — Post-write observability boundary** — **DONE** (2026-07-29),
+`docs/planning/B3_OBSERVABILITY_BOUNDARY.md` +
+`docs/benchmark/FINDINGS_POST_WRITE_OBSERVER.md`
+- **Outcome:** `ObserverFramer`/`ObserverDeframer` remain payload inspectors.
+  `StreamWriter::with_post_write_observer` installs a concrete,
+  statically-dispatched callback after the complete write operation resolves.
+  Events distinguish serialization failure, framing/I/O failure, success with
+  exact receipt, and durability failure with the accepted receipt. The
+  zero-sized default performs no clock read/callback; an installed receipt +
+  latency observer costs 31.632 ns/frame in the isolated M4 in-memory harness
+  and zero steady-state allocations.
 - **Goal:** Give applications one standard, dependency-free pattern for timing
   frame writes, reads, batches, and durability checkpoints, while keeping OTEL
   and metrics crates out of flatstream.
@@ -380,9 +379,8 @@ only when the task explicitly separates implementation from evidence.
 - **Constraints:** no OTEL dependency; no span per frame by default; callback
   cost exists only in the installed concrete type; errors must not be reported
   as successful frames; durability failure occurs after bytes were accepted.
-- **First deliverable:** a short design note and self-asserting example using
-  generic callbacks translated to mock metrics. Implement public types only
-  after maintainer approval, then add an overhead benchmark and findings.
+- **Deliverable:** design note, self-asserting example/tests, allocation
+  enforcement, and isolated overhead findings. No OTEL/metrics dependency.
 
 ### C. Test and robustness hardening
 
@@ -470,30 +468,24 @@ ONBOARDING §6
 
 **C6 — Position-accounting fault semantics** — **DONE**,
 `tests/position_accounting_faults.rs`
-- **Outcome:** six self-asserting tests pin all five cases. (a) A custom
+- **Outcome:** four self-asserting tests pin the remaining four cases. (a) A custom
   `read_vectored` deframer (`VectoredDeframer`) yields receipts byte-for-byte
   equal to the writer's on both the sequential and `read_frame_at` paths — on
-  the sequential path `CountingReader` tallies `read_vectored` returns, and on
-  the point-read path the vectored reads leave the cursor where `read_frame_at`
-  measures the frame end via `stream_position()`. (b) A mid-frame truncation
+  both paths `CountingReader` tallies `read_vectored` returns. (b) A mid-frame truncation
   surfaces `UnexpectedEof` while `bytes_consumed` retains every byte the failed
   read consumed — no rollback to the frame start. (c) An injected
   `PermissionDenied` device error propagates intact and adds nothing to the
-  counter; only bytes actually returned are counted. (d) A raw read *and* a seek
-  through `get_mut` leave the counter stale, so the next receipt provably
-  mismatches the true source position — the behavior `get_mut`'s rustdoc already
-  warns about, so no doc change was needed. (e) A nonzero `with_start_offset`
+  counter; only bytes actually returned are counted. (d) A nonzero `with_start_offset`
   composes with an installed `SizeThresholdPolicy`: receipts stay base-relative
   and exact across a buffer reclamation that shrinks the internal buffer
-  mid-stream. `scripts/gate.sh` green on macOS; no public API added.
+  mid-stream. Mutable reader access was later removed, eliminating the bypass
+  cases rather than preserving them as documented hazards.
 - **Goal:** Pin what `bytes_consumed` and receipts mean under short reads,
-  vectored custom deframers, direct source access, and I/O failure.
+  vectored custom deframers, memory reclamation, and I/O failure.
 - **Cases:** (a) a custom deframer that uses `read_vectored` still produces exact
   receipt bounds; (b) successful bytes consumed before `UnexpectedEof` advance
-  `bytes_consumed`; (c) a device error counts only bytes actually returned;
-  (d) reads or seeks through `StreamReader::get_mut` demonstrably bypass or
-  invalidate accounting, matching its rustdoc warning; and (e) nonzero
-  `with_start_offset` composes with an installed static memory policy.
+  `bytes_consumed`; (c) a device error counts only bytes actually returned; and
+  (d) nonzero `with_start_offset` composes with an installed static memory policy.
 - **Constraints:** tests must use deterministic local readers/tempfiles, no
   sleeps, no benchmark claims, and no new public API unless a test exposes an
   unresolvable contract defect.
@@ -511,9 +503,11 @@ ONBOARDING §6
 - **Allocation result:** fresh-reader-per-lookup allocates each frame; warmed
   `read_frame_at` allocates zero times. Forward position tracking has no resolved
   wall-clock regression in the paired benchmark.
-- **I/O result:** source buffering is workload-dependent. At 4 KiB a retained
-  `BufReader<File>` outperforms bare-file point lookup; by 64 KiB the two
-  caller-scratch forms converge and slightly beat the allocating baseline.
+- **I/O result:** each point lookup performs one initial seek; a per-call
+  `CountingReader` supplies `wire_len` without a post-read position syscall.
+  Against the old `stream_position` implementation, bare-file median improved
+  9.7% at 4 KiB and 1.3% at 64 KiB on the measured M4. Source buffering remains
+  workload-dependent.
 - **Live-file boundary:** `UnexpectedEof` describes what the current read
   observed, not whether the file is finalized. A follower retries
   `read_frame_at` with the same absolute offset after more bytes arrive; recovery
@@ -605,7 +599,7 @@ ONBOARDING §6
   rather than application folklore, while keeping the default write path
   branch-free and statically dispatched.
 - **Shape:** `Durable` sinks; zero-sized `NoSync`; frame-, byte-, and
-  interval-based `SyncPolicy` implementations; static `or` composition;
+  count-based `SyncPolicy` implementations; static `or` composition;
   automatic and manual `sync_data`/`sync_all`; durable watermarks expressed in
   the same coordinate system as `FrameReceipt::end()`.
 - **Failure contract:** a policy checkpoint runs after a complete frame is

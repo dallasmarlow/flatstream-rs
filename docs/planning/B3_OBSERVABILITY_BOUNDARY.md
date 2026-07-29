@@ -1,200 +1,163 @@
-# B3 — Observability boundary: design note (first deliverable)
+# B3 — Post-write observability boundary
 
-> **Status: design note + self-asserting example only.** No public API is added
-> by this deliverable. It resolves the "resolve first" question the backlog
-> (`docs/CONTRIBUTING.md` §6, task B3) puts ahead of any public type, and pins
-> the resolution with a runnable, dependency-free example
-> (`examples/observability_boundary.rs`). Implementing public observability
-> types requires separate maintainer sign-off; see §7.
+> **Status: implemented after maintainer sign-off (2026-07-29).**
+> `PostWriteObserver` is a statically dispatched `StreamWriter` hook;
+> `examples/observability_boundary.rs` and `tests/post_write_observer.rs` pin
+> its semantics. Installed overhead is measured in
+> `docs/benchmark/FINDINGS_POST_WRITE_OBSERVER.md`.
 
-## 1. The question B3 puts first
+## 1. The structural problem
 
-The backlog states the blocker directly:
-
-> `ObserverFramer` runs before delegated I/O and therefore cannot report
-> success, receipt bounds, or latency. Decide whether the correct deliverable is
-> only an application recipe/wrapper or a generic post-operation hook with
-> explicit success/failure events.
-
-This is a real structural fact about the code, not a stylistic preference.
-`ObserverFramer::frame_and_write` invokes its callback and *then* delegates to
-the inner framer's I/O (`src/framing.rs`):
+`ObserverFramer` is a payload-inspection adapter. Its callback executes before
+delegated framing/I/O:
 
 ```rust
-impl<F: Framer, C: Fn(&[u8])> Framer for ObserverFramer<F, C> {
-    fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
-        (self.callback)(payload);              // fires BEFORE any byte is written
-        self.inner.frame_and_write(writer, payload)
-    }
+fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()> {
+    (self.callback)(payload);
+    self.inner.frame_and_write(writer, payload)
 }
 ```
 
-The consequences, each of which disqualifies `ObserverFramer` as an
-*observability* (as opposed to *payload-inspection*) primitive:
+That location cannot truthfully report operation outcomes:
 
-1. **It cannot report success or failure.** The callback has already run by the
-   time `frame_and_write` returns `Err`. An observer that increments a
-   "frames written" counter in the callback counts a frame that a subsequent
-   `WriteZero`/`Io` error means never fully reached the wire. The constraint in
-   the backlog — "errors must not be reported as successful frames" — is
-   violated by construction.
-2. **It cannot see receipt bounds.** `frame_start`/`wire_len` are computed by
-   `StreamWriter::write_with_receipt` *around* the framer call
-   (`src/writer.rs`); the framer itself never sees them. The `ObserverFramer`
-   callback receives only the payload slice, so it cannot record where the frame
-   landed.
-3. **It cannot time the write meaningfully.** The callback fires before I/O, so
-   wrapping it in a timer measures the callback, not the write.
-4. **It cannot observe durability.** A durability checkpoint runs *after* a
-   complete frame is accepted (`SyncPolicy::after_frame`, `src/writer.rs`), far
-   below the payload-inspection point, and can fail after bytes were already
-   accepted (`ErrorKind::DurabilityFailed`). The framer-level callback is
-   nowhere near this event.
+- a later sink error would already have been counted as success;
+- `FrameReceipt` is computed by `StreamWriter`, outside the framer;
+- callback timing excludes the actual write;
+- automatic durability runs only after a complete frame is accepted and may
+  return `DurabilityFailed`.
 
-`ObserverDeframer` has the symmetric-but-milder shape: its callback fires
-*after* a successful inner read, so it does observe success — but it still sees
-only the payload, never the `FrameReceipt` (`receipt.range()`, `wire_len`), and
-never an error, because the callback is skipped entirely on `Err`.
+`ObserverDeframer` is similarly scoped to payload inspection: it runs after a
+successful payload read but has no receipt or failure event. These adapters
+remain useful for content-derived inspection and keep their existing semantics.
+They are not operation telemetry.
 
-So `ObserverFramer`/`ObserverDeframer` are correctly named: they are **payload
-observers**, useful for content-derived metrics (bytes seen, message shapes,
-sampling). They are *not* operation observers, and stretching them into that
-role would produce silently wrong telemetry.
+## 2. Decision
 
-## 2. Resolution
+Operation observation belongs on `StreamWriter`, around the complete public
+`write*` operation. The approved surface is:
 
-**The first deliverable is an application recipe at the operation boundary — not
-a new hot-path hook, and not any new public API.**
+```rust
+pub struct NoPostWriteObserver;
 
-The decisive reason is that flatstream *already* exposes, at the operation
-boundary, exactly the three things a framer-level hook cannot:
+pub trait PostWriteObserver: Send {
+    const ENABLED: bool = true;
+    fn on_write(&mut self, event: PostWriteEvent<'_>);
+}
 
-| Observable | Where it already lives | Type |
-| --- | --- | --- |
-| Success/failure of a write | return value of `write` / `write_with_receipt` | `Result<()>` / `Result<FrameReceipt>` |
-| Frame bounds (offset, length, end) | `FrameReceipt { frame_start, wire_len }`, `.end()`, `.range()` | returned by the `_with_receipt` writers |
-| Success/failure + bounds of a read | `read_message_with_receipt` / `process_all_with_receipt` | `Result<Option<ReadFrame>>`, `ReadFrame::receipt` |
-| Durability outcome + watermarks | `sync_data`/`sync_all` return `Result<u64>`; `ErrorKind::DurabilityFailed` carries `attempted_watermark`, `previous_watermark`, triggering `frame_start`/`wire_len` | error variant + return value |
+pub struct PostWriteEvent<'a> {
+    pub payload_len: Option<usize>,
+    pub elapsed: Duration,
+    pub outcome: PostWriteOutcome<'a>,
+}
 
-Every event the backlog's constraints care about — "errors must not be reported
-as successful frames", "durability failure occurs after bytes were accepted",
-"receipt bounds", "latency" — is observable *by the caller* at the `write` /
-`read` / `sync` call site, where success and bounds are both in hand and a timer
-brackets the real I/O. The application wraps its own call site. flatstream adds
-nothing to its hot path, takes on no OTEL/metrics dependency, and keeps the
-default writer branch-free.
+pub enum PostWriteOutcome<'a> {
+    Succeeded(FrameReceipt),
+    SerializationFailed(&'a Error),
+    WriteFailed(&'a Error),
+    DurabilityFailed {
+        receipt: FrameReceipt,
+        error: &'a Error,
+    },
+}
 
-This also satisfies the backlog constraint "callback cost exists only in the
-installed concrete type": with a caller-side recipe the cost exists only in the
-application's own wrapper, which is the strongest possible version of that
-property.
+impl StreamWriter<...> {
+    pub fn with_post_write_observer<O: PostWriteObserver>(
+        self,
+        observer: O,
+    ) -> StreamWriter<..., O>;
+}
+```
 
-### Why not a generic post-operation hook (yet)
+Closures implementing `for<'event> FnMut(PostWriteEvent<'event>) + Send` work
+directly as observers. There is no trait object, metrics dependency, or payload
+copy.
 
-A generic post-op hook — e.g. a `StreamWriter` that takes an
-`Fn(Result<&FrameReceipt>)` and invokes it after each write — is *implementable*
-and would sit at the correct point. It is deferred, not rejected, because:
+## 3. Ordering and outcome contract
 
-- It is **new public API on the core writer/reader**, which §6 says needs design
-  sign-off before implementation. This note is the pre-sign-off artifact; it
-  should not also ship the API.
-- Its marginal value over "wrap your own call site" is unproven. The call site
-  already returns the receipt and the `Result`. A hook mainly helps when the
-  write call site is buried inside a generic pipeline the application cannot
-  wrap — a real but unquantified case.
-- Any hook must answer sub-questions this note deliberately leaves open for the
-  sign-off discussion: does it fire on the *durability* checkpoint as well as
-  the frame write (two distinct failure points)? Does it borrow the receipt or
-  copy it? Is it one hook or a small event enum (`FrameWritten`, `SyncOk`,
-  `SyncFailed`)? Answering these in code before agreeing the shape would be the
-  premature-API mistake §6 guards against.
+For simple-mode `write`/`write_with_receipt`, observation starts before
+serialization and completes after framing, memory-policy bookkeeping, and any
+automatic durability checkpoint. Expert-mode `write_finished*` starts from the
+already-finished payload. The callback executes immediately before the method
+returns its final `Result`; callback time is excluded from `event.elapsed`.
 
-The recipe below is designed so that *if* a hook is later approved, the recipe
-remains the documentation of what the hook must expose — nothing in it becomes
-wrong.
+Exactly one event is emitted:
 
-## 3. The recipe
+1. **`SerializationFailed`** — no payload was completed and no framing I/O was
+   attempted; `payload_len` is `None`.
+2. **`WriteFailed`** — serialization succeeded, but framing/sink I/O did not
+   accept a complete frame. No receipt is fabricated.
+3. **`DurabilityFailed`** — the complete frame was accepted and its receipt is
+   supplied, but the automatic checkpoint failed. The caller must not re-emit
+   the frame.
+4. **`Succeeded`** — the complete frame was accepted and any checkpoint due for
+   this operation succeeded. The receipt is final and exact.
 
-Two halves, each a thin wrapper the **application** owns:
+The success callback therefore cannot fire before `write_vectored` resolves or
+before an automatic checkpoint reports its outcome. Errors are borrowed only
+for the callback; the original owned error is returned unchanged.
 
-**Write side.** Call `write_with_receipt`; time the call; branch on the
-`Result`. On `Ok(receipt)` record `receipt.wire_len` and `receipt.range()`
-against a success counter and a latency accumulator. On `Err(e)` record a
-failure against a *separate* counter — never the success one — and inspect
-`e.kind()` to distinguish a framing/`Io` failure from `DurabilityFailed` (whose
-bytes are already on the wire).
+## 4. Static default and cost
 
-**Read side.** Call `read_message_with_receipt` (or
-`process_all_with_receipt`); on `Ok(Some(frame))` record `frame.receipt`; on
-`Ok(None)` the stream ended cleanly at a boundary; on `Err` record a failure and
-inspect the kind (an `UnexpectedEof` on a live file is a torn tail / retry
-signal, not a corruption event — see ONBOARDING §6).
+`StreamWriter` gains a final defaulted generic observer state:
 
-**Durability side.** Bracket `sync_data`/`sync_all` with a timer; on `Err`, the
-error is `DurabilityFailed` and its `attempted_watermark` tells the caller how
-far the frames-accepted watermark had advanced when stable storage was not
-confirmed — the caller must not re-emit those frames. With an automatic
-`SyncPolicy` installed, the same error surfaces from the triggering `write`
-call itself — which is why the write-side wrapper must classify
-`DurabilityFailed` separately rather than lump it in with I/O refusals.
+```rust
+pub struct StreamWriter<..., O = NoPostWriteObserver> {
+    observer: O,
+}
+```
 
-The invariant the recipe pins, and that the example asserts: **a write that
-returns `Err` increments the failure counter and leaves the success counter and
-the durable-bytes total untouched.** That is precisely the property
-`ObserverFramer` cannot provide, which is the whole reason B3 exists.
+`NoPostWriteObserver` is zero-sized and sets `ENABLED = false`. Its
+monomorphization does not call `Instant::now` and invokes no callback. Installing
+an observer enables one start/end clock pair plus the concrete callback on each
+write.
 
-## 4. Constraints check (from §6)
+The isolated benchmark measured:
 
-- **No OTEL dependency, no metrics crate.** The example translates events into a
-  plain in-process `struct` of counters. Mapping those to OTEL/Prometheus is the
-  application's job and is named as such.
-- **No span per frame by default.** The recipe adds nothing to flatstream's hot
-  path; the per-frame cost is whatever the application's own wrapper does.
-- **Errors must not be reported as successful frames.** Enforced by branching on
-  the `Result` at the boundary and asserted in the example.
-- **Durability failure occurs after bytes were accepted.** Surfaced via
-  `DurabilityFailed::attempted_watermark` and asserted in the example: a failed
-  checkpoint's watermark equals the bytes the sink actually accepted, and the
-  recipe classifies it separately so the caller neither counts the frame as ok
-  nor re-emits it.
+- default: 1.988 ns/frame in the in-memory harness;
+- installed receipt + latency observer: 33.620 ns/frame;
+- paired installed delta: 31.632 ns/frame;
+- zero allocations/reallocations per observed frame.
 
-## 5. Self-asserting example
+These are Apple-M4 in-memory figures, not portable percentages. Full method and
+threats are in `FINDINGS_POST_WRITE_OBSERVER.md`.
 
-`examples/observability_boundary.rs` (added by this deliverable, run by
-`scripts/examples.sh`) is dependency-free and asserts:
+## 5. Scope boundaries
 
-1. A three-frame write records exactly three successes, zero failures, and a
-   recorded byte total equal to the writer's `bytes_written()`.
-2. Each recorded frame range tiles the stream contiguously and byte-exactly
-   (`prev.end() == next.frame_start`), the same contiguity property
-   `external_index` pins — here observed through the telemetry wrapper.
-3. A forced write failure (a sink that refuses after N bytes) increments the
-   **failure** counter and leaves the **success** counter and recorded-byte
-   total unchanged — the property `ObserverFramer` cannot deliver.
-4. The read side, driven with `process_all_with_receipt`, recovers the same
-   frame count and the same contiguous ranges the write side recorded.
-5. With an automatic sync policy installed over a sink that accepts bytes but
-   cannot confirm a checkpoint, the write call returns
-   `Err(DurabilityFailed)`: the telemetry classifies it as a durability
-   failure (not an I/O refusal, not a success), and the error's
-   `attempted_watermark` equals both the writer's advanced position and the
-   bytes the sink actually holds — pinning "durability failure occurs after
-   bytes were accepted".
+- **Payload adapters remain payload adapters.** `FramerExt::observed` and
+  `DeframerExt::observed` are not silently redefined.
+- **Automatic durability is part of the write event.** Emitting a separate sync
+  event for the same call would double-report one operation.
+- **Manual checkpoints remain explicit calls.** Applications can bracket
+  `sync_data`/`sync_all`; those methods do not masquerade as frame writes.
+- **Reads already expose success, receipt bounds, clean EOF, and errors through
+  `read_message_with_receipt`/`process_all_with_receipt`.** A symmetric reader
+  hook is not added speculatively in this change.
+- **There is no batch event.** Flatstream has no `write_batch` API; applications
+  define their own transaction/batch boundaries.
+- **Observer panics are not caught.** A callback is application code and follows
+  ordinary Rust panic behavior.
 
-## 6. What this deliverable is not
+## 6. Executable evidence
 
-- Not a public `ObserverFramer` change. The payload observers stay as they are;
-  their rustdoc already scopes them to payload inspection.
-- Not a benchmark. No performance claim is made; the recipe's cost is the
-  application's, and A-lane findings docs are the place for any number.
-- Not a wire change. Receipts and errors already exist; nothing new touches the
-  bytes.
+`tests/post_write_observer.rs` asserts:
 
-## 7. Next step (blocked on sign-off)
+- the default observer is zero-sized;
+- a success callback runs after all frame bytes are accepted;
+- serialization and sink failures never emit success;
+- durability failure carries the accepted frame receipt and preserves the
+  `DurabilityFailed` context.
 
-If the maintainer wants a first-party post-operation hook, the follow-up is a
-separate design proposal covering: the event surface (single callback vs. event
-enum), whether it fires on durability checkpoints, borrow-vs-copy of the
-receipt, the concrete zero-sized default (a `NoObserver` analogous to `NoSync`),
-and an overhead benchmark + findings doc proving the installed-cost-only
-property. Only then does public API land.
+`tests/allocation.rs` requires an installed observer to allocate and reallocate
+exactly zero times over the armed steady-state loop.
+
+`examples/observability_boundary.rs` translates events into dependency-free
+mock telemetry and asserts contiguous successful ranges, failure separation,
+read-side receipt agreement, and accepted-but-not-durable classification.
+
+## 7. Compatibility
+
+The wire format and existing constructor/method calls are unchanged.
+`StreamWriter` and `OwnedStreamWriter` gain a defaulted observer type parameter;
+existing type spellings continue to compile. Code that explicitly names the
+return type of `with_post_write_observer` must include its concrete observer
+state, as with installed sync and memory policies.

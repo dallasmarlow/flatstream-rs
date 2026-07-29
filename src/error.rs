@@ -246,20 +246,25 @@ impl From<flatbuffers::InvalidFlatbuffer> for Error {
     }
 }
 
-/// The reverse of the `From<std::io::Error>` conversion above: normalizes a
+/// The reverse of the `From<std::io::Error>` conversion above: translates a
 /// flatstream [`Error`] into a [`std::io::Error`] so application code that
-/// surfaces `io::Error` at its boundaries can use `?` on flatstream results
-/// without a manual `map_err(io::Error::other)`.
+/// surfaces `io::Error` at its boundaries can use `?` on flatstream results.
 ///
 /// The flatstream error becomes the I/O error's inner payload — recoverable via
 /// [`std::io::Error::get_ref`] / [`into_inner`](std::io::Error::into_inner), and
-/// forwarded by the I/O error's `Display` — and the kind is
-/// [`Other`](std::io::ErrorKind::Other). Code that must branch on an original
-/// I/O kind should match on [`Error::kind`] before converting.
+/// forwarded by the I/O error's `Display`. An underlying [`ErrorKind::Io`]
+/// preserves its source kind, [`ErrorKind::UnexpectedEof`] maps to
+/// [`std::io::ErrorKind::UnexpectedEof`], and protocol/validation/durability
+/// failures map to [`std::io::ErrorKind::InvalidData`].
 impl From<Error> for std::io::Error {
     #[cold]
     fn from(e: Error) -> Self {
-        std::io::Error::other(e)
+        let kind = match e.kind() {
+            ErrorKind::Io(source) => source.kind(),
+            ErrorKind::UnexpectedEof => std::io::ErrorKind::UnexpectedEof,
+            _ => std::io::ErrorKind::InvalidData,
+        };
+        std::io::Error::new(kind, e)
     }
 }
 
@@ -309,14 +314,15 @@ mod tests {
     }
 
     #[test]
-    fn converts_into_io_error_preserving_the_error() {
+    fn converts_protocol_error_into_invalid_data_preserving_the_error() {
         // App boundaries that surface io::Error can `?` on flatstream results.
         // The flatstream error is preserved as the io::Error's inner payload
-        // (downcastable), its Display is forwarded, and the kind is Other.
+        // (downcastable), its Display is forwarded, and protocol failures use
+        // standard InvalidData control flow.
         let flat = Error::invalid_frame("bad frame");
         let display = flat.to_string();
         let io: std::io::Error = flat.into();
-        assert_eq!(io.kind(), std::io::ErrorKind::Other);
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(io.to_string(), display);
         let inner = io.get_ref().expect("inner payload");
         assert!(
@@ -326,13 +332,58 @@ mod tests {
     }
 
     #[test]
-    fn io_error_conversion_round_trips_through_question_mark() {
-        // The reverse direction still works, so both conversions coexist.
+    fn converts_underlying_io_error_preserving_standard_kind() {
+        let flat = Error::from(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "device refused the read",
+        ));
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(io.to_string(), "I/O error: device refused the read");
+        assert!(
+            io.get_ref()
+                .and_then(|inner| inner.downcast_ref::<Error>())
+                .is_some(),
+            "the original flatstream::Error remains the inner payload"
+        );
+    }
+
+    #[test]
+    fn durability_failure_does_not_masquerade_as_retryable_io() {
+        let flat = Error::durability_failed(
+            SyncMode::All,
+            128,
+            Some(64),
+            Some(64),
+            Some(64),
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "sync denied"),
+        );
+        let io: std::io::Error = flat.into();
+
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+        let flat = io
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Error>())
+            .expect("the durability context remains available");
+        assert!(matches!(
+            flat.kind(),
+            ErrorKind::DurabilityFailed {
+                attempted_watermark: 128,
+                previous_watermark: Some(64),
+                source,
+                ..
+            } if source.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn unexpected_eof_survives_question_mark_conversion() {
         fn boundary() -> std::result::Result<(), std::io::Error> {
             let flat: Result<()> = Err(Error::unexpected_eof());
             flat?; // uses From<Error> for io::Error
             Ok(())
         }
-        assert!(boundary().is_err());
+        let error = boundary().expect_err("the flatstream error must propagate");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

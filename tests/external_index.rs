@@ -18,7 +18,7 @@ use flatstream::{
     StreamWriter,
 };
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom};
 use tempfile::NamedTempFile;
 
 #[cfg(feature = "crc32")]
@@ -355,30 +355,4 @@ fn index_entries_below_the_recovery_point_survive_a_torn_tail() {
         reader.read_message().is_err(),
         "the torn frame must not read back as a valid message"
     );
-}
-
-#[test]
-fn get_mut_writes_are_documented_to_bypass_the_counter() {
-    // `StreamWriter::get_mut` hands out the raw sink, and its rustdoc warns
-    // that bytes written through it bypass the frame counter. Pin that
-    // documented behavior so nobody "fixes" it into a silent surprise: after
-    // an out-of-band write, receipts no longer describe file positions.
-    let mut wire = Vec::new();
-    let mut writer = StreamWriter::new(std::io::Cursor::new(&mut wire), DefaultFramer);
-    let mut builder = FlatBufferBuilder::new();
-
-    finish(&mut builder, "first");
-    let r0 = writer.write_finished_with_receipt(&mut builder).unwrap();
-    writer.get_mut().write_all(b"OUT-OF-BAND").unwrap();
-    finish(&mut builder, "second");
-    let r1 = writer.write_finished_with_receipt(&mut builder).unwrap();
-
-    // The counter did not see the 11 out-of-band bytes...
-    assert_eq!(r1.frame_start, r0.frame_start + r0.wire_len);
-    // ...so the receipt is 11 bytes behind the true file position. Documented,
-    // and the reason `get_mut` is "reserved for inspection, not out-of-band
-    // framing".
-    writer.flush().unwrap();
-    drop(writer);
-    assert_eq!(wire.len() as u64, r1.frame_start + r1.wire_len + 11);
 }

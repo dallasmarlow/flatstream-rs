@@ -222,7 +222,12 @@ let deframer = DefaultDeframer::new().with_validator(validator);
 
 Validation errors propagate as `ErrorKind::ValidationFailed { validator, reason }`. Checksum errors still occur first and propagate as `ErrorKind::ChecksumMismatch`.
 
-`flatstream::Error` converts both ways with `std::io::Error`: `From<io::Error>` wraps an I/O fault, and `From<flatstream::Error> for io::Error` (kind `Other`, original preserved as the payload) lets code that surfaces `io::Error` at its boundaries `?` on flatstream results without a manual `map_err`.
+`flatstream::Error` converts both ways with `std::io::Error`: `From<io::Error>`
+wraps an I/O fault, and `From<flatstream::Error> for io::Error` lets code that
+surfaces `io::Error` at its boundaries use `?` without a manual `map_err`.
+Underlying I/O kinds and `UnexpectedEof` remain available for standard control
+flow; other library/protocol failures become `InvalidData`. The complete
+flatstream error remains the I/O error's inner payload in every case.
 
 ### Performance
 
@@ -633,9 +638,13 @@ Three properties make the index trustworthy, each pinned by
   point; every index entry whose `frame_start + wire_len` is at or below that
   point still resolves. Drop the entries above it and the index remains valid.
 
-Bytes written through `get_mut()` bypass the counter, so a receipt taken after
-such a write is wrong. Keep raw writes out of a stream you are indexing.
-`examples/external_index.rs` runs the whole loop end to end.
+Direct access to the underlying source/sink is intentionally not exposed:
+out-of-band I/O would invalidate receipt accounting (`File` even supports I/O
+through a shared reference, so a read-only-looking accessor is insufficient).
+To perform raw I/O, consume the stream with `into_inner()`, operate on the
+returned value, then construct a new reader/writer with the correct
+`with_start_offset()`.
+`examples/external_index.rs` runs the indexed loop end to end.
 
 #### Schema-typed expert-mode example
 
@@ -931,6 +940,39 @@ baseline. Real workloads with rare bursts pay the re-growth once per burst, not
 continuously. The isolated ten-cycle run measured 1.167 ms adaptive versus
 0.427 ms unbounded (2.73×); this is allocator churn, not dispatch.
 
+### Post-write Observation
+
+`with_post_write_observer` installs a concrete callback after each writer
+operation reaches its final state. It distinguishes serialization failure,
+framing/I/O failure, accepted-but-not-durable failure, and success with an exact
+`FrameReceipt`; elapsed time excludes the callback itself.
+
+```rust
+use flatstream::{DefaultFramer, PostWriteEvent, PostWriteOutcome, StreamWriter};
+
+# fn main() -> flatstream::Result<()> {
+let mut successes = 0;
+{
+    let mut writer = StreamWriter::new(Vec::new(), DefaultFramer)
+        .with_post_write_observer(|event: PostWriteEvent<'_>| {
+            if let PostWriteOutcome::Succeeded(receipt) = event.outcome {
+                assert!(receipt.wire_len > 0);
+                successes += 1;
+            }
+        });
+    writer.write(&"observed")?;
+}
+assert_eq!(successes, 1);
+# Ok(())
+# }
+```
+
+The zero-sized default performs no timing or callback work. The installed
+receipt-and-latency observer measured 31.632 ns/frame in the committed M4
+in-memory harness and zero steady-state allocations; see
+`docs/benchmark/FINDINGS_POST_WRITE_OBSERVER.md` and
+`examples/observability_boundary.rs`.
+
 ### Durability Policies
 
 `flush()` only moves bytes through userspace buffering; it does not promise
@@ -973,8 +1015,12 @@ The default `NoSync` state is zero-sized and has no policy branch or dynamic
 dispatch. Installing a policy changes the writer's concrete type and is only
 available when its sink implements `Durable`; in-memory sinks deliberately do
 not claim durability. Policies can trigger every frame, every N frames, every N
-wire bytes, or by monotonic interval, and can be combined with
-`SyncPolicyExt::or`.
+wire bytes, and can be combined with `SyncPolicyExt::or`.
+
+Time-based checkpoints are application-scheduled rather than frame-polled: the
+task or worker that owns the writer calls `sync_data()`/`sync_all()` on its timer
+tick. This avoids a monotonic-clock read on every frame while preserving the
+single-owner I/O model.
 
 Measured on the committed E3 harness, an installed non-triggering policy costs
 about 0.281 ns / 30.1 instructions per frame and zero steady-state allocations;

@@ -334,11 +334,9 @@ fn stream_reader_ergonomics_capacity_and_reserve() {
 #[test]
 fn stream_reader_accessors_and_into_inner() {
     let reader = Cursor::new(vec![0u8; 0]);
-    let mut sr = StreamReader::new(reader, DefaultDeframer::new());
+    let sr = StreamReader::new(reader, DefaultDeframer::new());
 
-    // Accessors compile and return references
-    let _r_ref: &Cursor<Vec<u8>> = sr.get_ref();
-    let _r_mut: &mut Cursor<Vec<u8>> = sr.get_mut();
+    // Strategy accessor compiles; source access requires consuming the reader.
     let _d_ref: &DefaultDeframer = sr.deframer();
 
     let _inner: Cursor<Vec<u8>> = sr.into_inner();
@@ -353,9 +351,7 @@ fn stream_writer_with_builder_and_accessors() {
     let builder = FlatBufferBuilder::new();
     let mut sw = StreamWriter::with_builder(writer, framer, builder);
 
-    // Accessors compile
-    let _w_ref: &Cursor<&mut Vec<u8>> = sw.get_ref();
-    let _w_mut: &mut Cursor<&mut Vec<u8>> = sw.get_mut();
+    // Strategy accessor compiles; sink access requires consuming the writer.
     let _f_ref: &DefaultFramer = sw.framer();
 
     // Write using expert mode with external builder

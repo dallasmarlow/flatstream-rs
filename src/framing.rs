@@ -567,6 +567,10 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
 /// An adapter that allows observing payloads on the write path without copying or mutating.
 ///
 /// Callback timing: Invoked exactly once per frame, before delegating inner framing.
+/// This is payload inspection, not operation telemetry: it cannot report final
+/// I/O success, receipts, latency, or durability. Use
+/// [`StreamWriter::with_post_write_observer`](crate::StreamWriter::with_post_write_observer)
+/// for post-operation outcomes.
 pub struct ObserverFramer<F: Framer, C: Fn(&[u8])> {
     inner: F,
     callback: C,
@@ -640,7 +644,11 @@ pub trait FramerExt: Framer + Sized {
         BoundedFramer::new(self, max)
     }
 
-    /// Observe payloads on the write path without copying. Useful for metrics/logging.
+    /// Inspect payloads before write I/O without copying.
+    ///
+    /// This does not observe operation success/failure; install a
+    /// [`PostWriteObserver`](crate::PostWriteObserver) on `StreamWriter` for
+    /// final outcomes and latency.
     #[must_use]
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
         ObserverFramer::new(self, callback)

@@ -150,6 +150,10 @@ name = "sync_policy"
 harness = false
 
 [[bench]]
+name = "post_write_observer"
+harness = false
+
+[[bench]]
 name = "positioned_reads"
 harness = false
 required-features = ["crc32"]

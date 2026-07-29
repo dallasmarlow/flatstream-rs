@@ -125,6 +125,8 @@ The reviewed baseline gave only the writer receipts. v0.2.8 now also ships
 `bytes_consumed`, receipt-aware forward reads, and stateless `read_frame_at`
 with caller-owned scratch. Fresh-reader-per-lookup allocation is eliminated,
 and Palimpsest can retire its last checksum/header arithmetic during resume.
+Point lookup seeks once, then derives `wire_len` from bytes returned through a
+per-call counting reader rather than issuing a post-read position syscall.
 
 The performance result is deliberately narrower than the API win: caller
 scratch reaches zero-allocation steady state, while wall-clock throughput
@@ -136,21 +138,20 @@ depends on frame size and whether the retained source is buffered. See
 The reviewed baseline documented `flush()` as explicitly not an `fsync` and
 required consumers to reach through `get_mut()` to the inner `File`.
 
-`get_mut()` is also the accessor that silently invalidates `FrameReceipt`
-offsets if you *write* through it — B1 now has a test pinning that hazard. So
-the single escape hatch a journaling consumer is *required* to use for
-durability is the same one that quietly corrupts their index if they use it
-slightly differently. Reading through it is safe and writing through it is not,
-and nothing in the type system says so.
+`get_mut()` was also the accessor that silently invalidated `FrameReceipt`
+offsets if callers performed out-of-band I/O. The pre-review correction removed
+both `get_mut` and `get_ref` (`File` supports shared-reference I/O) rather than
+preserving the same hazard through a read-only-looking accessor.
 
 A1 now measures that cadence at **68.6×** the non-sync 64 B pipeline but only
 **5.3×** at 4 KiB, proving cadence and payload shape both matter.
 
 **Resolution.** `Durable`, static `SyncPolicy` implementations, manual
-`sync_data`/`sync_all`, and durable watermarks now keep synchronization out of
-`get_mut()`. The default `NoSync` writer remains zero-sized/branch-free; policy
-writers make group-commit cadence explicit and report checkpoint failures
-without pretending the triggering frame was unwritten.
+`sync_data`/`sync_all`, and durable watermarks provide the synchronization
+boundary, and direct source/sink access is no longer exposed. The default
+`NoSync` writer remains zero-sized/branch-free; policy writers make group-commit
+cadence explicit and report checkpoint failures without pretending the
+triggering frame was unwritten.
 
 ### 2.4 Concurrency is entirely unspecified
 

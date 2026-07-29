@@ -124,6 +124,12 @@ real durability latency is orders of magnitude larger and scales with
 checkpoint count. Every latency claim must name cadence, filesystem, device,
 OS, and sync mode.
 
+The 2026-07-29 pre-review correction removes `SyncEveryInterval`: its
+`observe` implementation read the monotonic clock on every frame, a cost this
+count-based benchmark did not measure. Time-based checkpoints are now scheduled
+by the application task that owns the writer and calls the manual sync methods.
+The frame/byte policy findings above are unchanged.
+
 ## Threats to validity
 
 - A mock `Durable` sink measures policy instructions, not persistence.

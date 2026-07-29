@@ -3,7 +3,7 @@ use flatstream::{
     read_frame_at, DefaultDeframer, DefaultFramer, ErrorKind, FrameReceipt, StreamReader,
     StreamWriter,
 };
-use std::io::{self, Cursor, Read};
+use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 
 fn finish(builder: &mut FlatBufferBuilder, value: &str) -> Vec<u8> {
     builder.reset();
@@ -98,6 +98,51 @@ fn read_frame_at_reuses_scratch_and_returns_exact_bounds() {
     .is_none());
 }
 
+struct SeekCountingCursor<T> {
+    inner: Cursor<T>,
+    seeks: usize,
+}
+
+impl<T: AsRef<[u8]>> Read for SeekCountingCursor<T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<T: AsRef<[u8]>> Seek for SeekCountingCursor<T> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.seeks += 1;
+        self.inner.seek(position)
+    }
+}
+
+#[test]
+fn read_frame_at_seeks_once_and_counts_frame_reads() {
+    let (wire, expected, receipts) = default_stream(&["zero", "target", "two"]);
+    let mut source = SeekCountingCursor {
+        inner: Cursor::new(&wire),
+        seeks: 0,
+    };
+    let mut scratch = Vec::new();
+
+    let frame = read_frame_at(
+        &mut source,
+        &DefaultDeframer::new(),
+        receipts[1].frame_start,
+        &mut scratch,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(frame.payload, expected[1]);
+    assert_eq!(frame.receipt, receipts[1]);
+    assert_eq!(
+        source.seeks, 1,
+        "point lookup seeks to the frame once; receipt length comes from read accounting"
+    );
+    assert_eq!(source.inner.position(), receipts[1].end());
+}
+
 #[test]
 fn an_incomplete_live_file_can_be_retried_from_the_same_offset() {
     let (complete, expected, receipts) = default_stream(&["eventually complete"]);
@@ -164,6 +209,12 @@ impl<R: Read> Read for OneByte<R> {
     }
 }
 
+impl<R: Seek> Seek for OneByte<R> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.0.seek(position)
+    }
+}
+
 #[test]
 fn forward_position_is_exact_under_one_byte_reads() {
     let (wire, expected, receipts) = default_stream(&["short reads"]);
@@ -172,4 +223,44 @@ fn forward_position_is_exact_under_one_byte_reads() {
     assert_eq!(frame.payload, expected[0]);
     assert_eq!(frame.receipt, receipts[0]);
     assert_eq!(reader.bytes_consumed(), wire.len() as u64);
+}
+
+#[test]
+fn point_read_receipt_is_exact_under_one_byte_reads() {
+    let (wire, expected, receipts) = default_stream(&["zero", "one-byte target", "two"]);
+    let mut source = OneByte(Cursor::new(&wire));
+    let mut scratch = Vec::new();
+
+    let frame = read_frame_at(
+        &mut source,
+        &DefaultDeframer::new(),
+        receipts[1].frame_start,
+        &mut scratch,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(frame.payload, expected[1]);
+    assert_eq!(frame.receipt, receipts[1]);
+}
+
+#[test]
+fn point_read_receipt_is_exact_through_retained_bufreader() {
+    let (wire, expected, receipts) = default_stream(&["zero", "buffered target", "two"]);
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(&wire).unwrap();
+    let mut source = BufReader::new(file);
+    let mut scratch = Vec::new();
+
+    let frame = read_frame_at(
+        &mut source,
+        &DefaultDeframer::new(),
+        receipts[1].frame_start,
+        &mut scratch,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(frame.payload, expected[1]);
+    assert_eq!(frame.receipt, receipts[1]);
 }

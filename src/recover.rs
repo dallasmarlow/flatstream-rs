@@ -64,6 +64,14 @@ pub struct RecoveryReport {
 /// deframer must consume exactly one frame and never read ahead; the built-in
 /// deframers and their adapters satisfy that contract. The count after a
 /// successful frame is therefore precisely that frame's end offset.
+///
+/// Unlike the reader's counting wrapper (`src/reader.rs`), this intentionally
+/// does *not* override `read_vectored`. Recovery is a one-time cold scan, so the
+/// single vectored syscall the reader path optimizes for is not worth the extra
+/// method here — and correctness does not depend on it: `Read`'s provided
+/// `read_vectored` forwards to `self.read`, so a custom deframer that reads
+/// vectored is still counted exactly (its reads merely fall back to scalar on
+/// this path). `recover_counts_a_vectored_deframer_exactly` pins that.
 struct CountingReader<R> {
     inner: R,
     count: u64,
@@ -189,4 +197,73 @@ pub fn recover_file<R: Read + Seek, D: Deframer>(
     let report = recover(&mut *reader, deframer)?;
     reader.seek(SeekFrom::Start(report.last_good_offset))?;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+    use crate::framing::{DefaultFramer, Framer};
+    use std::io::{Cursor, IoSliceMut};
+
+    /// A `[4-byte length | payload]` deframer whose payload read is driven
+    /// through [`Read::read_vectored`] rather than `read_exact`. Its only reason
+    /// to exist here is to prove that `recover`'s byte accounting stays exact for
+    /// a vectored deframer even though its `CountingReader` does not special-case
+    /// the vectored path — the guard behind the doc note above.
+    struct VectoredDeframer;
+
+    impl Deframer for VectoredDeframer {
+        fn read_after_length<R: Read>(
+            &self,
+            reader: &mut R,
+            buffer: &mut Vec<u8>,
+            payload_len: usize,
+        ) -> Result<Option<usize>> {
+            if payload_len > buffer.len() {
+                buffer.resize(payload_len, 0);
+            }
+            let mut filled = 0;
+            while filled < payload_len {
+                let remaining = &mut buffer[filled..payload_len];
+                let mid = remaining.len() / 2;
+                let (head, tail) = remaining.split_at_mut(mid);
+                let mut slices = [IoSliceMut::new(head), IoSliceMut::new(tail)];
+                match reader.read_vectored(&mut slices) {
+                    Ok(0) => return Err(Error::unexpected_eof()),
+                    Ok(n) => filled += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        return Err(Error::unexpected_eof())
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            Ok(Some(payload_len))
+        }
+    }
+
+    #[test]
+    fn recover_counts_a_vectored_deframer_exactly() {
+        // Two intact frames then a torn tail (declares 7 payload bytes, has 1).
+        // The recovered offset can only equal the intact prefix if the vectored
+        // payload reads of the first two frames were counted byte-for-byte.
+        let mut journal = Vec::new();
+        DefaultFramer
+            .frame_and_write(&mut journal, b"frame one")
+            .unwrap();
+        DefaultFramer
+            .frame_and_write(&mut journal, b"frame two")
+            .unwrap();
+        let intact = journal.len() as u64;
+        journal.extend_from_slice(&[7, 0, 0, 0, b'x']);
+
+        let report = recover(Cursor::new(&journal), VectoredDeframer).unwrap();
+        assert_eq!(report.frames, 2);
+        assert_eq!(
+            report.last_good_offset, intact,
+            "vectored reads must be counted exactly through recover's CountingReader"
+        );
+        assert_eq!(report.end, RecoveryEnd::TornTail);
+    }
 }

@@ -277,7 +277,10 @@ Smaller strands, listed for completeness:
   ancestors of B1's built-in bound; the write side rejects payloads over `u32::MAX`
   before framing.
 - **Reader ergonomics (#21):** `with_capacity`, `reserve`, `buffer_capacity`,
-  accessors (`get_ref`/`get_mut`/`deframer`), `into_inner`.
+  accessors (`get_ref`/`get_mut`/`deframer`), `into_inner`. (`get_mut` was
+  removed together with `get_ref` from readers and writers in the v0.2.8
+  pre-review correction round because out-of-band I/O invalidates receipt
+  accounting; `File` permits I/O through a shared reference.)
 - **Typed, zero-copy reading.** The `StreamDeserialize` trait plus
   `process_typed` / `process_typed_with_payload` and the `typed_messages()` →
   `TypedMessages<T>` iterator let callers pull already-verified typed views

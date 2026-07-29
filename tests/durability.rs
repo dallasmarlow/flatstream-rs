@@ -1,13 +1,12 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    AnySync, Clock, DefaultFramer, Durable, ErrorKind, NoOpPolicy, NoSync, StreamWriter,
-    SyncEveryBytes, SyncEveryFrame, SyncEveryInterval, SyncEveryNFrames, SyncMode, SyncPolicyExt,
+    AnySync, DefaultFramer, Durable, ErrorKind, NoOpPolicy, NoSync, StreamWriter, SyncEveryBytes,
+    SyncEveryFrame, SyncEveryNFrames, SyncMode, SyncPolicyExt,
 };
 use std::io::{self, BufWriter, Write};
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 #[derive(Debug, Default)]
 struct RecordingDurable {
@@ -188,8 +187,8 @@ fn sync_failure_reports_the_accepted_frame_and_previous_watermark() {
         }
         other => panic!("expected DurabilityFailed, got {other:?}"),
     }
-    assert!(!writer.get_ref().bytes.is_empty());
     assert_eq!(writer.durable_watermark(), None);
+    assert!(!writer.into_inner().bytes.is_empty());
 }
 
 #[test]
@@ -204,35 +203,7 @@ fn start_offset_is_reflected_in_automatic_watermarks() {
 
     assert_eq!(receipt.frame_start, 10_000);
     assert_eq!(writer.durable_watermark(), Some(receipt.end()));
-    assert_eq!(writer.get_ref().all_syncs, 1);
-}
-
-#[derive(Clone)]
-struct TestClock(Arc<AtomicU64>);
-
-impl Clock for TestClock {
-    fn now(&self) -> Duration {
-        Duration::from_nanos(self.0.load(Ordering::Relaxed))
-    }
-}
-
-#[test]
-fn interval_policy_uses_an_injected_monotonic_clock() {
-    let now = Arc::new(AtomicU64::new(0));
-    let policy = SyncEveryInterval::with_clock(
-        Duration::from_nanos(10),
-        SyncMode::Data,
-        TestClock(Arc::clone(&now)),
-    );
-    let mut writer =
-        StreamWriter::new(RecordingDurable::default(), DefaultFramer).with_sync_policy(policy);
-
-    writer.write(&"not due").unwrap();
-    assert_eq!(writer.durable_watermark(), None);
-    now.store(10, Ordering::Relaxed);
-    let due = writer.write_with_receipt(&"due").unwrap();
-    assert_eq!(writer.durable_watermark(), Some(due.end()));
-    assert_eq!(writer.get_ref().data_syncs, 1);
+    assert_eq!(writer.into_inner().all_syncs, 1);
 }
 
 struct PartialVectoredSink {
@@ -282,10 +253,11 @@ fn receipts_count_every_partial_vectored_write() {
 
     let receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
     assert_eq!(receipt.frame_start, 0);
-    assert_eq!(receipt.wire_len, writer.get_ref().bytes.len() as u64);
     assert_eq!(writer.bytes_written(), receipt.end());
+    let sink = writer.into_inner();
+    assert_eq!(receipt.wire_len, sink.bytes.len() as u64);
     assert!(
-        writer.get_ref().vectored_calls > 1,
+        sink.vectored_calls > 1,
         "the sink must genuinely force the CountingWriter partial path"
     );
 }
@@ -297,11 +269,11 @@ fn memory_and_sync_policies_compose_in_either_installation_order() {
         .with_memory_policy(NoOpPolicy)
         .with_sync_policy(sync());
     memory_then_sync.write(&"first").unwrap();
-    assert_eq!(memory_then_sync.get_ref().data_syncs, 1);
+    assert_eq!(memory_then_sync.into_inner().data_syncs, 1);
 
     let mut sync_then_memory = StreamWriter::new(RecordingDurable::default(), DefaultFramer)
         .with_sync_policy(sync())
         .with_memory_policy(NoOpPolicy);
     sync_then_memory.write(&"second").unwrap();
-    assert_eq!(sync_then_memory.get_ref().data_syncs, 1);
+    assert_eq!(sync_then_memory.into_inner().data_syncs, 1);
 }

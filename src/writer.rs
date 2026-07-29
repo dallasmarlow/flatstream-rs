@@ -7,6 +7,7 @@ use crate::policy::{MemoryPolicy, NoMemoryPolicy, ReclamationInfo};
 use crate::traits::StreamSerialize;
 use flatbuffers::{DefaultAllocator, FlatBufferBuilder};
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 /// Builds a fresh internal builder after a memory policy requests reclamation.
 pub trait BuilderFactory<'a, A: flatbuffers::Allocator>: Send {
@@ -106,11 +107,6 @@ impl<W> CountingWriter<W> {
     }
 
     #[inline]
-    fn get_ref(&self) -> &W {
-        &self.inner
-    }
-
-    #[inline]
     fn get_mut(&mut self) -> &mut W {
         &mut self.inner
     }
@@ -140,12 +136,20 @@ impl<W: Write> Write for CountingWriter<W> {
         Ok(())
     }
 
-    /// Counting the vectored path is **load-bearing**, not an optimization:
-    /// the built-in framers emit each frame as one `write_vectored` call, and
-    /// `Write`'s provided `write_vectored` would route around this wrapper's
-    /// `write`/`write_all` overrides entirely — every frame would be counted
-    /// as zero bytes and every [`FrameReceipt`] would be wrong. Proven by
-    /// `receipts_are_correct_for_a_vectoring_sink`.
+    /// Overriding the vectored path preserves E1's single-syscall framing; it is
+    /// **not** what keeps the byte count correct. `Write`'s provided
+    /// `write_vectored` forwards to `self.write`, and this wrapper is the
+    /// outermost sink in the stack, so its overridden `write`/`write_all` still
+    /// tally every byte with or without this method — removing the override was
+    /// checked to leave every [`FrameReceipt`] and `bytes_written()` exact.
+    /// What the override protects is the vectored write itself: the built-in
+    /// framers emit each frame as one `write_vectored`, and without this method
+    /// that call falls back to two scalar `write`s (header, then payload via the
+    /// partial-write loop), silently reverting the syscall-halving E1 exists for
+    /// on `File`/`TcpStream` — correct bytes, correct offsets, lost vectoring.
+    /// Delegating to the inner `write_vectored` keeps the frame on the wire in
+    /// one call. `receipts_are_correct_for_a_vectoring_sink` pins the call shape
+    /// (that frames genuinely take the vectored path), not merely the offsets.
     #[inline]
     fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
         let n = self.inner.write_vectored(bufs)?;
@@ -156,6 +160,73 @@ impl<W: Write> Write for CountingWriter<W> {
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
+    }
+}
+
+/// Zero-sized default state for writers without post-operation observation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoPostWriteObserver;
+
+/// The completed outcome of one [`StreamWriter`] write operation.
+#[derive(Debug)]
+pub enum PostWriteOutcome<'a> {
+    /// Serialization, framing, and any automatic durability checkpoint
+    /// completed successfully.
+    Succeeded(FrameReceipt),
+    /// The caller's [`StreamSerialize`] implementation failed before framing.
+    SerializationFailed(&'a Error),
+    /// Framing or sink I/O failed before a complete frame was accepted.
+    WriteFailed(&'a Error),
+    /// The frame was accepted, but its automatic durability checkpoint failed.
+    ///
+    /// The receipt identifies the accepted frame; callers must not re-emit it.
+    DurabilityFailed {
+        receipt: FrameReceipt,
+        error: &'a Error,
+    },
+}
+
+/// Post-operation information delivered to a [`PostWriteObserver`].
+#[derive(Debug)]
+pub struct PostWriteEvent<'a> {
+    /// Serialized payload length. `None` only when serialization itself failed.
+    pub payload_len: Option<usize>,
+    /// Elapsed time through completion of the operation, excluding the
+    /// observer callback itself.
+    pub elapsed: Duration,
+    /// Final operation outcome.
+    pub outcome: PostWriteOutcome<'a>,
+}
+
+/// Statically dispatched observer invoked after a writer operation resolves.
+///
+/// Installing an observer adds one monotonic-clock pair and the concrete
+/// callback per write. The default [`NoPostWriteObserver`] is zero-sized and
+/// disables timing entirely at compile time.
+pub trait PostWriteObserver: Send {
+    /// Whether this observer requires event collection. The default is `true`;
+    /// the zero-sized default overrides it so the compiler removes timing and
+    /// callback work from unobserved writers.
+    const ENABLED: bool = true;
+
+    /// Receives exactly one event after each `write*` operation returns its
+    /// final success/failure state. The callback is not invoked pre-I/O.
+    fn on_write(&mut self, event: PostWriteEvent<'_>);
+}
+
+impl PostWriteObserver for NoPostWriteObserver {
+    const ENABLED: bool = false;
+
+    #[inline(always)]
+    fn on_write(&mut self, _event: PostWriteEvent<'_>) {}
+}
+
+impl<F> PostWriteObserver for F
+where
+    F: for<'event> FnMut(PostWriteEvent<'event>) + Send,
+{
+    fn on_write(&mut self, event: PostWriteEvent<'_>) {
+        self(event);
     }
 }
 
@@ -215,9 +286,16 @@ impl<W: Write> Write for CountingWriter<W> {
 /// return the same byte position.
 ///
 /// A durability error occurs after the triggering frame has been accepted.
-/// [`ErrorKind::DurabilityFailed`](crate::ErrorKind::DurabilityFailed) carries
+/// [`crate::ErrorKind::DurabilityFailed`] carries
 /// the attempted and previous watermarks plus the frame coordinates so callers
 /// do not duplicate the frame by blindly retrying it.
+///
+/// ## Post-write observation
+///
+/// [`with_post_write_observer`](Self::with_post_write_observer) installs a
+/// concrete callback that runs after serialization, framing/I/O, memory-policy
+/// bookkeeping, and any automatic durability checkpoint resolve. The default
+/// [`NoPostWriteObserver`] is zero-sized and enables no timing or callback work.
 ///
 /// ## Custom Allocators
 ///
@@ -239,6 +317,7 @@ pub struct StreamWriter<
     A = DefaultAllocator,
     S = NoSync,
     M = NoMemoryPolicy,
+    O = NoPostWriteObserver,
 > where
     A: flatbuffers::Allocator,
 {
@@ -250,6 +329,7 @@ pub struct StreamWriter<
     /// are measured from. 0 unless set via [`StreamWriter::with_start_offset`].
     start_offset: u64,
     sync: S,
+    observer: O,
 }
 
 /// A [`StreamWriter`] fixed to the default allocator and a `'static` builder
@@ -261,8 +341,8 @@ pub struct StreamWriter<
 /// the builder borrow) never exercise that lifetime yet still have to name or
 /// infer it. This alias pins it to `'static`, so such writers read as a plain
 /// `OwnedStreamWriter<W, F>`.
-pub type OwnedStreamWriter<W, F, S = NoSync, M = NoMemoryPolicy> =
-    StreamWriter<'static, W, F, DefaultAllocator, S, M>;
+pub type OwnedStreamWriter<W, F, S = NoSync, M = NoMemoryPolicy, O = NoPostWriteObserver> =
+    StreamWriter<'static, W, F, DefaultAllocator, S, M, O>;
 
 /// The byte position and on-wire size of one frame, returned by receipt-aware
 /// write and read APIs.
@@ -314,6 +394,7 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             memory: NoMemoryPolicy,
             start_offset: 0,
             sync: NoSync,
+            observer: NoPostWriteObserver,
         }
     }
 
@@ -327,6 +408,7 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             memory: NoMemoryPolicy,
             start_offset: 0,
             sync: NoSync,
+            observer: NoPostWriteObserver,
         }
     }
 
@@ -341,11 +423,12 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             memory: NoMemoryPolicy,
             start_offset: 0,
             sync: NoSync,
+            observer: NoPostWriteObserver,
         }
     }
 }
 
-impl<'a, W: Write, F: Framer, S, M> StreamWriter<'a, W, F, DefaultAllocator, S, M> {
+impl<'a, W: Write, F: Framer, S, M, O> StreamWriter<'a, W, F, DefaultAllocator, S, M, O> {
     /// Installs a memory reclamation policy on this writer (simple mode only).
     ///
     /// After each successful `write()`, the policy observes the message size and
@@ -355,7 +438,7 @@ impl<'a, W: Write, F: Framer, S, M> StreamWriter<'a, W, F, DefaultAllocator, S, 
     pub fn with_memory_policy<P: MemoryPolicy>(
         self,
         policy: P,
-    ) -> StreamWriter<'a, W, F, DefaultAllocator, S, WriterMemoryPolicy<P, DefaultBuilderFactory>>
+    ) -> StreamWriter<'a, W, F, DefaultAllocator, S, WriterMemoryPolicy<P, DefaultBuilderFactory>, O>
     {
         StreamWriter {
             writer: self.writer,
@@ -364,6 +447,7 @@ impl<'a, W: Write, F: Framer, S, M> StreamWriter<'a, W, F, DefaultAllocator, S, 
             memory: WriterMemoryPolicy::new(policy, DefaultBuilderFactory),
             start_offset: self.start_offset,
             sync: self.sync,
+            observer: self.observer,
         }
     }
 }
@@ -401,15 +485,17 @@ where
             memory: NoMemoryPolicy,
             start_offset: 0,
             sync: NoSync,
+            observer: NoPostWriteObserver,
         }
     }
 }
 
-impl<'a, W: Write, F: Framer, A, S, M> StreamWriter<'a, W, F, A, S, M>
+impl<'a, W: Write, F: Framer, A, S, M, O> StreamWriter<'a, W, F, A, S, M, O>
 where
     A: flatbuffers::Allocator,
     S: SyncPolicyBackend<W>,
     M: WriterMemoryBackend<'a, A>,
+    O: PostWriteObserver,
 {
     /// Installs a memory reclamation policy together with a builder factory.
     ///
@@ -422,7 +508,7 @@ where
         self,
         policy: P,
         make_builder: B,
-    ) -> StreamWriter<'a, W, F, A, S, WriterMemoryPolicy<P, B>>
+    ) -> StreamWriter<'a, W, F, A, S, WriterMemoryPolicy<P, B>, O>
     where
         P: MemoryPolicy,
         B: BuilderFactory<'a, A>,
@@ -434,6 +520,32 @@ where
             memory: WriterMemoryPolicy::new(policy, make_builder),
             start_offset: self.start_offset,
             sync: self.sync,
+            observer: self.observer,
+        }
+    }
+
+    #[inline(always)]
+    fn observation_start() -> Option<Instant> {
+        if O::ENABLED {
+            Some(Instant::now())
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn observe_write(
+        &mut self,
+        started: Option<Instant>,
+        payload_len: Option<usize>,
+        outcome: PostWriteOutcome<'_>,
+    ) {
+        if let Some(started) = started {
+            self.observer.on_write(PostWriteEvent {
+                payload_len,
+                elapsed: started.elapsed(),
+                outcome,
+            });
         }
     }
 
@@ -475,12 +587,17 @@ where
     /// correct for any framer, including custom ones.
     #[inline]
     pub fn write_with_receipt<T: StreamSerialize>(&mut self, item: &T) -> Result<FrameReceipt> {
+        let started = Self::observation_start();
+
         // Reset the internal builder for reuse
         self.builder.reset();
 
         // Serialize directly into the reusable builder. The implementation of
         // StreamSerialize controls any temporary work it performs.
-        item.serialize(&mut self.builder)?;
+        if let Err(error) = item.serialize(&mut self.builder) {
+            self.observe_write(started, None, PostWriteOutcome::SerializationFailed(&error));
+            return Err(error);
+        }
 
         // Get the finished payload from the builder
         let payload = self.builder.finished_data();
@@ -489,7 +606,14 @@ where
         // Delegate framing and writing to the strategy, bracketing it with the
         // byte counter so the receipt reflects exactly what reached the wire.
         let frame_start = self.start_offset + self.writer.count;
-        self.framer.frame_and_write(&mut self.writer, payload)?;
+        if let Err(error) = self.framer.frame_and_write(&mut self.writer, payload) {
+            self.observe_write(
+                started,
+                Some(last_message_size),
+                PostWriteOutcome::WriteFailed(&error),
+            );
+            return Err(error);
+        }
         let wire_len = (self.start_offset + self.writer.count) - frame_start;
 
         // Static dispatch: `NoMemoryPolicy` compiles this call away.
@@ -500,7 +624,19 @@ where
             frame_start,
             wire_len,
         };
-        self.sync.after_frame(self.writer.get_mut(), receipt)?;
+        if let Err(error) = self.sync.after_frame(self.writer.get_mut(), receipt) {
+            let outcome = PostWriteOutcome::DurabilityFailed {
+                receipt,
+                error: &error,
+            };
+            self.observe_write(started, Some(last_message_size), outcome);
+            return Err(error);
+        }
+        self.observe_write(
+            started,
+            Some(last_message_size),
+            PostWriteOutcome::Succeeded(receipt),
+        );
         Ok(receipt)
     }
 
@@ -560,20 +696,42 @@ where
         &mut self,
         builder: &mut FlatBufferBuilder<A2>,
     ) -> Result<FrameReceipt> {
+        let started = Self::observation_start();
+
         // Get the finished payload from the builder
         let payload = builder.finished_data();
+        let payload_len = payload.len();
 
         // Delegate framing and writing to the strategy, bracketing it with the
         // byte counter so the receipt reflects exactly what reached the wire.
         let frame_start = self.start_offset + self.writer.count;
-        self.framer.frame_and_write(&mut self.writer, payload)?;
+        if let Err(error) = self.framer.frame_and_write(&mut self.writer, payload) {
+            self.observe_write(
+                started,
+                Some(payload_len),
+                PostWriteOutcome::WriteFailed(&error),
+            );
+            return Err(error);
+        }
         let wire_len = (self.start_offset + self.writer.count) - frame_start;
 
         let receipt = FrameReceipt {
             frame_start,
             wire_len,
         };
-        self.sync.after_frame(self.writer.get_mut(), receipt)?;
+        if let Err(error) = self.sync.after_frame(self.writer.get_mut(), receipt) {
+            let outcome = PostWriteOutcome::DurabilityFailed {
+                receipt,
+                error: &error,
+            };
+            self.observe_write(started, Some(payload_len), outcome);
+            return Err(error);
+        }
+        self.observe_write(
+            started,
+            Some(payload_len),
+            PostWriteOutcome::Succeeded(receipt),
+        );
         Ok(receipt)
     }
 
@@ -583,23 +741,14 @@ where
         Ok(())
     }
 
-    /// Consumes the writer, returning the underlying writer.
+    /// Consumes the stream, returning the underlying writer.
+    ///
+    /// This is the only mutable escape hatch: out-of-band I/O cannot occur
+    /// while receipt accounting is active. After raw writes, construct a new
+    /// `StreamWriter` and set its absolute base with
+    /// [`with_start_offset`](Self::with_start_offset).
     pub fn into_inner(self) -> W {
         self.writer.into_inner()
-    }
-
-    /// Returns a reference to the underlying writer.
-    pub fn get_ref(&self) -> &W {
-        self.writer.get_ref()
-    }
-
-    /// Returns a mutable reference to the underlying writer.
-    ///
-    /// Bytes written to the underlying writer through this reference bypass the
-    /// frame counter, so a subsequent [`FrameReceipt`] offset will not account
-    /// for them. Reserved for inspection, not for out-of-band framing.
-    pub fn get_mut(&mut self) -> &mut W {
-        self.writer.get_mut()
     }
 
     /// Returns a reference to the framer strategy.
@@ -614,6 +763,29 @@ where
         self.start_offset + self.writer.count
     }
 
+    /// Installs a statically dispatched post-write observer.
+    ///
+    /// The observer receives one event after each `write*` operation reaches
+    /// its final state, including serialization errors, sink/framing failures,
+    /// and automatic durability failures after frame acceptance. Installing an
+    /// observer enables per-operation monotonic timing; the default
+    /// [`NoPostWriteObserver`] performs neither clock reads nor callbacks.
+    #[must_use]
+    pub fn with_post_write_observer<O2: PostWriteObserver>(
+        self,
+        observer: O2,
+    ) -> StreamWriter<'a, W, F, A, S, M, O2> {
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: self.builder,
+            memory: self.memory,
+            start_offset: self.start_offset,
+            sync: self.sync,
+            observer,
+        }
+    }
+
     /// Installs a statically dispatched durability policy.
     ///
     /// The returned writer has a different concrete sync-state type. The
@@ -623,7 +795,7 @@ where
     pub fn with_sync_policy<P: SyncPolicy>(
         self,
         policy: P,
-    ) -> StreamWriter<'a, W, F, A, Syncing<P>, M>
+    ) -> StreamWriter<'a, W, F, A, Syncing<P>, M, O>
     where
         W: Durable,
     {
@@ -634,6 +806,7 @@ where
             memory: self.memory,
             start_offset: self.start_offset,
             sync: Syncing::new(policy),
+            observer: self.observer,
         }
     }
 
@@ -650,10 +823,11 @@ where
     }
 }
 
-impl<'a, W: Durable, F: Framer, A, M> StreamWriter<'a, W, F, A, NoSync, M>
+impl<'a, W: Durable, F: Framer, A, M, O> StreamWriter<'a, W, F, A, NoSync, M, O>
 where
     A: flatbuffers::Allocator,
     M: WriterMemoryBackend<'a, A>,
+    O: PostWriteObserver,
 {
     /// Flushes buffered bytes and synchronizes file contents.
     ///
@@ -681,11 +855,12 @@ where
     }
 }
 
-impl<'a, W: Durable, F: Framer, A, P, M> StreamWriter<'a, W, F, A, Syncing<P>, M>
+impl<'a, W: Durable, F: Framer, A, P, M, O> StreamWriter<'a, W, F, A, Syncing<P>, M, O>
 where
     A: flatbuffers::Allocator,
     P: SyncPolicy,
     M: WriterMemoryBackend<'a, A>,
+    O: PostWriteObserver,
 {
     /// Last successfully synchronized stream offset, or `None` before the
     /// first successful checkpoint.
@@ -883,10 +1058,11 @@ mod tests {
     }
 
     /// A sink that implements `write_vectored` and reports it — the shape of
-    /// a real `File`/`TcpStream`, and the shape that would silently break
-    /// receipt accounting if `CountingWriter` did not override
-    /// `write_vectored`. `write` is deliberately left un-counted-through by
-    /// recording separately, so a test can tell which path was taken.
+    /// a real `File`/`TcpStream`. It records vectored vs. scalar calls
+    /// separately so a test can tell which path a frame actually took: dropping
+    /// `CountingWriter::write_vectored` would silently route frames through the
+    /// scalar `write` fallback — still byte- and receipt-correct, but no longer
+    /// a single vectored syscall.
     struct VectoringSink {
         written: Vec<u8>,
         vectored_calls: usize,
@@ -915,13 +1091,18 @@ mod tests {
 
     #[test]
     fn receipts_are_correct_for_a_vectoring_sink() {
-        // The trap this test exists for: the framers emit each frame as one
-        // `write_vectored` call. If `CountingWriter` did not override
-        // `write_vectored`, `Write`'s provided implementation would bypass
-        // its `write`/`write_all` overrides and every frame would count as
-        // zero bytes — receipts and `bytes_written()` would silently read 0
-        // while the stream on the wire was perfectly correct. Nothing else in
-        // the suite would notice.
+        // What this test really guards is the *call shape*, not the offsets.
+        // The framers emit each frame as one `write_vectored`. If
+        // `CountingWriter` dropped its `write_vectored` override, `Write`'s
+        // provided implementation would forward to this wrapper's own `write`,
+        // so the byte count — and every receipt and `bytes_written()` — would
+        // stay exactly correct. What would change, silently, is that each frame
+        // would take two scalar `write`s instead of one vectored call,
+        // reverting E1's syscall win with no failing receipt to notice it.
+        // Hence the assertions below check both the offsets *and* that the sink
+        // saw vectored calls and no scalar ones. (Empirically: removing the
+        // override fails only the `vectored_calls == 3` assertion below; every
+        // receipt assertion still passes.)
         let sink = VectoringSink {
             written: Vec::new(),
             vectored_calls: 0,

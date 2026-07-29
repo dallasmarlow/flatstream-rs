@@ -4,27 +4,24 @@
 //! tests check. On the sequential [`StreamReader`] path, `bytes_consumed` and
 //! every receipt rest on one invariant: the reader's internal `CountingReader`
 //! counts exactly the bytes the source *returns*, no more and no less. The
-//! stateless [`read_frame_at`] path uses no counter at all — it derives its
-//! receipt from the seekable source's `stream_position()` after parsing. Both
-//! must agree with the writer's recorded receipts frame-for-frame. These tests
-//! pin what that means at the edges the happy-path suites never reach:
+//! stateless [`read_frame_at`] path installs the same counting boundary after
+//! its initial seek. Both must agree with the writer's recorded receipts
+//! frame-for-frame. These tests pin what that means at the edges the happy-path
+//! suites never reach:
 //!
 //! - (a) a **custom deframer that reads its payload with `read_vectored`** is
 //!   accounted just as precisely as one using `read`: on the sequential path
 //!   because the counting wrapper forwards and tallies `read_vectored` too, and
-//!   on the `read_frame_at` path because those vectored reads leave the cursor
-//!   exactly where `stream_position()` measures the frame end. Its receipts are
-//!   byte-for-byte the ones a `DefaultFramer` write recorded on both paths.
+//!   on the `read_frame_at` path because its per-call wrapper counts the same
+//!   vectored reads. Its receipts are byte-for-byte the ones a `DefaultFramer`
+//!   write recorded on both paths.
 //! - (b) bytes a frame **successfully consumed before a torn tail**
 //!   (`UnexpectedEof`) still advance `bytes_consumed`; a mid-frame EOF does not
 //!   roll the counter back to the frame start.
 //! - (c) a genuine **device error** contributes nothing to the counter: only
 //!   the bytes actually returned before it are counted, and the failing read
 //!   itself adds zero.
-//! - (d) reads or seeks driven through [`StreamReader::get_mut`] **bypass the
-//!   counter**, so a subsequent receipt no longer matches the true source
-//!   position — exactly the hazard that method's rustdoc warns about.
-//! - (e) a nonzero [`with_start_offset`](StreamReader::with_start_offset)
+//! - (d) a nonzero [`with_start_offset`](StreamReader::with_start_offset)
 //!   **composes with an installed static memory policy**: receipts stay
 //!   base-relative and exact across a buffer reclamation that shrinks the
 //!   internal buffer mid-stream.
@@ -40,7 +37,7 @@ use flatstream::{
     read_frame_at, DefaultDeframer, DefaultFramer, Deframer, Error, ErrorKind, FrameReceipt,
     Result, SizeThresholdPolicy, StreamReader, StreamWriter,
 };
-use std::io::{self, Cursor, IoSliceMut, Read, Seek, SeekFrom};
+use std::io::{self, Cursor, IoSliceMut, Read};
 
 /// Serializes each value as a FlatBuffer string root and returns the wire image
 /// plus the per-frame payloads and the receipts the writer recorded. The
@@ -128,8 +125,8 @@ fn vectored_custom_deframer_produces_exact_receipt_bounds() {
     assert_eq!(seen, expected.len());
     assert_eq!(reader.bytes_consumed(), wire.len() as u64);
 
-    // Point-read path: the receipt read_frame_at computes from the post-parse
-    // seek position must also match, for a deframer it never special-cases.
+    // Point-read path: the per-call counting wrapper must produce the same
+    // receipt for a deframer it never special-cases.
     let mut source = Cursor::new(&wire);
     let mut scratch = Vec::new();
     for i in 0..expected.len() {
@@ -251,84 +248,7 @@ fn a_device_error_counts_only_bytes_actually_returned() {
     );
 }
 
-// --- (d) Reads and seeks through get_mut bypass or invalidate accounting. ---
-
-#[test]
-fn a_read_through_get_mut_bypasses_the_byte_counter() {
-    let (wire, expected, receipts) = default_stream(&["frame zero", "frame one", "frame two"]);
-    let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new());
-
-    // Read the first frame through the accounted path: the counter now sits at
-    // the boundary between frame zero and frame one.
-    let zero = reader.read_message_with_receipt().unwrap().unwrap();
-    assert_eq!(zero.receipt, receipts[0]);
-    assert_eq!(reader.bytes_consumed(), receipts[1].frame_start);
-
-    // Drain frame one's raw bytes straight through get_mut. These bytes leave
-    // the source but never touch the counter — the exact bypass the rustdoc
-    // warns about.
-    let mut bypass = vec![0u8; receipts[1].wire_len as usize];
-    reader.get_mut().read_exact(&mut bypass).unwrap();
-
-    // bytes_consumed is now stale: it still names frame one's start though the
-    // source has advanced to frame two.
-    assert_eq!(
-        reader.bytes_consumed(),
-        receipts[1].frame_start,
-        "a bypassing read must not advance the counter"
-    );
-
-    // The next accounted read parses frame two's bytes but stamps the receipt
-    // with the stale offset — so the receipt no longer matches the source.
-    let frame = reader.read_message_with_receipt().unwrap().unwrap();
-    assert_eq!(
-        frame.payload,
-        &expected[2][..],
-        "the source yielded frame two"
-    );
-    assert_eq!(
-        frame.receipt.frame_start, receipts[1].frame_start,
-        "the receipt carries the stale, bypassed offset"
-    );
-    assert_ne!(
-        frame.receipt.frame_start, receipts[2].frame_start,
-        "so it does not match frame two's true position"
-    );
-}
-
-#[test]
-fn a_seek_through_get_mut_invalidates_receipt_positions() {
-    let (wire, expected, receipts) = default_stream(&["frame zero", "frame one"]);
-    let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new());
-
-    let zero = reader.read_message_with_receipt().unwrap().unwrap();
-    assert_eq!(zero.receipt, receipts[0]);
-
-    // Seek the underlying source back to the start through get_mut. The counter
-    // does not observe the seek, so it still reads as "one frame consumed".
-    reader.get_mut().seek(SeekFrom::Start(0)).unwrap();
-    assert_eq!(reader.bytes_consumed(), receipts[0].end());
-
-    // The reader re-reads frame zero's payload, but the receipt claims it began
-    // where frame one should — the accounting is now demonstrably wrong.
-    let again = reader.read_message_with_receipt().unwrap().unwrap();
-    assert_eq!(
-        again.payload,
-        &expected[0][..],
-        "the source re-served frame zero"
-    );
-    assert_eq!(
-        again.receipt.frame_start,
-        receipts[0].end(),
-        "the receipt trusts the counter, which the seek left stale"
-    );
-    assert_ne!(
-        again.receipt.frame_start, receipts[0].frame_start,
-        "so it misreports where the re-read frame actually started"
-    );
-}
-
-// --- (e) A nonzero start offset composes with a static memory policy. ---
+// --- (d) A nonzero start offset composes with a static memory policy. ---
 
 #[test]
 fn start_offset_composes_with_a_reclaiming_memory_policy() {

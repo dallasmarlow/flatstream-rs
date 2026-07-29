@@ -15,9 +15,7 @@ fn main() -> Result<()> {
     // Pre-sizing with a provided builder
     let builder = FlatBufferBuilder::new();
     let mut stream_writer = StreamWriter::with_builder(writer, framer, builder);
-    // Accessors
-    let _writer_ref = stream_writer.get_ref();
-    let _writer_mut = stream_writer.get_mut();
+    // Strategy access is read-only; sink access requires `into_inner`.
     let _framer_ref = stream_writer.framer();
 
     // Expert mode write
@@ -43,9 +41,7 @@ fn main() -> Result<()> {
     stream_reader.reserve(2048);
     assert!(stream_reader.buffer_capacity() >= 2048);
 
-    // Accessors
-    let _reader_ref = stream_reader.get_ref();
-    let _reader_mut = stream_reader.get_mut();
+    // Strategy access is read-only; source access requires `into_inner`.
     let _deframer_ref = stream_reader.deframer();
 
     // Process messages

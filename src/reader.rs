@@ -1,6 +1,6 @@
 //! A generic, composable reader for `flatstream`.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::framing::Deframer;
 use crate::policy::{MemoryPolicy, NoMemoryPolicy, ReclamationInfo};
 use crate::traits::StreamDeserialize;
@@ -20,14 +20,6 @@ struct CountingReader<R> {
 impl<R> CountingReader<R> {
     fn new(inner: R) -> Self {
         Self { inner, count: 0 }
-    }
-
-    fn get_ref(&self) -> &R {
-        &self.inner
-    }
-
-    fn get_mut(&mut self) -> &mut R {
-        &mut self.inner
     }
 
     fn into_inner(self) -> R {
@@ -98,7 +90,13 @@ impl<P: MemoryPolicy> ReaderMemoryBackend for ReaderMemoryPolicy<P> {
     #[inline]
     fn before_read(&mut self, buffer: &mut Vec<u8>) {
         if self.pending_shrink {
-            *buffer = Vec::with_capacity(self.baseline_capacity);
+            // The previous payload borrow has ended by the time the next read
+            // reaches this hook, so the existing allocation may now be
+            // reclaimed. `shrink_to` can still call the allocator (and may move
+            // the allocation); memory-policy reclamation is an intentional
+            // cold event, not part of the zero-allocation steady-state claim.
+            buffer.clear();
+            buffer.shrink_to(self.baseline_capacity);
             self.pending_shrink = false;
         }
     }
@@ -133,6 +131,9 @@ impl<P: MemoryPolicy> ReaderMemoryBackend for ReaderMemoryPolicy<P> {
 /// follower may retry safely by calling this function again with the same
 /// absolute offset, which seeks back before parsing.
 ///
+/// Each call performs one initial seek. The frame's `wire_len` is counted from
+/// bytes actually returned by `Read`, so no post-read position query is needed.
+///
 /// Passing a buffered reader is legal, but every point lookup seeks and
 /// invalidates its buffered position. Even so, buffering can reduce syscall
 /// count for small frames; benchmark a retained `BufReader<File>` against a bare
@@ -148,18 +149,19 @@ where
     D: Deframer,
 {
     src.seek(SeekFrom::Start(offset))?;
-    let Some(payload_len) = deframer.read_and_deframe(src, scratch)? else {
+    // Count the deframer's actual reads instead of asking the seekable source
+    // for its position afterward. On File, a second `stream_position()` would
+    // be another syscall on every point lookup; the read count already is the
+    // frame's exact wire length.
+    let mut reader = CountingReader::new(src);
+    let Some(payload_len) = deframer.read_and_deframe(&mut reader, scratch)? else {
         return Ok(None);
     };
-    let frame_end = src.stream_position()?;
-    let wire_len = frame_end.checked_sub(offset).ok_or_else(|| {
-        Error::invalid_frame("source position moved before the requested frame offset")
-    })?;
     Ok(Some(ReadFrame {
         payload: &scratch[..payload_len],
         receipt: FrameReceipt {
             frame_start: offset,
-            wire_len,
+            wire_len: reader.count,
         },
     }))
 }
@@ -285,13 +287,15 @@ impl<R: Read, D: Deframer, M: ReaderMemoryBackend> StreamReader<R, D, M> {
     /// Installs a memory reclamation policy on this reader.
     ///
     /// After each successful read, the policy observes the payload size and the
-    /// internal buffer's capacity; when it fires, the buffer is replaced with a
-    /// fresh one at the policy's baseline capacity
-    /// (`MemoryPolicy::baseline_capacity`, cached here at installation) —
-    /// deferred to the start of the *next* read so the payload just returned is
-    /// never invalidated. The policy is consulted only while the buffer's
-    /// capacity exceeds that baseline — at or below it there is nothing to
-    /// reclaim.
+    /// internal buffer's capacity; when it fires, the existing buffer is cleared
+    /// and asked to shrink to the policy's baseline capacity
+    /// (`MemoryPolicy::baseline_capacity`, cached here at installation). The
+    /// shrink is deferred to the start of the *next* read so the payload just
+    /// returned is never invalidated. `Vec::shrink_to` may reallocate and may
+    /// retain some excess capacity; reclamation is an intentional cold event,
+    /// outside the zero-allocation steady-state guarantee. The policy is
+    /// consulted only while the buffer's capacity exceeds the baseline — at or
+    /// below it there is nothing to reclaim.
     #[must_use]
     pub fn with_memory_policy<P: MemoryPolicy>(
         self,
@@ -520,20 +524,6 @@ impl<R: Read, D: Deframer, M: ReaderMemoryBackend> StreamReader<R, D, M> {
         self
     }
 
-    /// Returns a reference to the underlying reader.
-    pub fn get_ref(&self) -> &R {
-        self.reader.get_ref()
-    }
-
-    /// Returns a mutable reference to the underlying reader.
-    ///
-    /// Reads and seeks performed directly through this reference bypass or
-    /// invalidate position accounting, so subsequent receipts may not match the
-    /// underlying source position.
-    pub fn get_mut(&mut self) -> &mut R {
-        self.reader.get_mut()
-    }
-
     /// Returns a reference to the deframer strategy.
     pub fn deframer(&self) -> &D {
         &self.deframer
@@ -549,7 +539,12 @@ impl<R: Read, D: Deframer, M: ReaderMemoryBackend> StreamReader<R, D, M> {
         self.buffer.reserve(additional)
     }
 
-    /// Consume the `StreamReader`, returning the underlying reader.
+    /// Consumes the stream, returning the underlying reader.
+    ///
+    /// Mutable out-of-band reads/seeks require consuming the reader so position
+    /// accounting cannot silently become stale. Construct a new `StreamReader`
+    /// afterward and use [`with_start_offset`](Self::with_start_offset) when
+    /// receipts should remain absolute.
     pub fn into_inner(self) -> R {
         self.reader.into_inner()
     }
@@ -740,6 +735,35 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn pending_reader_reclamation_shrinks_the_existing_buffer_once() {
+        let mut buffer = Vec::with_capacity(4096);
+        buffer.resize(1024, 0xA5);
+        let original_capacity = buffer.capacity();
+        let mut memory = ReaderMemoryPolicy {
+            policy: crate::policy::NoOpPolicy,
+            baseline_capacity: 64,
+            pending_shrink: true,
+        };
+
+        memory.before_read(&mut buffer);
+
+        assert!(buffer.is_empty(), "old payload bytes are no longer exposed");
+        assert!(
+            buffer.capacity() >= 64 && buffer.capacity() <= original_capacity,
+            "shrink_to keeps at least the baseline without growing capacity"
+        );
+        assert!(!memory.pending_shrink);
+
+        let reclaimed_capacity = buffer.capacity();
+        memory.before_read(&mut buffer);
+        assert_eq!(
+            buffer.capacity(),
+            reclaimed_capacity,
+            "a completed reclamation is not repeated"
+        );
     }
 
     #[test]

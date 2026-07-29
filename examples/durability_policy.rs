@@ -31,7 +31,11 @@ fn main() -> flatstream::Result<()> {
     let forced = writer.sync_all()?;
     assert_eq!(forced, third.end());
     assert_eq!(writer.durable_watermark(), Some(third.end()));
-    assert_eq!(writer.get_ref().get_ref().metadata()?.len(), third.end());
+    let file = writer
+        .into_inner()
+        .into_inner()
+        .map_err(|error| error.into_error())?;
+    assert_eq!(file.metadata()?.len(), third.end());
 
     println!(
         "three frames written; automatic checkpoint at {}, forced checkpoint at {}",
