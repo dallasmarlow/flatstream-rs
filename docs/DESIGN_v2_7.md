@@ -258,11 +258,12 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
     `instruction_bench` feature so a plain `cargo bench` skips it.
   - `examples.sh` — runs every maintained example, including their executable
     assertions; the LOBSTER ingest example exits cleanly when no corpus is present.
-  - `miri.sh` — Miri (nightly) over the in-src unit tests: UB detection at the
-    zero-copy buffer boundaries. Same no-rustup pattern as `fuzz.sh`: a rustup
-    nightly when installed, else the official nightly Linux container. `--lib`
-    scope by design; coverage expands with the slice-reader work, where the
-    offset arithmetic will concentrate.
+  - `miri.sh` — Miri (nightly) over the in-src unit tests plus the targeted
+    positioned-read integration suite: UB detection at zero-copy borrowing,
+    buffer, receipt, and offset boundaries. Same no-rustup pattern as `fuzz.sh`:
+    a rustup nightly when installed, else the official nightly Linux container.
+    Miri isolation cannot execute the suite's tempfile-backed `BufReader<File>`
+    case; that test is explicitly ignored under Miri and runs in the native gate.
 - **Inline audit:** `Messages::{next_message, next}` and
   `TypedMessages::{next_typed, next}` carry `#[inline]` so the iterator facade
   costs nothing cross-crate.

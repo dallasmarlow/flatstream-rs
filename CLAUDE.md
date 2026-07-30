@@ -77,10 +77,16 @@ A4 is complete (2026-07-28):
 modeled-payload byte savings but slower buffered-file throughput, so no
 production compression adapter follows.
 
-Maintainer/reference-machine work:
+Maintainer/reference-machine work is complete:
 
-- C2 positioned-read Miri expansion.
-- A3 generic `Read` copy-cost benchmark.
+- C2 positioned-read Miri expansion is complete (2026-07-30): `scripts/miri.sh`
+  runs the library tests and targeted `positioned_reads` integration target;
+  the tempfile-backed file case that Miri isolation cannot execute remains
+  covered by the native gate.
+- A3 generic `Read` copy-cost benchmark is complete (2026-07-29):
+  `docs/benchmark/FINDINGS_READ_PATH_COPY.md` records the payload copy at
+  ~80 GB/s (bandwidth-bound) and ~100% of an un-checksummed large-frame read but
+  only ~12–17% once CRC-32 verification is in the path; no code or wire change.
 
 Do not ask a benchmark-incapable contributor to collect or interpret
 performance numbers.

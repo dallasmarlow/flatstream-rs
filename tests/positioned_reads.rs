@@ -245,6 +245,10 @@ fn point_read_receipt_is_exact_under_one_byte_reads() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri isolation forbids the tempfile-backed File boundary"
+)]
 fn point_read_receipt_is_exact_through_retained_bufreader() {
     let (wire, expected, receipts) = default_stream(&["zero", "buffered target", "two"]);
     let mut file = tempfile::tempfile().unwrap();

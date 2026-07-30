@@ -1,0 +1,126 @@
+# a3_read_copy_crc32
+# date:    2026-07-29T21:13:13Z
+# rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
+# host:    Darwin 25.5.0 arm64
+# command: cargo bench --features crc32 --locked --bench read_path_copy -- crc32/
+
+    Finished `bench` profile [optimized] target(s) in 0.18s
+     Running benches/read_path_copy.rs (target/release/deps/read_path_copy-aab6ab67651684a8)
+Gnuplot not found, using plotters backend
+Benchmarking A3 Read Path Copy/read_copy/crc32/64B
+Benchmarking A3 Read Path Copy/read_copy/crc32/64B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/read_copy/crc32/64B: Collecting 100 samples in estimated 7.1501 s (10k iterations)
+Benchmarking A3 Read Path Copy/read_copy/crc32/64B: Analyzing
+A3 Read Path Copy/read_copy/crc32/64B
+                        time:   [716.73 µs 717.79 µs 718.83 µs]
+                        thrpt:  [145.87 Melem/s 146.08 Melem/s 146.30 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/64B
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/64B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/64B: Collecting 100 samples in estimated 5.8270 s (15k iterations)
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/64B: Analyzing
+A3 Read Path Copy/borrow_slice/crc32/64B
+                        time:   [384.90 µs 385.40 µs 385.89 µs]
+                        thrpt:  [271.73 Melem/s 272.07 Melem/s 272.43 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) low mild
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/64B
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/64B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/64B: Collecting 100 samples in estimated 5.6326 s (30k iterations)
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/64B: Analyzing
+A3 Read Path Copy/memcpy_only/crc32/64B
+                        time:   [185.82 µs 186.24 µs 186.66 µs]
+                        thrpt:  [561.77 Melem/s 563.04 Melem/s 564.29 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking A3 Read Path Copy/read_copy/crc32/4096B
+Benchmarking A3 Read Path Copy/read_copy/crc32/4096B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/read_copy/crc32/4096B: Collecting 100 samples in estimated 8.1299 s (10k iterations)
+Benchmarking A3 Read Path Copy/read_copy/crc32/4096B: Analyzing
+A3 Read Path Copy/read_copy/crc32/4096B
+                        time:   [804.81 µs 805.72 µs 806.70 µs]
+                        thrpt:  [2.5288 Melem/s 2.5319 Melem/s 2.5348 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/4096B
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/4096B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/4096B: Collecting 100 samples in estimated 6.9565 s (10k iterations)
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/4096B: Analyzing
+A3 Read Path Copy/borrow_slice/crc32/4096B
+                        time:   [688.80 µs 689.44 µs 690.09 µs]
+                        thrpt:  [2.9561 Melem/s 2.9589 Melem/s 2.9617 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/4096B
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/4096B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/4096B: Collecting 100 samples in estimated 5.1953 s (35k iterations)
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/4096B: Analyzing
+A3 Read Path Copy/memcpy_only/crc32/4096B
+                        time:   [134.05 µs 139.06 µs 144.15 µs]
+                        thrpt:  [14.151 Melem/s 14.670 Melem/s 15.219 Melem/s]
+Benchmarking A3 Read Path Copy/read_copy/crc32/65536B
+Benchmarking A3 Read Path Copy/read_copy/crc32/65536B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/read_copy/crc32/65536B: Collecting 100 samples in estimated 8.3888 s (10k iterations)
+Benchmarking A3 Read Path Copy/read_copy/crc32/65536B: Analyzing
+A3 Read Path Copy/read_copy/crc32/65536B
+                        time:   [830.86 µs 832.55 µs 834.34 µs]
+                        thrpt:  [152.22 Kelem/s 152.54 Kelem/s 152.85 Kelem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/65536B
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/65536B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/65536B: Collecting 100 samples in estimated 7.1018 s (10k iterations)
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/65536B: Analyzing
+A3 Read Path Copy/borrow_slice/crc32/65536B
+                        time:   [703.71 µs 704.37 µs 705.06 µs]
+                        thrpt:  [180.13 Kelem/s 180.30 Kelem/s 180.47 Kelem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/65536B
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/65536B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/65536B: Collecting 100 samples in estimated 5.3928 s (56k iterations)
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/65536B: Analyzing
+A3 Read Path Copy/memcpy_only/crc32/65536B
+                        time:   [97.138 µs 97.365 µs 97.597 µs]
+                        thrpt:  [1.3013 Melem/s 1.3044 Melem/s 1.3074 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+Benchmarking A3 Read Path Copy/read_copy/crc32/262144B
+Benchmarking A3 Read Path Copy/read_copy/crc32/262144B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.3s, enable flat sampling, or reduce sample count to 50.
+Benchmarking A3 Read Path Copy/read_copy/crc32/262144B: Collecting 100 samples in estimated 8.3103 s (5050 iterations)
+Benchmarking A3 Read Path Copy/read_copy/crc32/262144B: Analyzing
+A3 Read Path Copy/read_copy/crc32/262144B
+                        time:   [1.6424 ms 1.6446 ms 1.6471 ms]
+                        thrpt:  [38.857 Kelem/s 38.915 Kelem/s 38.967 Kelem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/262144B
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/262144B: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.2s, enable flat sampling, or reduce sample count to 50.
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/262144B: Collecting 100 samples in estimated 7.1732 s (5050 iterations)
+Benchmarking A3 Read Path Copy/borrow_slice/crc32/262144B: Analyzing
+A3 Read Path Copy/borrow_slice/crc32/262144B
+                        time:   [1.4737 ms 1.5076 ms 1.5478 ms]
+                        thrpt:  [41.349 Kelem/s 42.451 Kelem/s 43.427 Kelem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/262144B
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/262144B: Warming up for 3.0000 s
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/262144B: Collecting 100 samples in estimated 5.3221 s (25k iterations)
+Benchmarking A3 Read Path Copy/memcpy_only/crc32/262144B: Analyzing
+A3 Read Path Copy/memcpy_only/crc32/262144B
+                        time:   [208.09 µs 211.40 µs 215.60 µs]
+                        thrpt:  [296.84 Kelem/s 302.74 Kelem/s 307.56 Kelem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe

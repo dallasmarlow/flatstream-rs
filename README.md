@@ -399,9 +399,9 @@ scripts/gate.sh                  # fmt, clippy -D warnings, feature test matrix
 scripts/fuzz.sh [secs/target]    # manual local cargo-fuzz of the deframers
                                  # (rustup nightly if present, else a Docker
                                  # nightly container; no CI/scheduler)
-scripts/miri.sh                  # manual Miri run over in-src unit tests
-                                 # (rustup nightly if present, else Docker;
-                                 # expand coverage when E2 adds slice/mmap paths)
+scripts/miri.sh                  # manual Miri run over in-src unit tests plus
+                                 # targeted positioned-read integration tests
+                                 # (rustup nightly if present, else Docker)
 scripts/instruction_counts.sh    # pinned-environment instruction counts
                                  # via Gungraun/Callgrind (valgrind/Linux; falls
                                  # back to a Docker container on macOS)

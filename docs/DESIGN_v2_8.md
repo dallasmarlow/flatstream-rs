@@ -230,9 +230,11 @@ quietly lose the vectored path rather than misbehave.
   no forward wall-clock regression is resolved.
 - **Completed verification:** the final local gate and a clean
   `rust:1.97.1-bookworm` gate are green on the exact MSRV; Miri passes all
-  in-source unit tests; both fuzz targets complete their 300-second budgets
-  without a crash; every Criterion target and the pinned Gungraun suite runs;
-  the corpus-backed LOBSTER integration passes.
+  in-source unit tests and every in-memory positioned-read integration case.
+  Its isolation cannot execute the tempfile-backed `BufReader<File>` case,
+  which remains covered by the native gate. Both fuzz targets complete their
+  300-second budgets without a crash; every Criterion target and the pinned
+  Gungraun suite runs; the corpus-backed LOBSTER integration passes.
 
 ## 8. Consuming builders are `#[must_use]`
 

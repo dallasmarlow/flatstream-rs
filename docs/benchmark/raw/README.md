@@ -22,6 +22,11 @@ scripts/bench_isolated.sh e4_memory_reclamation memory_policy_benchmarks oscilla
 scripts/bench_isolated.sh e5_positioned_reads positioned_reads Positioned -- --features crc32 --locked
 scripts/bench_isolated.sh e5_forward_position positioned_reads Tracking -- --features crc32 --locked
 
+# A3 read-path copy cost:
+scripts/bench_isolated.sh a3_read_copy_default read_path_copy 'default/' -- --features crc32 --locked
+scripts/bench_isolated.sh a3_read_copy_crc32   read_path_copy 'crc32/'   -- --features crc32 --locked
+scripts/bench_isolated.sh a3_read_copy_crc32_recheck read_path_copy 'crc32/262144B' -- --features crc32 --locked
+
 # Required rechecks recorded by the findings docs:
 scripts/bench_isolated.sh a1_64b_recheck       write_pipeline_decomposition 64B -- --features crc32 --locked
 scripts/bench_isolated.sh e1_file_recheck      vectored_framing 'file/default' -- --features crc32 --locked
@@ -59,6 +64,9 @@ header records which machine produced it, so `git log` carries the history.
 | `e5_positioned_reads.txt` | `FINDINGS_POSITIONED_READS.md` | complete |
 | `e5_forward_position.txt` | `FINDINGS_POSITIONED_READS.md` | complete |
 | `a2_position_accounting.txt` | `FINDINGS_POSITION_ACCOUNTING.md` | complete; pinned Linux/Gungraun |
+| `a3_read_copy_default.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; Apple M4 Pro |
+| `a3_read_copy_crc32.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; Apple M4 Pro |
+| `a3_read_copy_crc32_recheck.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; required CRC-32 256 KiB recheck |
 
 Criterion snapshots above were collected one group at a time on the same Apple
 M4 / macOS / Rust 1.97.1 environment stamped in each file. Instruction counts

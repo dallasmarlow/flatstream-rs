@@ -1,6 +1,6 @@
 # v0.2.8 release handoff and next steps
 
-**Updated:** 2026-07-29
+**Updated:** 2026-07-30
 **Source of truth for task acceptance:** `docs/CONTRIBUTING.md`
 
 ## Current state
@@ -11,6 +11,13 @@ strict recovery, and reproducible benchmark findings.
 
 Latest completed contributor work:
 
+- **C2:** targeted Miri coverage now includes the positioned-read integration
+  binary: caller-scratch borrowing, receipt and offset bounds, one-byte reads,
+  and partial-frame retry. Miri isolation cannot open the suite's tempfile-backed
+  `File`; that case is explicitly ignored there and remains covered by the native
+  gate.
+- **A3:** the generic `Read` copy-cost baseline is complete, with the benchmark,
+  isolated raw snapshots, and findings recorded under `docs/benchmark/`.
 - **A4:** compression feasibility — schema-exact modeled Palimpsest fixtures
   saved substantial bytes, but LZ4/Zstandard level 1 slowed the current
   buffered, flush-only file path; no production adapter follows.
@@ -59,10 +66,10 @@ latency, and accepted-but-not-durable outcomes without an OTEL dependency.
 Declined with rationale: payload-transforming checksum composition remains a
 wire-format decision.
 
-## Maintainer/reference-machine queue
+## Completed maintainer/reference-machine queue
 
-- **C2 Miri expansion:** run positioned-read integration boundaries under Miri.
-- **A3 read-copy cost:** quantify generic `Read` → reusable buffer cost.
+- **C2 Miri expansion:** completed 2026-07-30.
+- **A3 read-copy cost:** completed 2026-07-29.
 
 ## Explicitly deferred or rejected
 

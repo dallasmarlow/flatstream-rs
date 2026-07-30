@@ -159,6 +159,11 @@ harness = false
 required-features = ["crc32"]
 
 [[bench]]
+name = "read_path_copy"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
 name = "compression_feasibility"
 harness = false
 

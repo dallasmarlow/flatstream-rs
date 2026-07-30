@@ -130,7 +130,8 @@ Auxiliary scripts (run as appropriate to what you changed):
 - `scripts/instruction_counts.sh` — Gungraun/callgrind instruction counts
   (valgrind/Linux or Docker), gated behind the `instruction_bench` feature. Use
   this for noise-free per-operation deltas; wall-clock benches are for throughput
-- `scripts/miri.sh` — Miri over the in-src unit tests (UB at buffer boundaries)
+- `scripts/miri.sh` — Miri over in-src unit tests and the targeted positioned-read
+  integration suite (UB at borrowing, buffer, and offset boundaries)
 
 ---
 
@@ -209,10 +210,9 @@ until a findings doc backs it.
 Each task is self-contained and public-safe. Pick one, confirm scope in review if
 it touches public API, and follow the definition of done.
 
-**Current assignment order (2026-07-28):**
-
-1. **C2** — Miri coverage for positioned-read borrowing and offset boundaries.
-2. **A3** — generic `Read` copy-cost baseline.
+**Current assignment order (2026-07-30):** The currently assignable work is
+complete. A3 (generic `Read` copy-cost baseline) and C2 (positioned-read Miri
+coverage) are recorded below.
 
 The B3/E2 semantic questions are resolved: B3's statically dispatched
 post-write hook shipped after maintainer sign-off, E2 is declined, and A4's
@@ -232,7 +232,9 @@ only when the task explicitly separates implementation from evidence.
 > README recipe), B2, C3, C4, D, E3, and E4.
 > **Done as of 2026-07-28:** E2 (declined with rationale) and A4 (compression
 > feasibility benchmark; no production adapter).
-> **Done as of 2026-07-29:** B3 post-write hook after maintainer sign-off.
+> **Done as of 2026-07-29:** B3 post-write hook after maintainer sign-off, and
+> A3 (read-path copy-cost baseline; `FINDINGS_READ_PATH_COPY.md`).
+> **Done as of 2026-07-30:** C2 (targeted positioned-read Miri coverage).
 
 ### A. Experiments (produce committed findings docs)
 
@@ -281,11 +283,28 @@ only when the task explicitly separates implementation from evidence.
   environment fingerprint. Do not infer a production percentage from a mock
   sink.
 
-**A3 — Read-path copy cost**
+**A3 — Read-path copy cost** — **DONE** (2026-07-29),
+`benches/read_path_copy.rs` + `docs/benchmark/FINDINGS_READ_PATH_COPY.md`
+- **Outcome:** the payload copy (`memcpy_only`) is framing-independent and
+  bandwidth-bound at ~80 GB/s on the measured M4 Pro. Without a checksum the
+  copy is essentially the whole in-memory read (~98% at 4 KiB, ~100% at
+  64 KiB+), so a future borrowed-slice/mmap source would reclaim nearly all
+  read cost for large un-checksummed frames. With CRC-32 the copy is only ~12–17% at ≥ 4 KiB because
+  verification is a second O(payload) pass costing ~7× the memcpy on this build,
+  so the source helps checksummed reads far less. No code change, no wire change.
+  The CRC-32 `read_copy − borrow_slice` subtraction is catastrophic cancellation
+  and unreliable; the copy is reported from `memcpy_only`, cross-validated by the
+  default arm (< 4% agreement at ≥ 4 KiB). Runs isolated one framing at a time,
+  256 KiB CRC-32 point recollected.
 - **Goal:** Quantify the one unavoidable copy (generic `Read` → reader buffer)
   as a fraction of read time across frame sizes.
 - **Why:** Establishes a public baseline for the future borrowed-slice/mmap
   source, which is already acknowledged as future work in `docs/DESIGN_v2_7.md`.
+- **Design:** three arms per (framing, size) over an identical in-memory wire —
+  `read_copy` (real deframe into a reused buffer, the memcpy under test),
+  `borrow_slice` (a model of the future borrowed source: same header parse and
+  CRC verify, no copy), and a `memcpy_only` cross-check that validates
+  `read_copy − borrow_slice` against a raw copy. Default and CRC-32; 64 B–256 KiB.
 - **Deliverable:** findings doc; no code change required beyond the bench.
 
 **A4 — Compression feasibility for journal payloads (experiment only)** —
@@ -389,7 +408,15 @@ only when the task explicitly separates implementation from evidence.
   entries under `fuzz/corpus/`. The invariant under test is unchanged: arbitrary
   bytes must never panic or allocate past the configured bound.
 
-**C2 — Miri coverage on read-path boundaries**
+**C2 — Miri coverage on read-path boundaries** — **DONE** (2026-07-30),
+`scripts/miri.sh` + `tests/positioned_reads.rs`
+- **Outcome:** the practical Miri run now covers both the library unit tests and
+  the targeted positioned-read integration binary. It executes caller-owned
+  scratch reuse and borrowing, exact receipt bounds and offsets, one-byte source
+  reads, checksum-width accounting, and same-offset retry after a partial frame.
+  The sole excluded case is the retained `BufReader<File>` test: Miri isolation
+  forbids the tempfile-backed filesystem boundary, so it is explicitly ignored
+  under Miri and remains executed by the ordinary native gate.
 - Extend Miri beyond `--lib` so `tests/positioned_reads.rs` exercises
   caller-scratch borrowing, receipt bounds, one-byte reads, and retry after a
   partial frame. Keep the run targeted enough to remain practical.
