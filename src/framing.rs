@@ -3,7 +3,7 @@
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};
 use crate::validation::Validator;
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 
 /// Default maximum accepted payload length for the core deframers: the
 /// FlatBuffers maximum buffer size (2 GiB), so every valid FlatBuffer reads
@@ -32,12 +32,96 @@ pub const DEFAULT_MAX_FRAME_LEN: usize = flatbuffers::FLATBUFFERS_MAX_BUFFER_SIZ
 /// [`with_max_frame_len`](DefaultDeframer::with_max_frame_len).
 pub const MAX_WIRE_FRAME_LEN: usize = u32::MAX as usize;
 
+/// Writes every byte of `slices`, in order, with a single `write_vectored`
+/// call per attempt — the header and the payload reach the sink together
+/// instead of as two separate `write_all`s. On a sink that implements
+/// `writev` (`File`, `TcpStream`) this halves the syscalls per frame; on one
+/// that does not, the standard-library fallback offers the first non-empty
+/// slice to `write`, preserving the same header-then-payload retry shape as
+/// the two `write_all`s it replaces.
+///
+/// Hand-rolled because [`Write::write_all_vectored`] is still unstable on the
+/// MSRV (rust-lang/rust#70436). Three properties this loop must have, each of
+/// which has burned someone:
+///
+/// - **`writev` is not atomic across slices.** A call may accept any prefix of
+///   the total — including a partial slice — so the loop re-slices with
+///   [`IoSlice::advance_slices`] and continues. No all-or-nothing guarantee is
+///   claimed or relied on.
+/// - **`Ok(0)` with bytes outstanding means the sink stopped accepting**, and
+///   must become `WriteZero` rather than an infinite loop.
+/// - **Leading empty slices are dropped before the loop**, so a zero-length
+///   payload cannot make an `Ok(0)` look like a stall.
+///
+/// `Interrupted` is retried, matching [`Write::write_all`].
+///
+/// The single-call case is peeled out of the loop deliberately: every sink
+/// that matters (`File`, `TcpStream`, `BufWriter`, `Vec`) accepts a whole
+/// small frame in one call, and routing that case through
+/// `IoSlice::advance_slices` — which rescans the slice list and asserts —
+/// costs measurably more than the vectored write saves on an already-buffered
+/// sink. Measured: `docs/benchmark/FINDINGS_VECTORED_FRAMING.md` §F2.
+#[inline]
+fn write_all_vectored<W: Write>(writer: &mut W, slices: &mut [IoSlice<'_>]) -> Result<()> {
+    let total: usize = slices.iter().map(|s| s.len()).sum();
+    match writer.write_vectored(slices) {
+        Ok(n) if n == total => Ok(()),
+        Ok(n) => write_remainder(writer, slices, n, total),
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+            write_remainder(writer, slices, 0, total)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The partial-write continuation: `written` bytes of `total` have been
+/// accepted, so re-slice and keep going. Outlined and `#[cold]` because a sink
+/// that splits a frame is the exception, and keeping it out of line leaves the
+/// common path in §`write_all_vectored` small enough to inline.
+#[cold]
+#[inline(never)]
+fn write_remainder<W: Write>(
+    writer: &mut W,
+    slices: &mut [IoSlice<'_>],
+    written: usize,
+    total: usize,
+) -> Result<()> {
+    let mut rest = slices;
+    let mut done = written;
+    // `advance_slices` also drops leading empty slices, so a zero-length
+    // payload cannot leave a stray empty slice that reads as a stall.
+    IoSlice::advance_slices(&mut rest, done);
+    while done < total {
+        match writer.write_vectored(rest) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "sink accepted no bytes while a frame was outstanding",
+                )
+                .into())
+            }
+            Ok(n) => {
+                done += n;
+                IoSlice::advance_slices(&mut rest, n);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 //--- Framer Trait and Implementations ---
 
 /// A trait that defines how a raw payload is framed and written to a stream.
 ///
 /// Purpose: Separate wire-format concerns (headers/checksums) from I/O and serialization.
 /// Implementations are small strategy objects composed into `StreamWriter`.
+///
+/// A successful call must write exactly one complete frame. An implementation
+/// must not perform additional fallible work after the complete frame has been
+/// accepted: `StreamWriter` treats any error after accepted bytes as a partial
+/// frame, poisons the writer, and requires recovery before further appends.
 pub trait Framer {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()>;
 }
@@ -45,6 +129,7 @@ pub trait Framer {
 /// The default framing strategy: `[4-byte length | payload]`
 ///
 /// When to use: Highest throughput baseline when you don't need integrity checks.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultFramer;
 
 impl Framer for DefaultFramer {
@@ -59,9 +144,13 @@ impl Framer for DefaultFramer {
             ));
         }
         let payload_len = payload.len() as u32;
-        writer.write_all(&payload_len.to_le_bytes())?;
-        writer.write_all(payload)?;
-        Ok(())
+        // One vectored call puts `[len][payload]` on the wire together. The
+        // bytes are identical to the two-`write_all` form this replaces
+        // (pinned by the wire-format corpus tests); only the call count
+        // changes.
+        let len_bytes = payload_len.to_le_bytes();
+        let mut bufs = [IoSlice::new(&len_bytes), IoSlice::new(payload)];
+        write_all_vectored(writer, &mut bufs)
     }
 }
 
@@ -71,6 +160,9 @@ impl Framer for DefaultFramer {
 /// 2 for CRC-16), not a fixed 8 bytes.
 ///
 /// When to use: Integrity validation at read-time and/or independent message corruption detection.
+// No derived `Default`: construction must flow through `new()` so the const
+// checksum-width assertion is always evaluated.
+#[derive(Debug, Clone, Copy)]
 pub struct ChecksumFramer<C: Checksum> {
     checksum_alg: C,
 }
@@ -102,8 +194,9 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum = self.checksum_alg.calculate(payload);
 
         // Assemble the full header ([4-byte length | checksum bytes]) in a
-        // 12-byte stack scratch and issue a single write_all — halves the call
-        // count on this path versus writing length and checksum separately.
+        // 12-byte stack scratch, then hand header and payload to the sink in
+        // one vectored call — one call per frame instead of the two used by
+        // the pre-E1 path (one for the assembled header, one for the payload).
         // The bytes on the wire are identical (wire-format corpus tests).
         // `C::SIZE` is an associated const, so the header length and the
         // serialization width constant-fold by construction.
@@ -120,9 +213,8 @@ impl<C: Checksum> Framer for ChecksumFramer<C> {
         let checksum_field: &mut [u8; 8] = (&mut header[4..12]).try_into().unwrap();
         self.checksum_alg.write_bytes(checksum, checksum_field);
 
-        writer.write_all(&header[..4 + C::SIZE])?;
-        writer.write_all(payload)?;
-        Ok(())
+        let mut bufs = [IoSlice::new(&header[..4 + C::SIZE]), IoSlice::new(payload)];
+        write_all_vectored(writer, &mut bufs)
     }
 }
 
@@ -199,6 +291,8 @@ fn read_payload<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, payload_len: usiz
 /// Implementations must consume exactly one frame per successful call and
 /// must not read ahead into the next frame. `recover()` relies on this
 /// contract to report the exact end offset of the last intact frame.
+/// `Ok(None)` is valid only when the call consumed zero bytes at a clean frame
+/// boundary.
 pub trait Deframer {
     /// Reads one frame. Returns `Ok(Some(n))` with the payload length on
     /// success (payload in `buffer[..n]`), `Ok(None)` on clean EOF at a frame
@@ -233,6 +327,16 @@ pub trait Deframer {
     ) -> Result<Option<usize>>;
 }
 
+/// Marker for deframers whose failed reads may be retried from the same source
+/// offset with the same instance.
+///
+/// Implementations must not retain or advance internal decode state when a call
+/// reaches `UnexpectedEof` before completing the frame. The built-in deframers
+/// and their adapters satisfy this contract. Custom stateful/dictionary/nonce
+/// deframers opt in only when rewinding the source is sufficient to restore the
+/// decode state after that partial-frame failure.
+pub trait RetrySafeDeframer: Deframer {}
+
 /// The default deframing strategy for `[4-byte length | payload]` streams.
 ///
 /// When to use: The general-purpose parser for almost all cases. By default it
@@ -242,7 +346,7 @@ pub trait Deframer {
 /// [`with_max_frame_len`](Self::with_max_frame_len) so a corrupt header can't
 /// demand a huge allocation; raw non-FlatBuffer framing may raise it up to
 /// [`MAX_WIRE_FRAME_LEN`].
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct DefaultDeframer {
     max_frame_len: usize,
 }
@@ -255,6 +359,18 @@ impl DefaultDeframer {
     }
 
     /// Sets the maximum accepted payload length (enforced before allocation).
+    ///
+    /// Consumes and returns `self`, so the result must be used. Dropping it
+    /// leaves the default bound in force — a silent no-op on the one knob that
+    /// stands between a corrupt length header and a huge allocation:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use flatstream::DefaultDeframer;
+    /// let deframer = DefaultDeframer::new();
+    /// deframer.with_max_frame_len(1024); // bound discarded; does not compile
+    /// ```
+    #[must_use]
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
@@ -281,13 +397,17 @@ impl Deframer for DefaultDeframer {
     }
 }
 
+impl RetrySafeDeframer for DefaultDeframer {}
+
 /// A deframing strategy that verifies a checksum.
 ///
 /// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
 /// Applies the same length policy as [`DefaultDeframer`]: the FlatBuffers
 /// maximum ([`DEFAULT_MAX_FRAME_LEN`], 2 GiB) by default, tightened for
 /// untrusted input with [`with_max_frame_len`](Self::with_max_frame_len).
-#[derive(Clone, Copy)]
+// No derived `Default`: it would zero `max_frame_len`; `new()` applies the
+// real default bound and the const checksum-width assertion.
+#[derive(Debug, Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
     max_frame_len: usize,
@@ -308,6 +428,7 @@ impl<C: Checksum> ChecksumDeframer<C> {
     }
 
     /// Sets the maximum accepted payload length (enforced before allocation).
+    #[must_use]
     pub fn with_max_frame_len(mut self, max: usize) -> Self {
         self.max_frame_len = max;
         self
@@ -321,7 +442,7 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
         buffer: &mut Vec<u8>,
     ) -> Result<Option<usize>> {
         // Read `[len | checksum]` as one header (write-path twin of the
-        // ChecksumFramer's single-write_all assembly). Safe only because
+        // ChecksumFramer's contiguous-header assembly). Safe only because
         // `read_header` distinguishes a clean frame boundary (zero bytes)
         // from a torn header — a plain `read_exact` over the merged header
         // could not tell those apart (spec §6). `C::SIZE` keeps the header
@@ -366,9 +487,12 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
     }
 }
 
+impl<C: Checksum> RetrySafeDeframer for ChecksumDeframer<C> {}
+
 /// A composable adapter that enforces a maximum payload length for any framer.
 ///
 /// Failure semantics: Returns `ErrorKind::InvalidFrame` with context (payload len/limit) when exceeded.
+#[derive(Debug, Clone, Copy)]
 pub struct BoundedFramer<F: Framer> {
     inner: F,
     max_len: usize,
@@ -397,7 +521,7 @@ impl<F: Framer> Framer for BoundedFramer<F> {
 //--- Validation Adapters ---
 
 /// A composable adapter that adds validation to any `Framer`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ValidatingFramer<F: Framer, V: Validator> {
     inner: F,
     validator: V,
@@ -420,7 +544,7 @@ impl<F: Framer, V: Validator> Framer for ValidatingFramer<F, V> {
 }
 
 /// A composable adapter that adds validation to any `Deframer`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ValidatingDeframer<D: Deframer, V: Validator> {
     inner: D,
     validator: V,
@@ -466,11 +590,20 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
     }
 }
 
+impl<D: RetrySafeDeframer, V: Validator> RetrySafeDeframer for ValidatingDeframer<D, V> {}
+
 //--- Observer Adapters ---
 
 /// An adapter that allows observing payloads on the write path without copying or mutating.
 ///
 /// Callback timing: Invoked exactly once per frame, before delegating inner framing.
+/// This is payload inspection, not operation telemetry: it cannot report final
+/// I/O success, receipts, latency, or durability. Use
+/// [`StreamWriter::with_post_write_observer`](crate::StreamWriter::with_post_write_observer)
+/// for post-operation outcomes.
+// The derives apply when the callback itself is `Debug`/`Clone`/`Copy`
+// (a fn pointer is all three; a capturing closure usually is not).
+#[derive(Debug, Clone, Copy)]
 pub struct ObserverFramer<F: Framer, C: Fn(&[u8])> {
     inner: F,
     callback: C,
@@ -492,6 +625,8 @@ impl<F: Framer, C: Fn(&[u8])> Framer for ObserverFramer<F, C> {
 /// An adapter that allows observing payloads on the read path without copying or mutating.
 ///
 /// Callback timing: Invoked exactly once per frame, after inner deframing succeeds.
+// Same conditional derives as `ObserverFramer`: usable with fn-pointer callbacks.
+#[derive(Debug, Clone, Copy)]
 pub struct ObserverDeframer<D: Deframer, C: Fn(&[u8])> {
     inner: D,
     callback: C,
@@ -534,21 +669,30 @@ impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
     }
 }
 
+impl<D: RetrySafeDeframer, C: Fn(&[u8])> RetrySafeDeframer for ObserverDeframer<D, C> {}
+
 //--- Fluent Extension Traits ---
 
 /// Extension methods for framers to enable fluent composition without importing adapter types.
 pub trait FramerExt: Framer + Sized {
     /// Enforce a maximum payload length.
+    #[must_use]
     fn bounded(self, max: usize) -> BoundedFramer<Self> {
         BoundedFramer::new(self, max)
     }
 
-    /// Observe payloads on the write path without copying. Useful for metrics/logging.
+    /// Inspect payloads before write I/O without copying.
+    ///
+    /// This does not observe operation success/failure; install a
+    /// [`PostWriteObserver`](crate::PostWriteObserver) on `StreamWriter` for
+    /// final outcomes and latency.
+    #[must_use]
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverFramer<Self, C> {
         ObserverFramer::new(self, callback)
     }
 
     /// Adds a validation layer to this framer.
+    #[must_use]
     #[inline]
     fn with_validator<V: Validator>(self, validator: V) -> ValidatingFramer<Self, V> {
         ValidatingFramer::new(self, validator)
@@ -560,11 +704,13 @@ impl<T: Framer> FramerExt for T {}
 /// Extension methods for deframers to enable fluent composition without importing adapter types.
 pub trait DeframerExt: Deframer + Sized {
     /// Observe payloads on the read path without copying. Useful for metrics/logging.
+    #[must_use]
     fn observed<C: Fn(&[u8])>(self, callback: C) -> ObserverDeframer<Self, C> {
         ObserverDeframer::new(self, callback)
     }
 
     /// Adds a validation layer to this deframer.
+    #[must_use]
     #[inline]
     fn with_validator<V: Validator>(self, validator: V) -> ValidatingDeframer<Self, V> {
         ValidatingDeframer::new(self, validator)
@@ -572,3 +718,408 @@ pub trait DeframerExt: Deframer + Sized {
 }
 
 impl<T: Deframer> DeframerExt for T {}
+
+#[cfg(test)]
+mod vectored_tests {
+    use super::*;
+
+    /// The canonical bytes a default frame must occupy, computed independently
+    /// of the framer.
+    fn expected_default(payload: &[u8]) -> Vec<u8> {
+        let mut v = (payload.len() as u32).to_le_bytes().to_vec();
+        v.extend_from_slice(payload);
+        v
+    }
+
+    /// A sink that never overrides `write_vectored` and accepts **one byte per
+    /// call**. It therefore exercises the standard library's vectored
+    /// fallback (first non-empty slice only) *and* the partial-write loop at
+    /// its most hostile: every frame takes `4 + payload.len()` calls.
+    #[derive(Default)]
+    struct OneByteAtATime {
+        written: Vec<u8>,
+        calls: usize,
+    }
+
+    impl Write for OneByteAtATime {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            self.written.push(buf[0]);
+            Ok(1)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A sink that *does* implement `write_vectored` but accepts at most
+    /// `limit` bytes per call, consuming across slice boundaries. This is the
+    /// case the fallback sink cannot reach: it forces
+    /// `IoSlice::advance_slices` to re-slice a *partially consumed* slice.
+    struct PartialVectored {
+        written: Vec<u8>,
+        limit: usize,
+        calls: usize,
+    }
+
+    impl Write for PartialVectored {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.limit);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            self.calls += 1;
+            let mut budget = self.limit;
+            let mut total = 0;
+            for buf in bufs {
+                if budget == 0 {
+                    break;
+                }
+                let n = buf.len().min(budget);
+                self.written.extend_from_slice(&buf[..n]);
+                budget -= n;
+                total += n;
+            }
+            Ok(total)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A partial vectored sink that injects one `Interrupted` error at a
+    /// selected call, allowing both retry branches to be exercised.
+    struct InterruptingVectored {
+        written: Vec<u8>,
+        limit: usize,
+        interrupt_on_call: usize,
+        calls: usize,
+    }
+
+    impl Write for InterruptingVectored {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.limit);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if self.calls == self.interrupt_on_call {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+
+            let mut budget = self.limit;
+            let mut total = 0;
+            for buf in bufs {
+                if budget == 0 {
+                    break;
+                }
+                let n = buf.len().min(budget);
+                self.written.extend_from_slice(&buf[..n]);
+                budget -= n;
+                total += n;
+            }
+            Ok(total)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A sink that accepts nothing. The loop must surface `WriteZero` rather
+    /// than spin forever.
+    struct Stalled;
+
+    impl Write for Stalled {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+        fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn vectored_output_is_byte_exact_on_a_dribbling_sink() {
+        // The whole point of the partial-write loop: the bytes must be
+        // identical no matter how the sink chops the write up.
+        for payload in [b"".as_slice(), b"x", b"hello frame", &[7u8; 300]] {
+            let mut sink = OneByteAtATime::default();
+            DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+            assert_eq!(
+                sink.written,
+                expected_default(payload),
+                "payload len {}",
+                payload.len()
+            );
+            // The fallback offers one non-empty slice per call, and this sink
+            // accepts one byte from it, so there is exactly one call per
+            // framed byte (including for an empty payload's 4-byte header).
+            assert_eq!(sink.calls, 4 + payload.len());
+        }
+    }
+
+    #[test]
+    fn advance_slices_re_slices_a_partially_consumed_slice() {
+        // A 3-byte budget lands mid-header on the first call and mid-payload
+        // later, so the loop must resume inside a slice, not just drop whole
+        // ones. If `advance_slices` were mishandled, the output would be
+        // duplicated or truncated here rather than merely slow.
+        let payload: Vec<u8> = (0..=200u8).collect();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 3,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+        assert_eq!(sink.written, expected_default(&payload));
+        // 205 bytes at 3 per call: the frame genuinely spanned many calls.
+        assert_eq!(sink.calls, (4 + payload.len()).div_ceil(3));
+    }
+
+    #[test]
+    fn interrupted_initial_write_is_retried() {
+        let payload = b"retry the initial write".as_slice();
+        let mut sink = InterruptingVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            interrupt_on_call: 1,
+            calls: 0,
+        };
+
+        DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+
+        assert_eq!(sink.calls, 2);
+        assert_eq!(sink.written, expected_default(payload));
+    }
+
+    #[test]
+    fn interrupted_remainder_write_is_retried_without_duplication() {
+        let payload = b"retry a partial remainder".as_slice();
+        let frame_len = 4 + payload.len();
+        let mut sink = InterruptingVectored {
+            written: Vec::new(),
+            limit: 3,
+            interrupt_on_call: 2,
+            calls: 0,
+        };
+
+        DefaultFramer.frame_and_write(&mut sink, payload).unwrap();
+
+        assert_eq!(sink.calls, frame_len.div_ceil(3) + 1);
+        assert_eq!(sink.written, expected_default(payload));
+    }
+
+    #[test]
+    fn one_vectored_call_suffices_when_the_sink_takes_everything() {
+        // The win E1 exists for: a sink that accepts the whole frame gets
+        // exactly one call for header + payload.
+        let payload = [9u8; 512];
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+        assert_eq!(sink.calls, 1);
+        assert_eq!(sink.written, expected_default(&payload));
+    }
+
+    #[test]
+    fn a_non_vectoring_sink_costs_the_same_two_calls_it_did_before() {
+        // The regression E1 could plausibly have introduced. Most user-written
+        // `Write` impls never override `write_vectored`, and
+        // `is_write_vectored()` is unstable on the MSRV (rust-lang/rust#69941),
+        // so we cannot detect them and route around the vectored path.
+        //
+        // We do not need to. The provided `write_vectored` forwards the first
+        // non-empty slice to `write`, and the partial-write loop supplies the
+        // rest — so such a sink sees exactly the header-then-payload pair of
+        // calls it saw before this change, with the same bytes. No detection,
+        // no regression, no `cfg` branch.
+        #[derive(Default)]
+        struct AcceptsEverythingUnvectored {
+            written: Vec<u8>,
+            calls: usize,
+        }
+
+        impl Write for AcceptsEverythingUnvectored {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                self.written.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let payload = [3u8; 256];
+        let mut sink = AcceptsEverythingUnvectored::default();
+        DefaultFramer.frame_and_write(&mut sink, &payload).unwrap();
+
+        assert_eq!(sink.written, expected_default(&payload));
+        assert_eq!(sink.calls, 2, "header and payload, exactly as before E1");
+    }
+
+    #[cfg(feature = "xxhash")]
+    #[test]
+    fn checksummed_frame_is_one_call_and_byte_exact() {
+        use crate::checksum::Checksum;
+        use crate::XxHash64;
+
+        let payload = b"checksummed payload".as_slice();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        ChecksumFramer::new(XxHash64::new())
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+        // [len|checksum] and payload travel together: one call, not the two
+        // used by the pre-E1 assembled-header path.
+        assert_eq!(sink.calls, 1);
+    }
+
+    #[cfg(feature = "xxhash")]
+    #[test]
+    fn checksummed_frame_survives_a_dribbling_sink() {
+        use crate::checksum::Checksum;
+        use crate::XxHash64;
+
+        let payload = b"checksummed payload".as_slice();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 5,
+            calls: 0,
+        };
+        ChecksumFramer::new(XxHash64::new())
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&XxHash64::new().calculate(payload).to_le_bytes());
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+    }
+
+    #[cfg(any(feature = "crc32", feature = "crc16"))]
+    fn assert_narrow_checksum_survives_partial_writes<C: Checksum>(checksum_alg: C) {
+        let payload = b"narrow checksum partial write".as_slice();
+        let checksum = checksum_alg.calculate(payload).to_le_bytes();
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: 5,
+            calls: 0,
+        };
+
+        ChecksumFramer::new(checksum_alg)
+            .frame_and_write(&mut sink, payload)
+            .unwrap();
+
+        let mut expected = (payload.len() as u32).to_le_bytes().to_vec();
+        expected.extend_from_slice(&checksum[..C::SIZE]);
+        expected.extend_from_slice(payload);
+        assert_eq!(sink.written, expected);
+        assert!(sink.calls > 1);
+    }
+
+    #[cfg(feature = "crc32")]
+    #[test]
+    fn crc32_frame_survives_partial_writes_at_four_byte_width() {
+        assert_narrow_checksum_survives_partial_writes(crate::Crc32::new());
+    }
+
+    #[cfg(feature = "crc16")]
+    #[test]
+    fn crc16_frame_survives_partial_writes_at_two_byte_width() {
+        assert_narrow_checksum_survives_partial_writes(crate::Crc16::new());
+    }
+
+    #[test]
+    fn a_stalled_sink_becomes_write_zero_not_a_hang() {
+        let err = DefaultFramer
+            .frame_and_write(&mut Stalled, b"payload")
+            .unwrap_err();
+        match err.into_kind() {
+            crate::error::ErrorKind::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::WriteZero)
+            }
+            other => panic!("expected Io(WriteZero), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_payload_terminates() {
+        // A zero-length payload leaves a trailing empty slice; the loop must
+        // recognize the frame as complete instead of reading `Ok(0)` as a
+        // stall. Regression guard for the `advance_slices(.., 0)` prologue.
+        let mut sink = PartialVectored {
+            written: Vec::new(),
+            limit: usize::MAX,
+            calls: 0,
+        };
+        DefaultFramer.frame_and_write(&mut sink, b"").unwrap();
+        assert_eq!(sink.written, vec![0, 0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod strategy_trait_tests {
+    use super::*;
+    use crate::validation::NoValidator;
+
+    /// Strategy types are plain values: callers hold them in config structs,
+    /// hand copies to multiple writers/readers, and print them in diagnostics.
+    /// Pin `Debug + Clone + Copy` so an added field cannot silently drop them.
+    /// (Observer adapters qualify whenever the callback itself does — a fn
+    /// pointer here; capturing closures usually are not `Copy`.)
+    #[test]
+    fn strategy_types_are_debug_clone_copy() {
+        fn assert_common<T: std::fmt::Debug + Clone + Copy>(_: &T) {}
+        fn observe(_: &[u8]) {}
+
+        assert_common(&DefaultFramer);
+        assert_common(&DefaultDeframer::new().with_max_frame_len(1024));
+        assert_common(&BoundedFramer::new(DefaultFramer, 1024));
+        assert_common(&ValidatingFramer::new(DefaultFramer, NoValidator));
+        assert_common(&ValidatingDeframer::new(
+            DefaultDeframer::new(),
+            NoValidator,
+        ));
+        assert_common(&ObserverFramer::new(DefaultFramer, observe as fn(&[u8])));
+        assert_common(&ObserverDeframer::new(
+            DefaultDeframer::new(),
+            observe as fn(&[u8]),
+        ));
+
+        #[cfg(feature = "xxhash")]
+        {
+            assert_common(&ChecksumFramer::new(crate::XxHash64::new()));
+            assert_common(&ChecksumDeframer::new(crate::XxHash64::new()));
+        }
+        #[cfg(feature = "crc32")]
+        {
+            assert_common(&ChecksumFramer::new(crate::Crc32::new()));
+            assert_common(&ChecksumDeframer::new(crate::Crc32::new()));
+        }
+        #[cfg(feature = "crc16")]
+        {
+            assert_common(&ChecksumFramer::new(crate::Crc16::new()));
+            assert_common(&ChecksumDeframer::new(crate::Crc16::new()));
+        }
+    }
+}

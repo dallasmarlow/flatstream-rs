@@ -12,7 +12,7 @@ use std::io::Cursor;
 fn write_under_limit(bytes: &mut Vec<u8>) -> Result<()> {
     // Enforce a generous max payload length to accommodate FlatBuffer overhead
     let framer = BoundedFramer::new(DefaultFramer, 64);
-    let writer = Cursor::new(bytes);
+    let writer = Cursor::new(&mut *bytes);
     let mut stream_writer = StreamWriter::new(writer, framer);
 
     // Simple mode: `&str` implements StreamSerialize in this crate
@@ -21,13 +21,29 @@ fn write_under_limit(bytes: &mut Vec<u8>) -> Result<()> {
     );
     stream_writer.write(&"hello")?; // 5 bytes, ok
     stream_writer.flush()?;
+    drop(stream_writer);
+
+    assert!(
+        !bytes.is_empty(),
+        "an accepted write must actually reach the sink"
+    );
+    let declared = u32::from_le_bytes(bytes[..4].try_into().expect("length prefix")) as usize;
+    assert_eq!(
+        bytes.len(),
+        4 + declared,
+        "the bounded framer must emit a well-formed [len][payload] frame"
+    );
+    assert!(
+        declared <= 64,
+        "payload of {declared} bytes slipped past the 64-byte bound"
+    );
     Ok(())
 }
 
 fn write_over_limit_should_fail(bytes: &mut Vec<u8>) {
     // Use fluent composition for the framer
     let framer = DefaultFramer.bounded(4);
-    let writer = Cursor::new(bytes);
+    let writer = Cursor::new(&mut *bytes);
     let mut stream_writer = StreamWriter::new(writer, framer);
 
     println!(
@@ -38,6 +54,15 @@ fn write_over_limit_should_fail(bytes: &mut Vec<u8>) {
         ErrorKind::InvalidFrame { .. } => {}
         other => panic!("expected InvalidFrame, got {other:?}"),
     }
+    drop(stream_writer);
+
+    // The bound is a gate, not a truncation: rejecting must leave the stream
+    // untouched, since a half-written frame would corrupt everything after it.
+    assert!(
+        bytes.is_empty(),
+        "a rejected write leaked {} bytes into the stream",
+        bytes.len()
+    );
 }
 
 fn round_trip_with_tight_bound(bytes: &[u8]) -> Result<()> {
@@ -46,14 +71,27 @@ fn round_trip_with_tight_bound(bytes: &[u8]) -> Result<()> {
     let mut reader = StreamReader::new(Cursor::new(bytes), deframer);
 
     let mut seen = 0usize;
+    let mut messages = 0usize;
     println!(
         "[round_trip_with_tight_bound] Reading all messages with the deframer's max_frame_len tightened to 64 bytes"
     );
     reader.process_all(|payload| {
         // `payload` is a borrowed slice: zero-copy
         seen += payload.len();
+        messages += 1;
+        // The bound must admit the message *and* leave it intact.
+        assert_eq!(
+            flatbuffers::root::<&str>(payload).expect("payload is a valid FlatBuffers string"),
+            "hello",
+            "a bound that admits a frame must not alter it"
+        );
         Ok(())
     })?;
+
+    // Without this, a deframer that silently yielded nothing would still
+    // "succeed" here — the failure mode this example exists to rule out.
+    assert_eq!(messages, 1, "expected exactly one message on the stream");
+    assert!(seen > 0, "message read but payload was empty");
 
     println!(
         "[round_trip_with_tight_bound] Successfully read and processed {seen} total payload bytes within bounds"
@@ -70,11 +108,25 @@ fn read_over_limit_should_fail(bytes: &[u8]) {
     println!(
         "[read_over_limit_should_fail] Reading with a 4-byte bound against larger frames (expected error)"
     );
-    let err = reader.process_all(|_| Ok(())).unwrap_err();
+    let mut delivered = 0usize;
+    let err = reader
+        .process_all(|_| {
+            delivered += 1;
+            Ok(())
+        })
+        .unwrap_err();
     match err.into_kind() {
         ErrorKind::InvalidFrame { .. } => {}
         other => panic!("expected InvalidFrame, got {other:?}"),
     }
+
+    // The bound exists to stop a hostile length prefix from driving an
+    // allocation, so rejection must happen before the payload is ever read —
+    // never after handing it to the callback.
+    assert_eq!(
+        delivered, 0,
+        "an over-limit frame was delivered to the callback before being rejected"
+    );
 }
 
 fn main() -> Result<()> {

@@ -1,4 +1,6 @@
-//! # FlatStream (v0.2.7)
+// Sourced from Cargo.toml so the crate docs cannot drift from the released
+// version, as they did through 0.2.8.
+#![doc = concat!("# FlatStream (v", env!("CARGO_PKG_VERSION"), ")")]
 //!
 //! A lightweight, composable, high-performance Rust library for streaming FlatBuffers.
 //!
@@ -17,6 +19,8 @@
 //! * **Memory Efficient**: Reusable buffers and minimal allocations
 //! * **Type Safe**: Generic over I/O types and framing strategies
 //! * **Journal Recovery**: Strict torn-tail detection with exact truncation offsets
+//! * **Durability Policies**: Static group-commit cadence with durable watermarks
+//! * **Positioned Reads**: Forward receipts and caller-scratch indexed lookup
 //!
 //! ## Quick Start
 //!
@@ -112,6 +116,7 @@
 #![cfg_attr(not(feature = "unsafe_typed"), forbid(unsafe_code))]
 
 pub mod checksum;
+pub mod durability;
 pub mod error;
 pub mod framing;
 pub mod policy;
@@ -123,23 +128,33 @@ pub mod writer;
 
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
+pub use durability::{
+    AnySync, Durable, NoSync, SyncEveryBytes, SyncEveryFrame, SyncEveryInterval, SyncEveryNFrames,
+    SyncInfo, SyncMode, SyncPolicy, SyncPolicyExt, Syncing,
+};
 pub use error::{Error, ErrorKind, Result};
 pub use framing::{
     BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer, FramerExt,
-    ValidatingDeframer, ValidatingFramer, DEFAULT_MAX_FRAME_LEN, MAX_WIRE_FRAME_LEN,
+    ObserverDeframer, ObserverFramer, RetrySafeDeframer, ValidatingDeframer, ValidatingFramer,
+    DEFAULT_MAX_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{
-    AdaptiveWatermarkPolicy, Clock, MemoryPolicy, MonotonicClock, NoOpPolicy, ReclamationInfo,
-    ReclamationReason, SizeThresholdPolicy,
+    AdaptiveWatermarkPolicy, Clock, MemoryPolicy, MonotonicClock, NoMemoryPolicy, NoOpPolicy,
+    ReclamationInfo, ReclamationReason, SizeThresholdPolicy,
 };
-pub use reader::{Messages, StreamReader, TypedMessages};
+pub use reader::{
+    read_frame_at, Messages, ReadFrame, ReaderMemoryPolicy, StreamReader, TypedMessages,
+};
 pub use recover::{recover, recover_file, RecoveryEnd, RecoveryReport};
 pub use traits::StreamDeserialize;
 pub use traits::StreamSerialize;
 pub use validation::{
     CompositeValidator, NoValidator, SizeValidator, TableRootValidator, TypedValidator, Validator,
 };
-pub use writer::StreamWriter;
+pub use writer::{
+    BuilderFactory, DefaultBuilderFactory, FrameReceipt, NoPostWriteObserver, OwnedStreamWriter,
+    PostWriteEvent, PostWriteObserver, PostWriteOutcome, StreamWriter, WriterMemoryPolicy,
+};
 
 #[cfg(feature = "xxhash")]
 pub use checksum::XxHash64;

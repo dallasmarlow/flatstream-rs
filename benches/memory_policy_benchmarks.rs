@@ -1,12 +1,14 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
 use flatstream::policy::ReclamationReason;
 use flatstream::{
-    AdaptiveWatermarkPolicy, DefaultFramer, MemoryPolicy, NoOpPolicy, StreamSerialize, StreamWriter,
+    AdaptiveWatermarkPolicy, DefaultDeframer, DefaultFramer, MemoryPolicy, NoOpPolicy,
+    StreamReader, StreamSerialize, StreamWriter,
 };
+use std::io::Cursor;
 
 /// A never-firing policy with a baseline of 1 byte: keeps the writer's
-/// steady-state gate open so the bench measures the boxed dispatch itself,
+/// steady-state gate open so the bench measures the statically dispatched call,
 /// not the gate. (`NoOpPolicy`'s default 16 KiB baseline would close the gate
 /// for small builders and skip the call entirely.)
 struct GateOpenNoOp;
@@ -40,8 +42,7 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements(1));
 
-    // Baseline: no policy installed (the default). Measures the cost of the
-    // single not-taken branch in write().
+    // Baseline: zero-sized NoMemoryPolicy. Its backend call compiles away.
     group.bench_function("no_policy", |b| {
         let mut writer = StreamWriter::new(std::io::sink(), DefaultFramer);
 
@@ -50,10 +51,9 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
         });
     });
 
-    // Comparison: a no-op policy installed. Measures the boxed-policy dispatch
-    // cost on top of the baseline (one indirect call per message); GateOpenNoOp's
-    // 1-byte baseline keeps the gate open so the call actually happens.
-    group.bench_function("noop_policy", |b| {
+    // Comparison: a static no-op policy installed. GateOpenNoOp's 1-byte
+    // baseline keeps the gate open so the monomorphized call actually happens.
+    group.bench_function("static_noop_policy", |b| {
         let mut writer =
             StreamWriter::new(std::io::sink(), DefaultFramer).with_memory_policy(GateOpenNoOp);
 
@@ -70,7 +70,7 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
     // GOAL: Measure the pure CPU overhead of the policy's book-keeping logic
     // (tracking sizes, checking thresholds) to prove it is negligible when
     // not actively reclaiming memory.
-    group.bench_function("adaptive_policy_inactive", |b| {
+    group.bench_function("static_adaptive_policy_inactive", |b| {
         // Ratio of 1000 is unreachable by design: measures pure bookkeeping.
         // with_baseline(1) keeps the steady-state gate open (see above).
         let policy = AdaptiveWatermarkPolicy::new(1000, 5).with_baseline(1);
@@ -80,6 +80,52 @@ fn benchmark_policy_overhead(c: &mut Criterion) {
 
         b.iter(|| {
             writer.write(&small_data).unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_reader_policy_overhead(c: &mut Criterion) {
+    const RECORDS: usize = 1_000;
+    let mut wire = Vec::new();
+    {
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer);
+        let payload = BenchData(vec![0u8; 100]);
+        for _ in 0..RECORDS {
+            writer.write(&payload).unwrap();
+        }
+    }
+
+    let mut group = c.benchmark_group("reader_policy_overhead");
+    group.throughput(Throughput::Elements(RECORDS as u64));
+
+    group.bench_function("no_policy", |b| {
+        b.iter(|| {
+            let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new());
+            let mut bytes = 0usize;
+            reader
+                .process_all(|payload| {
+                    bytes += black_box(payload).len();
+                    Ok(())
+                })
+                .unwrap();
+            black_box(bytes)
+        });
+    });
+
+    group.bench_function("static_noop_policy", |b| {
+        b.iter(|| {
+            let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new())
+                .with_memory_policy(GateOpenNoOp);
+            let mut bytes = 0usize;
+            reader
+                .process_all(|payload| {
+                    bytes += black_box(payload).len();
+                    Ok(())
+                })
+                .unwrap();
+            black_box(bytes)
         });
     });
 
@@ -155,5 +201,10 @@ fn benchmark_oscillation(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_policy_overhead, benchmark_oscillation);
+criterion_group!(
+    benches,
+    benchmark_policy_overhead,
+    benchmark_reader_policy_overhead,
+    benchmark_oscillation
+);
 criterion_main!(benches);

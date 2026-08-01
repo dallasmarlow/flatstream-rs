@@ -25,15 +25,33 @@ fn write_framed(payload: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn process_with<D: Deframer>(deframer: D, framed: &[u8], label: &str) -> Result<()> {
+/// Reads `framed` under `deframer` and asserts the stream round-trips to
+/// exactly `expected`.
+///
+/// Collecting the payloads matters: a validator that silently accepted zero
+/// messages would satisfy a bare `process_all(|_| Ok(()))`, so the count is
+/// half the assertion.
+fn process_with<D: Deframer>(
+    deframer: D,
+    framed: &[u8],
+    expected: &[u8],
+    label: &str,
+) -> Result<()> {
     let reader = BufReader::new(Cursor::new(framed));
     let mut stream = StreamReader::new(reader, deframer);
+
+    let mut seen: Vec<Vec<u8>> = Vec::new();
     stream.process_all(|payload| {
-        // Use the payload so examples don’t warn
-        let _ = payload.len();
+        seen.push(payload.to_vec());
         Ok(())
     })?;
-    println!("{}: ok", label);
+
+    assert_eq!(seen.len(), 1, "{label}: expected exactly one message");
+    assert_eq!(
+        seen[0], expected,
+        "{label}: payload must survive validation byte-for-byte"
+    );
+    println!("{label}: ok ({} bytes round-tripped)", seen[0].len());
     Ok(())
 }
 
@@ -48,6 +66,7 @@ fn main() -> Result<()> {
     process_with(
         DefaultDeframer::new().with_validator(NoValidator),
         &framed,
+        &telemetry,
         "NoValidator",
     )?;
 
@@ -55,6 +74,7 @@ fn main() -> Result<()> {
     process_with(
         DefaultDeframer::new().with_validator(TableRootValidator::new()),
         &framed,
+        &telemetry,
         "TableRootValidator",
     )?;
 
@@ -66,6 +86,7 @@ fn main() -> Result<()> {
         process_with(
             DefaultDeframer::new().with_validator(validator),
             &framed,
+            &telemetry,
             "CompositeValidator (Size + TableRoot)",
         )?;
     }
@@ -102,10 +123,34 @@ fn main() -> Result<()> {
 
     // 7) Write path with validation: ValidatingFramer validates before write
     {
-        let mut out = Vec::new();
         let framer = DefaultFramer.with_validator(TableRootValidator::new());
+
+        // A valid payload must produce byte-identical output to the plain
+        // framer: validation is a gate, not a transform.
+        let mut out = Vec::new();
         framer.frame_and_write(&mut out, &telemetry)?;
-        println!("ValidatingFramer (write path): ok");
+        assert_eq!(
+            out, framed,
+            "ValidatingFramer must not alter the bytes of a payload it accepts"
+        );
+
+        // An invalid payload must be rejected *before* anything reaches the
+        // sink — a partially-written frame would corrupt the stream.
+        let mut rejected = Vec::new();
+        let err = framer
+            .frame_and_write(&mut rejected, b"not a flatbuffer table")
+            .unwrap_err();
+        assert!(
+            matches!(err.kind(), ErrorKind::ValidationFailed { .. }),
+            "expected ValidationFailed on the write path, got {:?}",
+            err.kind()
+        );
+        assert!(
+            rejected.is_empty(),
+            "a rejected payload must leave the sink untouched, found {} bytes",
+            rejected.len()
+        );
+        println!("ValidatingFramer (write path): accepts valid, rejects invalid, writes nothing on reject");
     }
 
     println!("validation_example: done");

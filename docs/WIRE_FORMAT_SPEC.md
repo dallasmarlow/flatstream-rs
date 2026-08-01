@@ -1,8 +1,14 @@
 # Wire Format Specification: flatstream-rs
 
-**Status:** Implemented / Verified (v0.2.7)  
-**Author:** Dallas Marlow  
-**Updated:** 2026-07-23
+**Status:** Implemented / Verified (v0.2.8)
+**Author:** Dallas Marlow
+**Updated:** 2026-07-24
+
+> **Unchanged since v0.2.7.** v0.2.8 added frame receipts and moved framing to a
+> single `write_vectored` call, but neither alters a byte of the layout below —
+> the wire-format corpus tests pin this, and the vectored path is asserted
+> byte-identical to the two-call form it replaced. Consumers reading this spec
+> against a v0.2.7 stream need change nothing.
 
 ## 1. Overview
 
@@ -67,7 +73,9 @@ Notes:
 3. If checksummed, read `N` checksum bytes → `C` (u16/u32/u64 LE depending on algorithm). Partial read → `UnexpectedEof`.
 4. Read `L` payload bytes into a buffer. Partial read → `UnexpectedEof`.
 5. If checksummed, compute `C' = checksum(payload)` and compare with `C` (after width truncation). Mismatch → `ChecksumMismatch`.
-6. Yield `payload` to the caller. Repeat from step 1.
+6. If an application validator is configured, validate the payload. Rejection →
+   `ValidationFailed`.
+7. Yield `payload` to the caller. Repeat from step 1.
 
 ```mermaid
 stateDiagram-v2
@@ -77,8 +85,8 @@ stateDiagram-v2
   CheckBounds --> ErrorOverLimit: no
   CheckBounds --> MaybeChecksum: yes
   state MaybeChecksum {
-    [*] --> NoChecksum: DefaultFramer
-    [*] --> ReadChecksum: ChecksumFramer<T>
+    [*] --> NoChecksum: DefaultDeframer
+    [*] --> ReadChecksum: ChecksumDeframer<T>
   }
   NoChecksum --> YieldSlice
   ReadChecksum --> VerifyChecksum
@@ -95,6 +103,15 @@ stateDiagram-v2
 - `UnexpectedEof`: Not enough bytes to complete length, checksum, or payload.
 - `ChecksumMismatch`: Computed checksum over the payload does not equal the on-wire checksum.
 - `InvalidFrame`: Payload length exceeds configured maximum or violates application constraints.
+- `ValidationFailed`: A configured application validator rejected a complete
+  payload after framing and checksum checks. This is a payload/configuration
+  failure, not evidence of a torn frame.
+
+`UnexpectedEof` describes the bytes available to the current read attempt; it
+does not assert that a source is permanently finalized. Recovery interprets it
+as a torn tail once writing has stopped. A seekable live-file follower may wait
+for more data and retry `read_frame_at` from the same absolute frame offset when
+using a `RetrySafeDeframer`.
 
 ## 8. Interoperability Requirements
 
@@ -103,6 +120,9 @@ stateDiagram-v2
   (2/4/8 bytes for the built-ins; 0–8 bytes for custom algorithms).
 - The checksum covers only the payload bytes.
 - The checksum algorithm is not self-describing; implementations must be initialized with the agreed algorithm before reading.
+- No core preamble is planned. Persistent applications must version their
+  framing/checksum/schema composition out of band and reject unknown
+  application format generations before reading frames.
 - Frames are concatenated with no separators. Clean EOF may only occur between frames.
 - Implementations should enforce a maximum payload size before allocation to avoid resource exhaustion.
 
@@ -172,6 +192,7 @@ Adaptation notes:
 - [ ] Verify checksum over payload only (when enabled)
 - [ ] Treat partial reads as `UnexpectedEof`
 - [ ] Treat checksum failure as `ChecksumMismatch`
+- [ ] Surface configured-validator rejection as `ValidationFailed`
 - [ ] Support clean EOF only between frames
 - [ ] Do not assume FlatBuffers size-prefixed payloads
 
@@ -207,5 +228,3 @@ With CRC32 enabled, the frame inserts a 4-byte LE checksum between length and pa
 ---
 
 This document is intended to be sufficient for implementing compatible readers/writers in non-Rust languages. The normative reference is the Rust implementation in `src/framing.rs` and `src/checksum.rs`.
-
-

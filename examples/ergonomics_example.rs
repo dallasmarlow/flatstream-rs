@@ -15,9 +15,7 @@ fn main() -> Result<()> {
     // Pre-sizing with a provided builder
     let builder = FlatBufferBuilder::new();
     let mut stream_writer = StreamWriter::with_builder(writer, framer, builder);
-    // Accessors
-    let _writer_ref = stream_writer.get_ref();
-    let _writer_mut = stream_writer.get_mut();
+    // Strategy access is read-only; sink access requires `into_inner`.
     let _framer_ref = stream_writer.framer();
 
     // Expert mode write
@@ -43,20 +41,36 @@ fn main() -> Result<()> {
     stream_reader.reserve(2048);
     assert!(stream_reader.buffer_capacity() >= 2048);
 
-    // Accessors
-    let _reader_ref = stream_reader.get_ref();
-    let _reader_mut = stream_reader.get_mut();
+    // Strategy access is read-only; source access requires `into_inner`.
     let _deframer_ref = stream_reader.deframer();
 
     // Process messages
+    let capacity_before = stream_reader.buffer_capacity();
     let mut message_count = 0usize;
     println!("[reader] Processing all messages with zero-copy payload slices");
     stream_reader.process_all(|payload| {
         println!("[reader] Received a payload of {} bytes", payload.len());
+        assert_eq!(
+            flatbuffers::root::<&str>(payload).expect("payload is a FlatBuffers string"),
+            "hello ergonomics",
+            "the payload must survive the round trip unchanged"
+        );
         message_count += 1;
         Ok(())
     })?;
-    println!("[reader] Completed reading {message_count} message(s)");
+
+    assert_eq!(
+        message_count, 1,
+        "expected exactly one message; a silent zero would otherwise pass unnoticed"
+    );
+    // This is what `reserve` was for: a frame that fits the reserved buffer
+    // must not trigger a reallocation.
+    assert_eq!(
+        stream_reader.buffer_capacity(),
+        capacity_before,
+        "reading a frame smaller than the reserved capacity should not have reallocated"
+    );
+    println!("[reader] Completed reading {message_count} message(s) with no reallocation");
 
     // Take back the inner reader
     let _inner_reader = stream_reader.into_inner();

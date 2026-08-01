@@ -3,10 +3,12 @@
 //! Demonstrates zero-copy observers on both write and read paths.
 //! Includes optional checksum variants behind feature flags.
 
-use flatstream::framing::{ObserverDeframer, ObserverFramer};
 #[cfg(any(feature = "xxhash", feature = "crc32", feature = "crc16"))]
 use flatstream::Framer; // bring trait into scope where checksum branches call frame_and_write
-use flatstream::{DefaultDeframer, DefaultFramer, Result, StreamReader, StreamWriter};
+use flatstream::{
+    DefaultDeframer, DefaultFramer, ObserverDeframer, ObserverFramer, Result, StreamReader,
+    StreamWriter,
+};
 use std::cell::Cell;
 use std::io::Cursor;
 

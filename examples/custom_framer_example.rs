@@ -1,4 +1,4 @@
-use flatstream::{Deframer, Error, Framer, Result, StreamReader, StreamWriter};
+use flatstream::{Deframer, Error, ErrorKind, Framer, Result, StreamReader, StreamWriter};
 use std::io::{Cursor, Read, Write};
 
 /// A custom deframer must pick its own allocation bound: the core deframers
@@ -131,6 +131,42 @@ fn main() -> Result<()> {
     assert_eq!(messages, ["message with magic header"]);
     println!("Successfully read back: {messages:?}");
 
+    // 3. The rejection path this example exists to demonstrate. A custom
+    //    deframer's error behavior is part of its contract, so prove it.
+    println!("\nChecking rejection paths...");
+
+    // A corrupted magic number must be an InvalidFrame, not a misparse.
+    let mut wrong_magic = buffer.clone();
+    wrong_magic[0] = 0x00;
+    let err = StreamReader::new(Cursor::new(&wrong_magic), MagicHeaderDeframer)
+        .process_all(|_| Ok(()))
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), ErrorKind::InvalidFrame { .. }),
+        "corrupt magic must be InvalidFrame, got {:?}",
+        err.kind()
+    );
+
+    // A header cut short mid-way is a torn frame, not a clean end of stream:
+    // the 1-byte probe only means EOF when it lands on a frame boundary.
+    let err = StreamReader::new(Cursor::new(&buffer[..3]), MagicHeaderDeframer)
+        .process_all(|_| Ok(()))
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), ErrorKind::UnexpectedEof),
+        "a truncated header must be UnexpectedEof, got {:?}",
+        err.kind()
+    );
+
+    // An empty stream, by contrast, is a clean end: zero messages, no error.
+    let mut count = 0usize;
+    StreamReader::new(Cursor::new(&[][..]), MagicHeaderDeframer).process_all(|_| {
+        count += 1;
+        Ok(())
+    })?;
+    assert_eq!(count, 0, "an empty stream must yield no messages");
+
+    println!("Rejects bad magic and torn headers; treats empty input as clean EOF.");
     println!("\nCustom framer worked correctly!");
     Ok(())
 }

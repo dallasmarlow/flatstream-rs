@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use crate::durability::SyncMode;
+
 /// Custom error type for the flatstream-rs library.
 ///
 /// The payload lives behind a `Box`, so `Error` is pointer-sized and the hot
@@ -59,9 +61,51 @@ pub enum ErrorKind {
         reason: Cow<'static, str>,
     },
 
-    /// Unexpected end of file while reading stream data.
+    /// The current read attempt reached EOF inside a frame.
+    ///
+    /// This says nothing about whether a seekable source may grow later;
+    /// recovery and live-tailing callers interpret the condition using their
+    /// source lifecycle.
     #[error("Unexpected end of file while reading stream")]
     UnexpectedEof,
+
+    /// A poisoned writer or reader rejected the operation.
+    ///
+    /// An earlier failure left part of a frame on the stream, so its current
+    /// position is no longer a known frame boundary. This is a state
+    /// rejection, not a new I/O failure: the rejected operation moved no
+    /// bytes. Check for the state without provoking it via
+    /// `StreamWriter::is_poisoned` / `StreamReader::is_poisoned`; recover by
+    /// consuming the stream (`into_inner`), truncating/recovering the torn
+    /// tail, and constructing a replacement at a verified offset.
+    #[error("stream is poisoned by a failed partial frame; consume, recover, and reconstruct it")]
+    Poisoned,
+
+    /// A frame was accepted by the sink, but its durability checkpoint failed.
+    ///
+    /// `attempted_watermark` includes every complete frame accepted before the
+    /// failed checkpoint. Callers must not blindly retry the triggering write:
+    /// its bytes are already present even though stable storage was not
+    /// confirmed.
+    #[error(
+        "{mode:?} durability checkpoint through offset {attempted_watermark} failed \
+         (previous durable watermark: {previous_watermark:?}): {source}"
+    )]
+    DurabilityFailed {
+        /// Durability operation that failed.
+        mode: SyncMode,
+        /// Stream offset the checkpoint attempted to make durable.
+        attempted_watermark: u64,
+        /// Last successfully confirmed durable offset, if any.
+        previous_watermark: Option<u64>,
+        /// Triggering frame start for an automatic checkpoint.
+        frame_start: Option<u64>,
+        /// Triggering frame length for an automatic checkpoint.
+        wire_len: Option<u64>,
+        /// Underlying sink error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Renders `InvalidFrame`'s optional context as ` (declared_len=…, …)` — on
@@ -170,6 +214,33 @@ impl Error {
     pub fn unexpected_eof() -> Self {
         ErrorKind::UnexpectedEof.into()
     }
+
+    /// Creates the fail-stop rejection a poisoned writer/reader returns.
+    #[cold]
+    pub(crate) fn poisoned() -> Self {
+        ErrorKind::Poisoned.into()
+    }
+
+    /// Creates an error for a failed durability checkpoint.
+    #[cold]
+    pub(crate) fn durability_failed(
+        mode: SyncMode,
+        attempted_watermark: u64,
+        previous_watermark: Option<u64>,
+        frame_start: Option<u64>,
+        wire_len: Option<u64>,
+        source: std::io::Error,
+    ) -> Self {
+        ErrorKind::DurabilityFailed {
+            mode,
+            attempted_watermark,
+            previous_watermark,
+            frame_start,
+            wire_len,
+            source,
+        }
+        .into()
+    }
 }
 
 impl From<ErrorKind> for Error {
@@ -190,6 +261,28 @@ impl From<flatbuffers::InvalidFlatbuffer> for Error {
     #[cold]
     fn from(e: flatbuffers::InvalidFlatbuffer) -> Self {
         ErrorKind::FlatbuffersError(e).into()
+    }
+}
+
+/// The reverse of the `From<std::io::Error>` conversion above: translates a
+/// flatstream [`Error`] into a [`std::io::Error`] so application code that
+/// surfaces `io::Error` at its boundaries can use `?` on flatstream results.
+///
+/// The flatstream error becomes the I/O error's inner payload — recoverable via
+/// [`std::io::Error::get_ref`] / [`into_inner`](std::io::Error::into_inner), and
+/// forwarded by the I/O error's `Display`. An underlying [`ErrorKind::Io`]
+/// preserves its source kind, [`ErrorKind::UnexpectedEof`] maps to
+/// [`std::io::ErrorKind::UnexpectedEof`], and protocol/validation/durability
+/// failures map to [`std::io::ErrorKind::InvalidData`].
+impl From<Error> for std::io::Error {
+    #[cold]
+    fn from(e: Error) -> Self {
+        let kind = match e.kind() {
+            ErrorKind::Io(source) => source.kind(),
+            ErrorKind::UnexpectedEof => std::io::ErrorKind::UnexpectedEof,
+            _ => std::io::ErrorKind::InvalidData,
+        };
+        std::io::Error::new(kind, e)
     }
 }
 
@@ -236,5 +329,89 @@ mod tests {
         let err = Error::from(std::io::Error::other("disk fault"));
         let source = std::error::Error::source(&err).expect("io source");
         assert_eq!(source.to_string(), "disk fault");
+    }
+
+    #[test]
+    fn converts_protocol_error_into_invalid_data_preserving_the_error() {
+        // App boundaries that surface io::Error can `?` on flatstream results.
+        // The flatstream error is preserved as the io::Error's inner payload
+        // (downcastable), its Display is forwarded, and protocol failures use
+        // standard InvalidData control flow.
+        let flat = Error::invalid_frame("bad frame");
+        let display = flat.to_string();
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(io.to_string(), display);
+        let inner = io.get_ref().expect("inner payload");
+        assert!(
+            inner.downcast_ref::<Error>().is_some(),
+            "payload should be the original flatstream::Error"
+        );
+    }
+
+    #[test]
+    fn converts_underlying_io_error_preserving_standard_kind() {
+        let flat = Error::from(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "device refused the read",
+        ));
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(io.to_string(), "I/O error: device refused the read");
+        assert!(
+            io.get_ref()
+                .and_then(|inner| inner.downcast_ref::<Error>())
+                .is_some(),
+            "the original flatstream::Error remains the inner payload"
+        );
+    }
+
+    #[test]
+    fn durability_failure_does_not_masquerade_as_retryable_io() {
+        let flat = Error::durability_failed(
+            SyncMode::All,
+            128,
+            Some(64),
+            Some(64),
+            Some(64),
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "sync denied"),
+        );
+        let io: std::io::Error = flat.into();
+
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+        let flat = io
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Error>())
+            .expect("the durability context remains available");
+        assert!(matches!(
+            flat.kind(),
+            ErrorKind::DurabilityFailed {
+                attempted_watermark: 128,
+                previous_watermark: Some(64),
+                source,
+                ..
+            } if source.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn poisoned_rejection_is_typed_and_converts_to_invalid_data() {
+        // Callers distinguish "the stream is fail-stopped" from a fresh frame
+        // error by kind, never by message text.
+        let flat = Error::poisoned();
+        assert!(matches!(flat.kind(), ErrorKind::Poisoned));
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn unexpected_eof_survives_question_mark_conversion() {
+        fn boundary() -> std::result::Result<(), std::io::Error> {
+            let flat: Result<()> = Err(Error::unexpected_eof());
+            flat?; // uses From<Error> for io::Error
+            Ok(())
+        }
+        let error = boundary().expect_err("the flatstream error must propagate");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

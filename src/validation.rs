@@ -5,7 +5,7 @@
 //! strategy pattern to preserve orthogonality and zero-cost opt-out.
 
 use crate::error::{Error, Result};
-// no extra markers needed
+use std::fmt;
 
 /// A trait for message validation strategies.
 ///
@@ -26,7 +26,7 @@ pub trait Validator: Send + Sync {
 ///
 /// Serves as the zero-cost abstraction path: when used, the compiler can inline
 /// and eliminate the call entirely.
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct NoValidator;
 
 impl Validator for NoValidator {
@@ -190,6 +190,18 @@ impl Default for CompositeValidator {
 
 // Intentionally do not implement std::ops::Add to avoid surprising semantics.
 
+/// Boxed inner validators cannot derive `Debug`; render the pipeline by each
+/// validator's diagnostic [`name`](Validator::name), in evaluation order.
+impl fmt::Debug for CompositeValidator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut tuple = f.debug_tuple("CompositeValidator");
+        for validator in &self.validators {
+            tuple.field(&validator.name());
+        }
+        tuple.finish()
+    }
+}
+
 impl Validator for CompositeValidator {
     fn validate(&self, payload: &[u8]) -> Result<()> {
         for v in &self.validators {
@@ -207,6 +219,7 @@ impl Validator for CompositeValidator {
 ///
 /// This validator verifies that the payload contains a valid FlatBuffer whose
 /// root type is a specific generated table (e.g., `TelemetryEvent`).
+#[derive(Clone)]
 pub struct TypedValidator {
     opts: flatbuffers::VerifierOptions,
     verify: fn(
@@ -224,11 +237,20 @@ impl TypedValidator {
     /// non-capturing closure around the generated `root_as_*_with_opts`
     /// function:
     ///
-    /// ```ignore
-    /// TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
-    ///     telemetry::root_as_telemetry_event_with_opts(opts, payload).map(|_| ())
-    /// })
     /// ```
+    /// use flatstream::TypedValidator;
+    ///
+    /// // With generated code this closure would call
+    /// // `telemetry::root_as_telemetry_event_with_opts`; a string root stands
+    /// // in here so the snippet compiles without a schema. The shape is the
+    /// // same either way.
+    /// let validator = TypedValidator::from_verify_named("TelemetryEvent", |opts, payload| {
+    ///     flatbuffers::root_with_opts::<&str>(opts, payload).map(|_| ())
+    /// });
+    /// # let _ = validator;
+    /// ```
+    ///
+    /// `tests/validation_integration.rs` uses the real generated verifier.
     pub fn from_verify_named(
         name: &'static str,
         verify: fn(
@@ -302,6 +324,16 @@ impl TypedValidator {
 // schema-verifier constructors: `from_verify_named`,
 // `with_limits_from_verify_named`, etc.
 
+/// The verifier fn pointer has no useful `Debug` form; show the diagnostic
+/// name the constructor registered.
+impl fmt::Debug for TypedValidator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypedValidator")
+            .field("name", &self.name_static)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Validator for TypedValidator {
     #[inline]
     fn validate(&self, payload: &[u8]) -> Result<()> {
@@ -363,6 +395,26 @@ mod tests {
         let sv = TableRootValidator::new();
         let buf = build_empty_table();
         assert!(sv.validate(&buf).is_ok());
+    }
+
+    #[test]
+    fn boxed_validators_render_debug_by_diagnostic_name() {
+        // The manual Debug impls exist because boxed validators and verifier
+        // fn pointers cannot derive one; pin the exact rendering so the
+        // diagnostic names stay visible in logs.
+        let composite = CompositeValidator::new()
+            .add(SizeValidator::new(1, 10_000))
+            .add(TableRootValidator::new());
+        assert_eq!(
+            format!("{composite:?}"),
+            r#"CompositeValidator("SizeValidator", "TableRootValidator")"#
+        );
+
+        let typed = TypedValidator::from_verify_named("TelemetryEvent", |_, _| Ok(()));
+        assert_eq!(
+            format!("{typed:?}"),
+            r#"TypedValidator { name: "TelemetryEvent", .. }"#
+        );
     }
 
     #[test]

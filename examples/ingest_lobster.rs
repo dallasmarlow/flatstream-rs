@@ -299,6 +299,7 @@ fn main() -> IngestResult<()> {
     fs::create_dir_all(out_dir)?;
 
     let mut processed = 0usize;
+    let mut ingested = 0usize;
     for base in file_bases {
         let path = zips_dir.join(format!("{}.zip", base));
 
@@ -317,10 +318,23 @@ fn main() -> IngestResult<()> {
                 let m_out = out_dir.join(format!("{}-message.bin", base));
                 let o_out = out_dir.join(format!("{}-orderbook.bin", base));
                 let (mc, oc) = write_pair_streams(m_rdr, o_rdr, &m_out, &o_out)?;
+                // A pair that produced no records means the CSVs parsed to
+                // nothing — an empty .bin would otherwise sail through and only
+                // surface as a mysteriously fast benchmark later.
+                assert!(
+                    mc > 0 && oc > 0,
+                    "{base}: ingested an empty pair (messages: {mc}, orderbook: {oc})"
+                );
+                assert_eq!(
+                    mc, oc,
+                    "{base}: LOBSTER message and orderbook files are row-aligned by \
+                     construction, so their record counts must match"
+                );
                 // Write counts sidecar for benchmarks: simple, parseable text
                 let counts_path = out_dir.join(format!("{}-counts.txt", base));
                 let counts = format!("messages: {}\norderbook: {}\n", mc, oc);
                 std::fs::write(counts_path, counts)?;
+                ingested += 1;
             }
             (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
                 return Err(IngestError::MissingPair {
@@ -335,6 +349,14 @@ fn main() -> IngestResult<()> {
         processed += 1;
     }
 
-    debug_assert!(processed > 0);
+    // `processed` counts zips examined, including ones skipped for having no
+    // relevant CSVs — so it proves nothing on its own. `ingested` is the real
+    // success condition, and this must be a hard assert: a `debug_assert` here
+    // would vanish in the release builds this ingester actually runs in.
+    assert!(
+        ingested > 0,
+        "examined {processed} zip(s) but ingested none; no output was produced"
+    );
+    println!("[ingest_lobster] ingested {ingested} of {processed} zip(s) into {out_dir:?}");
     Ok(())
 }

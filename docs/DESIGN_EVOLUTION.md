@@ -1,8 +1,23 @@
-# FlatStream-RS Design Evolution: v1 to v2.6
+# FlatStream-RS Design Evolution: v1 to v2.7
+
+> **This is a historical record, not a statement of current behavior.**
+>
+> Every performance figure below ("84.1% faster", "4.55x faster reading",
+> "~8% overhead", the µs timings, and so on) was measured at the time of the
+> release it describes, on hardware and toolchains that are not recorded here
+> and are not the ones this crate is developed on today. They are kept because
+> the *reasoning* they drove is worth preserving — not because they reproduce.
+> Do not quote them, and do not carry them into README, rustdoc, or any consumer
+> conversation.
+>
+> Current, reproducible measurements live in `docs/benchmark/`, each with its
+> machine, toolchain, command, and threats-to-validity recorded. Releases from
+> v2.8 onward are documented in
+> `docs/DESIGN_v2_8.md` and its successors rather than here.
 
 ## Overview
 
-This document details the complete architectural evolution of `flatstream-rs` from a monolithic, enum-based design (v1) through a composable architecture (v2), to a performance-focused design (v2.5), and finally to the pragmatic hybrid approach (v2.6). This evolution represents a significant maturation of the library's design philosophy and demonstrates the application of Rust best practices for building extensible, maintainable libraries while balancing theoretical purity with real-world usability.
+This document details the architectural evolution of `flatstream-rs` from a monolithic, enum-based design (v1) through a composable architecture (v2), to a performance-focused design (v2.5), the pragmatic hybrid approach (v2.6), and the v2.7 validation layer. This evolution represents a significant maturation of the library's design philosophy and demonstrates the application of Rust best practices for building extensible, maintainable libraries while balancing theoretical purity with real-world usability.
 
 ## Table of Contents
 

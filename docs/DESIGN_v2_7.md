@@ -22,11 +22,10 @@ crate", #13) and the v0.2.7 release cut. The work landed in two waves:
 The organizing principle for both waves is unchanged from v2.6: zero-copy and
 zero-allocation invariants held at all three layers — dispatch (static generics on
 the framing/checksum/validation paths in their default configurations; deliberate
-opt-in exceptions: `MemoryPolicy` — one boxed call while consulted above its
-baseline, the boxed-call dispatch measured in a gate-open benchmark at ~1 ns over
-the no-policy path (§4 gives the full per-`write()` figures) —
-plus `CompositeValidator`, one boxed call per composed
-validator, and `TypedValidator`, a function-pointer call, both unmeasured), inlining (`#[inline]`
+opt-in exceptions at the time were `MemoryPolicy`, `CompositeValidator`, and
+`TypedValidator`; v0.2.8 subsequently made memory policies static, leaving one
+boxed call per composite validator and a function-pointer call for typed
+validation), inlining (`#[inline]`
 on thin forwarders, cold paths outlined), and algorithmic residue (no per-frame
 zeroing or allocation after the buffer reaches its high-water mark; "zero-copy"
 scopes to payload *access* — a generic `Read` source copies each frame once into
@@ -79,11 +78,10 @@ strategy:
 - `AdaptiveWatermarkPolicy` — hysteresis loop over a capacity/message-size ratio with
   optional time cooldown; `SizeThresholdPolicy` — explicit large-event/small-run
   variant; `NoOpPolicy` — benchmark baseline and wrapper filler.
-- The machinery is outlined off the hot paths (`#[cold]`/`#[inline(never)]` on the
-  reclaim path). Cost with no policy installed is a single predictable branch; the
-  baseline gate (consult the policy only while capacity exceeds its baseline) keeps
-  steady state at a plain integer compare. Measured per-`write()`: 8.7 ns no policy,
-  9.6 ns boxed no-op, 11.1 ns adaptive-installed-not-firing.
+- **Historical v0.2.7 carrier:** the initial implementation used an optional
+  boxed policy and boxed builder factory. v0.2.8 replaces both with generic
+  writer/reader policy state and a zero-sized `NoMemoryPolicy`; current
+  measurements are in `FINDINGS_STATIC_MEMORY_POLICY.md`.
 - **B8:** time-based triggers now read an injected `Clock` (`fn now(&self) ->
   Duration`, monotonic-since-origin) instead of calling `Instant::now()` directly.
   `AdaptiveWatermarkPolicy<C: Clock = MonotonicClock>` uses a generic default
@@ -260,11 +258,12 @@ pub enum ErrorKind { Io(..), ChecksumMismatch {..}, InvalidFrame {..},
     `instruction_bench` feature so a plain `cargo bench` skips it.
   - `examples.sh` — runs every maintained example, including their executable
     assertions; the LOBSTER ingest example exits cleanly when no corpus is present.
-  - `miri.sh` — Miri (nightly) over the in-src unit tests: UB detection at the
-    zero-copy buffer boundaries. Same no-rustup pattern as `fuzz.sh`: a rustup
-    nightly when installed, else the official nightly Linux container. `--lib`
-    scope by design; coverage expands with the slice-reader work, where the
-    offset arithmetic will concentrate.
+  - `miri.sh` — Miri (nightly) over the in-src unit tests plus the targeted
+    positioned-read integration suite: UB detection at zero-copy borrowing,
+    buffer, receipt, and offset boundaries. Same no-rustup pattern as `fuzz.sh`:
+    a rustup nightly when installed, else the official nightly Linux container.
+    Miri isolation cannot execute the suite's tempfile-backed `BufReader<File>`
+    case; that test is explicitly ignored under Miri and runs in the native gate.
 - **Inline audit:** `Messages::{next_message, next}` and
   `TypedMessages::{next_typed, next}` carry `#[inline]` so the iterator facade
   costs nothing cross-crate.
@@ -279,7 +278,10 @@ Smaller strands, listed for completeness:
   ancestors of B1's built-in bound; the write side rejects payloads over `u32::MAX`
   before framing.
 - **Reader ergonomics (#21):** `with_capacity`, `reserve`, `buffer_capacity`,
-  accessors (`get_ref`/`get_mut`/`deframer`), `into_inner`.
+  accessors (`get_ref`/`get_mut`/`deframer`), `into_inner`. (`get_mut` was
+  removed together with `get_ref` from readers and writers in the v0.2.8
+  pre-review correction round because out-of-band I/O invalidates receipt
+  accounting; `File` permits I/O through a shared reference.)
 - **Typed, zero-copy reading.** The `StreamDeserialize` trait plus
   `process_typed` / `process_typed_with_payload` and the `typed_messages()` →
   `TypedMessages<T>` iterator let callers pull already-verified typed views
@@ -361,12 +363,11 @@ points at:
 
 ## 12. Verification Summary
 
-- Tests: 140 (all_checksums, incl. doctests) / 110 (no features) /
-  117 (crc16-only), all green; clippy `--all-targets -D warnings` clean;
-  `cargo fmt --check` clean; rustdoc `-D warnings` clean. (The Phase B cut
-  measured 125/98/104 after the test-suite audit that removed duplicated and
-  vacuous tests — record: planning notes, 2026-07-09; the increase since is
-  the §11 recovery suite and frame-constant tests.)
+- The full `all_checksums`, no-features, and `crc16`-only test/doctest matrix was
+  green at the release cut; clippy `--all-targets -D warnings`, `cargo fmt
+  --check`, and rustdoc `-D warnings` were clean. Exact test counts are omitted
+  because additions to the suite make them stale without changing this release
+  record.
 - Wire-format conformance: byte-golden corpus tests against committed frame files
   (the format's bytes, not just its behavior, are pinned); an exhaustive
   truncation sweep asserting the spec §6 reader state machine at every byte

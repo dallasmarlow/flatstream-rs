@@ -1,6 +1,9 @@
 /target
+/docs/benchmark/raw/*.txt
+bench_results*.txt
 *.bin
 .DS_Store
+.ssh/
 tests/corpus/**/*-counts.txt
 tests/corpus/**/*.csv
 tests/corpus/**/*.zip

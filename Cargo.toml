@@ -1,6 +1,6 @@
 [package]
 name = "flatstream"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 rust-version = "1.97.1"
 authors = ["Dallas Marlow <dallasmarlow@gmail.com>"]
@@ -28,8 +28,8 @@ bumpalo = { version = "3.14", optional = true }
 
 [features]
 default = []
-xxhash = ["xxhash-rust"]
-crc32 = ["crc32fast"]
+xxhash = ["dep:xxhash-rust"]
+crc32 = ["dep:crc32fast"]
 crc16 = ["dep:crc16"]
 # Build the real flatc-generated example (requires you to run flatc to generate code under examples/generated)
 flatc_example = []
@@ -72,6 +72,10 @@ rand = "0.8"
 csv = "1.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+# A4 experiment only: these codecs compile for benchmarks/tests but are not
+# dependencies of the published library target.
+lz4_flex = "0.14.0"
+zstd = "0.13.3"
 
 [[bench]]
 name = "benchmarks"
@@ -130,6 +134,37 @@ harness = false
 
 [[bench]]
 name = "memory_policy_benchmarks"
+harness = false
+
+[[bench]]
+name = "vectored_framing"
+harness = false
+
+[[bench]]
+name = "write_pipeline_decomposition"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
+name = "sync_policy"
+harness = false
+
+[[bench]]
+name = "post_write_observer"
+harness = false
+
+[[bench]]
+name = "positioned_reads"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
+name = "read_path_copy"
+harness = false
+required-features = ["crc32"]
+
+[[bench]]
+name = "compression_feasibility"
 harness = false
 
 [[bench]]
