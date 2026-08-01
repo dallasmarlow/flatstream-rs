@@ -1,9 +1,8 @@
 # Raw benchmark output
 
-Committed Criterion output backing the `FINDINGS_*.md` docs. The project
-evidence standard and `FINDINGS_TEMPLATE.md` ask findings docs to cite a
-committed snapshot rather than a hand-summarized table, and this is where those
-snapshots live.
+Gitignored, machine-local Criterion output used to verify the summarized tables
+in the `FINDINGS_*.md` docs. Raw `.txt` files in this directory are deliberately
+excluded from release commits.
 
 Produce them with `scripts/bench_isolated.sh`, which runs **one benchmark group
 at a time** and stamps each new file with the date, toolchain, host/CPU, git
@@ -41,8 +40,8 @@ that drift manufactured a 34% "win" that did not survive isolation
 (`FINDINGS_VECTORED_FRAMING.md` threat T1). One group at a time, machine
 otherwise idle.
 
-Overwriting a file when re-collecting on different hardware is expected — the
-header records which machine produced it, so `git log` carries the history.
+Use a distinct slug when re-collecting on different hardware if both local
+snapshots should be retained; each header records the producing environment.
 
 Snapshots collected before the current stamping format do not contain every
 field above. In particular, a legacy header without git/dirty/lock metadata
@@ -51,7 +50,7 @@ historical record, apply the limitations stated in their findings document, and
 do not promote them into a new or final-hardened performance claim without a
 same-revision recollection.
 
-## Current snapshots
+## Expected local snapshots
 
 | Snapshot | Cited by | State |
 |---|---|---|
@@ -79,7 +78,6 @@ same-revision recollection.
 | `b3_post_write_observer.txt` | `FINDINGS_POST_WRITE_OBSERVER.md` | historical pre-final-writer Criterion snapshot |
 | `b3_instruction_counts.txt` | `FINDINGS_POST_WRITE_OBSERVER.md` | historical pre-final-writer instruction snapshot |
 | `d_point_read_counted.txt` | `FINDINGS_POSITIONED_READS.md` | corrected counted point-read snapshot |
-| `a4_palimpsest_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three modeled payload sizes |
 | `a4_compressible_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three sizes plus required 64 KiB recheck |
 | `a4_incompressible_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three deterministic control sizes |
 

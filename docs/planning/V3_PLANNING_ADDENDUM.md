@@ -23,7 +23,7 @@ Its useful core idea shipped in **0.2.8**.
 `FINDINGS_VECTORED_FRAMING.md` records the corrected design — two `IoSlice`s
 inside the existing `DefaultFramer` and `ChecksumFramer`, adopted as the default,
 byte-identical on the wire — and the golden hex corpus passes unchanged. The
-isolated raw benchmark results and required rechecks are now committed.
+isolated raw benchmark results and required rechecks are retained locally.
 
 The old proposal was actively wrong against the shipped library: it claimed
 `writev` provided all-or-nothing atomicity, priced syscalls with unsupported

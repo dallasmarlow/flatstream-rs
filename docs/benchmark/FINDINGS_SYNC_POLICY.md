@@ -3,7 +3,7 @@
 **Author:** maintainer-directed E3 implementation
 **Date:** 2026-07-24
 **Status:** historical pre-final-writer measurements — Criterion and pinned
-instruction-count raw outputs committed. Final writer hardening and the restored
+instruction-count raw outputs retained locally. Final writer hardening and the restored
 interval policy are not characterized by these dispatch numbers; retain the
 cadence/storage findings, but recollect before publishing per-frame policy cost.
 

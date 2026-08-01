@@ -69,7 +69,7 @@ therefore makes no cross-revision nanosecond claim.
 ### Pinned instruction-count sanity check
 
 The current default `write_default` workload executes 26,812 instructions per
-100 frames. The preceding committed pinned snapshot
+100 frames. The preceding locally retained pinned snapshot
 (`e4_instruction_counts.txt`) recorded 26,771: **+41 instructions per 100
 frames (+0.15%, 0.41/frame)** across the full correction-set revision. Treat
 that as an upper bound, not an exact observer attribution: the run includes the

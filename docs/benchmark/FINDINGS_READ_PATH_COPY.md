@@ -7,7 +7,7 @@ group at a time, with the CRC-32 256 KiB point recollected (see Findings)
 
 > This document is the A3 deliverable: `benches/read_path_copy.rs` plus the
 > measured result below. Numbers were collected one group at a time with
-> `scripts/bench_isolated.sh` (§4) and the stamped raw snapshots are committed
+> `scripts/bench_isolated.sh` (§4); stamped raw snapshots are retained locally
 > under `docs/benchmark/raw/`.
 
 ## Hypothesis

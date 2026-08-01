@@ -429,8 +429,9 @@ are stable within one recorded compiler/dependency/target/tool environment.
 Counts from different environments are not comparable. Criterion baselines
 (`--save-baseline` / `--baseline`) remain useful for local regression triage and
 live in machine-local `target/criterion`, but published wall-clock claims use
-A/B arms from one isolated `scripts/bench_isolated.sh` run; committed findings
-and raw snapshots under `docs/benchmark/` record the evidence.
+A/B arms from one isolated `scripts/bench_isolated.sh` run. Committed findings
+under `docs/benchmark/` record the reviewed result; stamped raw output remains
+gitignored and machine-local.
 
 ### Running the gate in a clean container
 

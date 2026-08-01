@@ -2,7 +2,7 @@
 
 **Author:** contributor (E1)
 **Date:** 2026-07-24
-**Status:** complete — isolated raw `File`, TCP, and `BufWriter` outputs committed
+**Status:** complete — isolated raw `File`, TCP, and `BufWriter` outputs retained locally
 
 ## Hypothesis
 
@@ -94,8 +94,9 @@ per-byte cost.
 ## Findings
 
 All figures below are ns/record, Criterion median with the 95 % CI in brackets.
-Raw output is committed in `docs/benchmark/raw/e1_{file,tcp,bufwriter}.txt`;
-required surprising-result rechecks are `e1_file_recheck.txt` and
+Local raw output is retained in
+`docs/benchmark/raw/e1_{file,tcp,bufwriter}.txt`; required
+surprising-result rechecks are `e1_file_recheck.txt` and
 `e1_bufwriter_recheck.txt`.
 
 ### F1. Unbuffered sinks — the win

@@ -2,10 +2,8 @@
 //!
 //! This is an experiment, not a wire-format proposal. It compares identity
 //! access, LZ4 block compression, and Zstandard level 1 over three payload
-//! distributions and three frame-size classes:
+//! size classes for two deterministic control distributions:
 //!
-//! - deterministic FlatBuffers produced by Palimpsest's current
-//!   `Frame { first_seq, rows, mean_ink }` encoder;
 //! - a highly compressible repeated terminal-output pattern;
 //! - deterministic xorshift bytes (the incompressible control).
 //!
@@ -18,8 +16,8 @@
 //! group before Criterion starts, avoiding cross-group machine drift:
 //!
 //! ```text
-//! A4_CASE=palimpsest_4k \
-//!   scripts/bench_isolated.sh a4_palimpsest_4k compression_feasibility '' \
+//! A4_CASE=compressible_4k \
+//!   scripts/bench_isolated.sh a4_compressible_4k compression_feasibility '' \
 //!   -- --locked
 //! ```
 
@@ -40,10 +38,6 @@ const SIZE_CLASSES: [(&str, &str, usize); 3] = [
     ("64k", "64KiB", 64 * 1024),
     ("256k", "256KiB", 256 * 1024),
 ];
-
-const PALIMPSEST_4K: &[u8] = include_bytes!("a4_palimpsest_4k.bin");
-const PALIMPSEST_64K: &[u8] = include_bytes!("a4_palimpsest_64k.bin");
-const PALIMPSEST_256K: &[u8] = include_bytes!("a4_palimpsest_256k.bin");
 
 fn lz4_table(input_len: usize) -> CompressTable {
     if input_len < u16::MAX as usize {
@@ -277,18 +271,6 @@ fn compression_feasibility(c: &mut Criterion) {
     let should_run = |case: &str| selected.as_deref().is_none_or(|value| value == case);
     let mut cases_run = 0usize;
 
-    let palimpsest = [
-        ("4k", "4KiB", PALIMPSEST_4K),
-        ("64k", "64KiB", PALIMPSEST_64K),
-        ("256k", "256KiB", PALIMPSEST_256K),
-    ];
-    for (suffix, size, input) in palimpsest {
-        if should_run(&format!("palimpsest_{suffix}")) {
-            benchmark_case(c, "palimpsest", size, input);
-            cases_run += 1;
-        }
-    }
-
     for (suffix, size, bytes) in SIZE_CLASSES {
         if should_run(&format!("compressible_{suffix}")) {
             let input = highly_compressible(bytes);
@@ -307,7 +289,7 @@ fn compression_feasibility(c: &mut Criterion) {
 
     assert!(
         cases_run > 0,
-        "unknown A4_CASE {:?}; expected <palimpsest|compressible|incompressible>_<4k|64k|256k>",
+        "unknown A4_CASE {:?}; expected <compressible|incompressible>_<4k|64k|256k>",
         selected
     );
 }

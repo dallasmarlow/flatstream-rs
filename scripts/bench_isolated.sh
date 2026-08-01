@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one benchmark group at a time and commit the raw output.
+# Run one benchmark group at a time and retain gitignored raw output locally.
 #
 # Why one group at a time: on the development laptop, unchanged code moved by
 # -24% and +57% between consecutive full-suite runs, and the drift produced a
@@ -11,8 +11,7 @@
 # The rule that follows: only A-vs-B pairs collected inside a single isolated
 # run are admissible, and a surprising delta gets re-collected before it is
 # written down. This script makes the isolated run the easy path and drops the
-# raw output where a findings doc can cite it (the evidence standard requires a
-# committed snapshot, not a hand-summary).
+# raw output where a findings doc can verify its summarized measurements.
 #
 # Usage:
 #   scripts/bench_isolated.sh <slug> <bench-name> [criterion-filter] [-- cargo-args...]

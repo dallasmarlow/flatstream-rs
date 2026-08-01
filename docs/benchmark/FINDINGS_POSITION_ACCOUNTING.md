@@ -2,7 +2,7 @@
 
 **Author:** A2 position-accounting characterization
 **Date:** 2026-07-25
-**Status:** historical characterization — pinned raw output committed at
+**Status:** historical characterization — pinned raw output retained locally as
 `docs/benchmark/raw/a2_position_accounting.txt`. The reader results remained
 stable, but final writer poisoning/exact partial-write accounting changed
 writer codegen enough that the writer deltas below are superseded and must not

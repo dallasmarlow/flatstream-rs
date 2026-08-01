@@ -14,11 +14,11 @@ Latest completed contributor work:
   and partial-frame retry. Miri isolation cannot open the suite's tempfile-backed
   `File`; that case is explicitly ignored there and remains covered by the native
   gate.
-- **A3:** the generic `Read` copy-cost baseline is complete, with the benchmark,
-  isolated raw snapshots, and findings recorded under `docs/benchmark/`.
-- **A4:** compression feasibility — fingerprinted Palimpsest-shaped modeled
-  payloads saved substantial bytes, but LZ4/Zstandard level 1 slowed the
-  current buffered, flush-only file path; no production adapter follows.
+- **A3:** the generic `Read` copy-cost baseline is complete, with the benchmark
+  and findings recorded under `docs/benchmark/`; raw snapshots remain local.
+- **A4:** compression feasibility — even the highly compressible control became
+  slower under LZ4/Zstandard level 1 in the buffered, flush-only file path; no
+  production adapter follows.
 - **C6:** position-accounting fault semantics — four self-asserting tests
   (`tests/position_accounting_faults.rs`) over a custom `read_vectored` deframer,
   retained bytes before `UnexpectedEof`, device errors counting only returned
@@ -26,7 +26,7 @@ Latest completed contributor work:
   correction removed direct reader/writer access rather than preserving its
   accounting hazards.
 - **A2:** position-accounting instruction counts, including DCE-resistant
-  writer/read baselines and committed pinned raw output.
+  writer/read baselines and locally retained pinned raw output.
 - **C5:** real-file live-tail retry behavior over separate handles for default
   and CRC-32 framing, clean boundary EOF, and non-EOF device errors.
 
@@ -40,10 +40,10 @@ external format manifest.
 2. Run `scripts/gate.sh` on the final commit.
 3. On the reference machine, run Docker/MSRV, Miri, or fuzz only when the final
    diff changes those boundaries; report exactly what was run.
-4. Verify Palimpsest against the final pinned revision and update its manifest/
-   migration notes for any incompatible application format change. Interval,
-   frame, and byte durability policies are available but remain application
-   opt-ins; Palimpsest's current runtime continues to use explicit flushes.
+4. Verify downstream consumers against the final pinned revision and update
+   their manifests or migration notes for any incompatible application format
+   change. Interval, frame, and byte durability policies remain application
+   opt-ins.
 5. Peer review should focus on:
    - receipt and byte-position semantics after partial I/O;
    - live-file retry versus finalized recovery;

@@ -9,8 +9,8 @@
 > **Current workflow (2026-08-01):** follow the README's "Benchmarking and
 > updating performance figures" section. Use
 > `scripts/bench_isolated.sh`, compare A/B arms collected inside the same
-> isolated run, and commit a stamped raw snapshot plus a completed findings
-> document. Cross-run Criterion baselines are local triage only.
+> isolated run, retain the stamped raw snapshot locally, and commit a completed
+> findings document. Cross-run Criterion baselines are local triage only.
 
 ## Overview
 

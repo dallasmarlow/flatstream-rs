@@ -62,8 +62,8 @@ The stable result is allocation behavior, not universal throughput:
 - warmed caller scratch allocates zero times;
 - the best source wrapper depends on frame size and OS read behavior.
 
-Palimpsest currently also opens the segment file per cache miss. That open cost
-is outside this benchmark; keeping segment handles open is an application-level
+Some consumers also open a segment file per cache miss. That open cost is
+outside this benchmark; keeping segment handles open is an application-level
 decision and must be measured separately.
 
 ### Forward tracking overhead
@@ -85,7 +85,7 @@ read regression from byte counting and receipt arithmetic.
 query. Ship it primarily for ownership/allocation control; the clear 4 KiB
 bare-file improvement is mechanism-aligned, while source buffering and
 large-frame elapsed time remain workload-dependent. Recommend a retained
-`BufReader<File>` for Palimpsest's smaller frames only after application
+`BufReader<File>` for smaller frames only after application
 measurement. Forward position tracking has no resolved wall-clock cost in the
 paired benchmark.
 
@@ -94,5 +94,5 @@ paired benchmark.
 - One Apple M4/macOS/filesystem.
 - Hot page cache; no storage-latency or cold-cache characterization.
 - File-open and application LRU costs excluded.
-- Payloads are synthetic FlatBuffer vectors; Palimpsest frames have different
-  schema and size distributions.
+- Payloads are synthetic FlatBuffer vectors; application frames may have
+  different schema and size distributions.

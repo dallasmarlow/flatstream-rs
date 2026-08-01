@@ -96,7 +96,7 @@ Even setting merit aside, adding `inner: F` to `ChecksumFramer<C>` /
 - Adds a second generic parameter to the crate's most-used checksummed framer,
   so every downstream signature that names `ChecksumFramer<C>` /
   `ChecksumDeframer<C>` (examples, tests, the `ChecksumFramer<C>` re-exports,
-  Palimpsest's `CRC-32` frames) gains a type parameter for no behavioral gain.
+  existing `CRC-32` consumers) gains a type parameter for no behavioral gain.
 - Invites exactly the incoherent chains of §3.2 into the type system, which then
   need documentation and tests to explain why they are wrong.
 - Spends a breaking change (cheap per §1, but not free in churn) to reach a state

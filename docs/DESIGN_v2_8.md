@@ -433,7 +433,7 @@ function** that owns nothing:
   read as though the start offset still had to be added.
 
 The old supported pattern allocated a fresh reader and frame buffer per lookup.
-Palimpsest also needed forward receipts to retire its remaining
+The reference consumer also needed forward receipts to retire its remaining
 `8 + payload.len()` resume-scan arithmetic.
 
 **Implemented surface.**

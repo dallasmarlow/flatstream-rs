@@ -2,7 +2,7 @@
 
 **Author:** contributor (A1)
 **Date:** 2026-07-24
-**Status:** complete — isolated raw output committed at
+**Status:** complete — isolated raw output retained locally at
 `docs/benchmark/raw/a1_write_pipeline.txt`
 
 ## Hypothesis

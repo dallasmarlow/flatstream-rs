@@ -45,9 +45,9 @@
 
 ## Findings
 
-> The numbers, with the comparison basis stated for each. Tables welcome. Paste
-> the raw Criterion/Gungraun output or link to a committed snapshot — not a
-> hand-summarized version.
+> The numbers, with the comparison basis stated for each. Tables welcome. Keep
+> the gitignored raw Criterion/Gungraun output locally so reviewers can verify
+> the summarized values.
 
 ## Conclusion
 
