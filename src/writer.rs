@@ -35,6 +35,9 @@ impl<'a> BuilderFactory<'a, DefaultAllocator> for DefaultBuilderFactory {
 }
 
 /// Statically dispatched writer memory-policy state.
+// The derives apply when the policy and builder factory are themselves
+// `Debug`/`Clone` (closure factories usually are not).
+#[derive(Debug, Clone)]
 pub struct WriterMemoryPolicy<P, B> {
     policy: P,
     baseline_capacity: usize,
@@ -90,20 +93,57 @@ where
     }
 }
 
-/// Wraps the underlying writer and counts bytes handed to it, so a
-/// `StreamWriter` can report the offset and on-wire length of each frame (see
-/// [`FrameReceipt`]) without the `Framer` trait having to report anything. The
-/// count reflects bytes *actually accepted* by `W`, so it stays correct for any
-/// framer, custom ones included.
+/// Wraps the underlying writer and advances a stream position by bytes actually
+/// accepted, so a `StreamWriter` can report each [`FrameReceipt`] without the
+/// `Framer` trait reporting lengths. The position starts at zero or a
+/// caller-supplied append offset and stays exact for custom framers too.
 struct CountingWriter<W> {
     inner: W,
+    /// Absolute stream position. A nonzero initial value is installed before
+    /// I/O through `StreamWriter::with_start_offset`.
     count: u64,
+    position_overflowed: bool,
 }
 
 impl<W> CountingWriter<W> {
     #[inline]
     fn new(inner: W) -> Self {
-        Self { inner, count: 0 }
+        Self {
+            inner,
+            count: 0,
+            position_overflowed: false,
+        }
+    }
+
+    fn set_start_offset(&mut self, offset: u64) -> Result<()> {
+        if self.count != 0 || self.position_overflowed {
+            return Err(Error::invalid_frame(
+                "start offset must be configured before any stream I/O",
+            ));
+        }
+        self.count = offset;
+        Ok(())
+    }
+
+    #[inline]
+    fn record_accepted(&mut self, accepted: usize) -> std::io::Result<()> {
+        match self.count.checked_add(accepted as u64) {
+            Some(position) => {
+                self.count = position;
+                Ok(())
+            }
+            None => {
+                // The sink has already accepted these bytes. Preserve the
+                // largest representable position, fail the operation, and let
+                // StreamWriter poison itself so no later receipt can wrap.
+                self.count = u64::MAX;
+                self.position_overflowed = true;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "stream position exceeds u64",
+                ))
+            }
+        }
     }
 
     #[inline]
@@ -120,40 +160,38 @@ impl<W> CountingWriter<W> {
 impl<W: Write> Write for CountingWriter<W> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.inner.write(buf)?;
-        self.count += n as u64;
+        let remaining = usize::try_from(u64::MAX - self.count).unwrap_or(usize::MAX);
+        if !buf.is_empty() && remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "stream position exceeds u64",
+            ));
+        }
+        let n = self.inner.write(&buf[..buf.len().min(remaining)])?;
+        self.record_accepted(n)?;
         Ok(n)
     }
 
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        // Delegate to the inner writer's own (possibly optimized) `write_all`
-        // and count only on success. A mid-frame error tears the frame and the
-        // stream is recovered/truncated per the recovery contract, so a partial
-        // count we cannot observe here does not affect a well-formed stream.
-        self.inner.write_all(buf)?;
-        self.count += buf.len() as u64;
-        Ok(())
-    }
-
     /// Overriding the vectored path preserves E1's single-syscall framing; it is
-    /// **not** what keeps the byte count correct. `Write`'s provided
-    /// `write_vectored` forwards to `self.write`, and this wrapper is the
-    /// outermost sink in the stack, so its overridden `write`/`write_all` still
-    /// tally every byte with or without this method — removing the override was
-    /// checked to leave every [`FrameReceipt`] and `bytes_written()` exact.
-    /// What the override protects is the vectored write itself: the built-in
-    /// framers emit each frame as one `write_vectored`, and without this method
-    /// that call falls back to two scalar `write`s (header, then payload via the
-    /// partial-write loop), silently reverting the syscall-halving E1 exists for
-    /// on `File`/`TcpStream` — correct bytes, correct offsets, lost vectoring.
-    /// Delegating to the inner `write_vectored` keeps the frame on the wire in
-    /// one call. `receipts_are_correct_for_a_vectoring_sink` pins the call shape
-    /// (that frames genuinely take the vectored path), not merely the offsets.
+    /// not required for correctness: the provided fallback calls this wrapper's
+    /// counted `write`. The override delegates native vectoring to the inner
+    /// sink so built-in framing retains its one-call shape.
+    ///
+    /// `write_all` is intentionally *not* overridden. Its provided
+    /// implementation loops through this wrapper's `write`, which means bytes
+    /// accepted before a later error remain visible in `bytes_written`.
     #[inline]
     fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let remaining = u64::MAX - self.count;
+        let requested: u128 = bufs.iter().map(|buf| buf.len() as u128).sum();
+        if requested > remaining as u128 {
+            if let Some(first) = bufs.iter().find(|buf| !buf.is_empty()) {
+                return self.write(first);
+            }
+            return Ok(0);
+        }
         let n = self.inner.write_vectored(bufs)?;
-        self.count += n as u64;
+        self.record_accepted(n)?;
         Ok(n)
     }
 
@@ -175,8 +213,20 @@ pub enum PostWriteOutcome<'a> {
     Succeeded(FrameReceipt),
     /// The caller's [`StreamSerialize`] implementation failed before framing.
     SerializationFailed(&'a Error),
-    /// Framing or sink I/O failed before a complete frame was accepted.
-    WriteFailed(&'a Error),
+    /// Framing or sink I/O failed.
+    ///
+    /// `bytes_accepted` is exact even when a custom framer uses
+    /// [`Write::write_all`] and the sink fails after a partial write. A nonzero
+    /// value poisons the writer; consume and recover/truncate the sink before
+    /// constructing a replacement writer.
+    WriteFailed {
+        /// Position at which the attempted frame began.
+        frame_start: u64,
+        /// Bytes accepted before the failure.
+        bytes_accepted: u64,
+        /// Error returned to the caller.
+        error: &'a Error,
+    },
     /// The frame was accepted, but its automatic durability checkpoint failed.
     ///
     /// The receipt identifies the accepted frame; callers must not re-emit it.
@@ -189,7 +239,8 @@ pub enum PostWriteOutcome<'a> {
 /// Post-operation information delivered to a [`PostWriteObserver`].
 #[derive(Debug)]
 pub struct PostWriteEvent<'a> {
-    /// Serialized payload length. `None` only when serialization itself failed.
+    /// Serialized payload length. `None` when serialization failed or when a
+    /// previously poisoned writer rejected the operation before serialization.
     pub payload_len: Option<usize>,
     /// Elapsed time through completion of the operation, excluding the
     /// observer callback itself.
@@ -297,6 +348,19 @@ where
 /// bookkeeping, and any automatic durability checkpoint resolve. The default
 /// [`NoPostWriteObserver`] is zero-sized and enables no timing or callback work.
 ///
+/// ## Failed writes are fail-stop
+///
+/// If framing fails after the sink accepted any bytes, the stream ends in a
+/// partial frame. The writer records those bytes, reports them through
+/// [`PostWriteOutcome::WriteFailed`], and becomes poisoned: later writes and
+/// durability checkpoints are rejected with
+/// [`ErrorKind::Poisoned`](crate::ErrorKind::Poisoned), and
+/// [`is_poisoned`](Self::is_poisoned) reports the state without provoking it.
+/// Consume it with [`into_inner`](Self::into_inner),
+/// stop all writing, recover/truncate the torn tail, and construct a new writer
+/// at the recovered offset. An error that accepted zero bytes does not poison
+/// the writer and may be retried.
+///
 /// ## Custom Allocators
 ///
 /// While the `with_builder` constructor allows providing a custom `FlatBufferBuilder`,
@@ -325,11 +389,11 @@ pub struct StreamWriter<
     framer: F,
     builder: FlatBufferBuilder<'a, A>,
     memory: M,
-    /// Offset that [`FrameReceipt`] offsets and [`StreamWriter::bytes_written`]
-    /// are measured from. 0 unless set via [`StreamWriter::with_start_offset`].
-    start_offset: u64,
     sync: S,
     observer: O,
+    /// A failed frame that accepted bytes destroys append alignment. Keep the
+    /// writer fail-stop until the sink is consumed and recovered.
+    poisoned: bool,
 }
 
 /// A [`StreamWriter`] fixed to the default allocator and a `'static` builder
@@ -354,7 +418,10 @@ pub type OwnedStreamWriter<W, F, S = NoSync, M = NoMemoryPolicy, O = NoPostWrite
 /// given to [`StreamWriter::with_start_offset`] for a writer positioned over a
 /// nonzero region of a file), so they can be recorded in an external index and
 /// used to seek a reader — no `8 + payload_len` wire arithmetic in caller code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Receipts are plain values: hashable for index keys, and ordered by
+/// `frame_start` (then `wire_len`) — stream order for receipts from one stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FrameReceipt {
     /// Offset of the frame's first byte, measured from the writer's start
     /// offset — so it is an absolute file offset whenever
@@ -366,9 +433,19 @@ pub struct FrameReceipt {
 }
 
 impl FrameReceipt {
+    /// Returns the exact end offset when the coordinates are representable.
+    pub const fn checked_end(&self) -> Option<u64> {
+        self.frame_start.checked_add(self.wire_len)
+    }
+
     /// Offset one past this frame's final byte.
+    ///
+    /// Receipts produced by flatstream are checked while bytes are counted and
+    /// never overflow. A manually constructed receipt with invalid coordinates
+    /// saturates at `u64::MAX`; use [`checked_end`](Self::checked_end) when
+    /// validating externally supplied receipt fields.
     pub const fn end(&self) -> u64 {
-        self.frame_start + self.wire_len
+        self.frame_start.saturating_add(self.wire_len)
     }
 
     /// The frame's exact byte range on the wire.
@@ -392,9 +469,9 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             framer,
             builder: FlatBufferBuilder::new(),
             memory: NoMemoryPolicy,
-            start_offset: 0,
             sync: NoSync,
             observer: NoPostWriteObserver,
+            poisoned: false,
         }
     }
 
@@ -406,9 +483,9 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             framer,
             builder,
             memory: NoMemoryPolicy,
-            start_offset: 0,
             sync: NoSync,
             observer: NoPostWriteObserver,
+            poisoned: false,
         }
     }
 
@@ -421,9 +498,9 @@ impl<'a, W: Write, F: Framer> StreamWriter<'a, W, F, DefaultAllocator, NoSync, N
             framer,
             builder: FlatBufferBuilder::with_capacity(capacity),
             memory: NoMemoryPolicy,
-            start_offset: 0,
             sync: NoSync,
             observer: NoPostWriteObserver,
+            poisoned: false,
         }
     }
 }
@@ -445,9 +522,9 @@ impl<'a, W: Write, F: Framer, S, M, O> StreamWriter<'a, W, F, DefaultAllocator, 
             framer: self.framer,
             builder: self.builder,
             memory: WriterMemoryPolicy::new(policy, DefaultBuilderFactory),
-            start_offset: self.start_offset,
             sync: self.sync,
             observer: self.observer,
+            poisoned: self.poisoned,
         }
     }
 }
@@ -483,9 +560,9 @@ where
             framer,
             builder,
             memory: NoMemoryPolicy,
-            start_offset: 0,
             sync: NoSync,
             observer: NoPostWriteObserver,
+            poisoned: false,
         }
     }
 }
@@ -518,9 +595,9 @@ where
             framer: self.framer,
             builder: self.builder,
             memory: WriterMemoryPolicy::new(policy, make_builder),
-            start_offset: self.start_offset,
             sync: self.sync,
             observer: self.observer,
+            poisoned: self.poisoned,
         }
     }
 
@@ -547,6 +624,29 @@ where
                 outcome,
             });
         }
+    }
+
+    #[inline]
+    fn reject_if_poisoned(
+        &mut self,
+        started: Option<Instant>,
+        payload_len: Option<usize>,
+    ) -> Result<()> {
+        if !self.poisoned {
+            return Ok(());
+        }
+        let error = Error::poisoned();
+        let frame_start = self.writer.count;
+        self.observe_write(
+            started,
+            payload_len,
+            PostWriteOutcome::WriteFailed {
+                frame_start,
+                bytes_accepted: 0,
+                error: &error,
+            },
+        );
+        Err(error)
     }
 
     /// Writes a serializable item to the stream using the internally managed builder.
@@ -588,6 +688,7 @@ where
     #[inline]
     pub fn write_with_receipt<T: StreamSerialize>(&mut self, item: &T) -> Result<FrameReceipt> {
         let started = Self::observation_start();
+        self.reject_if_poisoned(started, None)?;
 
         // Reset the internal builder for reuse
         self.builder.reset();
@@ -605,16 +706,24 @@ where
 
         // Delegate framing and writing to the strategy, bracketing it with the
         // byte counter so the receipt reflects exactly what reached the wire.
-        let frame_start = self.start_offset + self.writer.count;
+        let frame_start = self.writer.count;
         if let Err(error) = self.framer.frame_and_write(&mut self.writer, payload) {
+            let bytes_accepted = self.writer.count.saturating_sub(frame_start);
+            if bytes_accepted != 0 || self.writer.position_overflowed {
+                self.poisoned = true;
+            }
             self.observe_write(
                 started,
                 Some(last_message_size),
-                PostWriteOutcome::WriteFailed(&error),
+                PostWriteOutcome::WriteFailed {
+                    frame_start,
+                    bytes_accepted,
+                    error: &error,
+                },
             );
             return Err(error);
         }
-        let wire_len = (self.start_offset + self.writer.count) - frame_start;
+        let wire_len = self.writer.count - frame_start;
 
         // Static dispatch: `NoMemoryPolicy` compiles this call away.
         self.memory
@@ -701,19 +810,28 @@ where
         // Get the finished payload from the builder
         let payload = builder.finished_data();
         let payload_len = payload.len();
+        self.reject_if_poisoned(started, Some(payload_len))?;
 
         // Delegate framing and writing to the strategy, bracketing it with the
         // byte counter so the receipt reflects exactly what reached the wire.
-        let frame_start = self.start_offset + self.writer.count;
+        let frame_start = self.writer.count;
         if let Err(error) = self.framer.frame_and_write(&mut self.writer, payload) {
+            let bytes_accepted = self.writer.count.saturating_sub(frame_start);
+            if bytes_accepted != 0 || self.writer.position_overflowed {
+                self.poisoned = true;
+            }
             self.observe_write(
                 started,
                 Some(payload_len),
-                PostWriteOutcome::WriteFailed(&error),
+                PostWriteOutcome::WriteFailed {
+                    frame_start,
+                    bytes_accepted,
+                    error: &error,
+                },
             );
             return Err(error);
         }
-        let wire_len = (self.start_offset + self.writer.count) - frame_start;
+        let wire_len = self.writer.count - frame_start;
 
         let receipt = FrameReceipt {
             frame_start,
@@ -756,11 +874,26 @@ where
         &self.framer
     }
 
-    /// The current stream offset: the start offset plus every byte framed and
-    /// written so far. Equivalently, the `frame_start` the next written frame
-    /// will receive. See [`FrameReceipt`].
+    /// The current absolute or stream-relative offset. Equivalently, the
+    /// `frame_start` the next written frame will receive. After a partial frame
+    /// failure it includes every byte the sink accepted before the writer was
+    /// poisoned.
     pub fn bytes_written(&self) -> u64 {
-        self.start_offset + self.writer.count
+        self.writer.count
+    }
+
+    /// Whether an earlier failed frame poisoned this writer.
+    ///
+    /// A poisoned writer is fail-stop: the sink holds a partial frame, so its
+    /// next byte is no longer a frame boundary, and writes, durability
+    /// checkpoints, and rebasing are rejected with
+    /// [`ErrorKind::Poisoned`](crate::ErrorKind::Poisoned). Recover by
+    /// consuming the writer with [`into_inner`](Self::into_inner),
+    /// recovering/truncating the torn tail, and constructing a replacement at
+    /// the recovered offset. An error that accepted zero bytes does not
+    /// poison, so `false` after a failed write means the write may be retried.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned
     }
 
     /// Installs a statically dispatched post-write observer.
@@ -780,33 +913,9 @@ where
             framer: self.framer,
             builder: self.builder,
             memory: self.memory,
-            start_offset: self.start_offset,
             sync: self.sync,
             observer,
-        }
-    }
-
-    /// Installs a statically dispatched durability policy.
-    ///
-    /// The returned writer has a different concrete sync-state type. The
-    /// default [`NoSync`] writer remains branch-free and works with any
-    /// [`Write`]; installing a policy requires a [`Durable`] sink.
-    #[must_use]
-    pub fn with_sync_policy<P: SyncPolicy>(
-        self,
-        policy: P,
-    ) -> StreamWriter<'a, W, F, A, Syncing<P>, M, O>
-    where
-        W: Durable,
-    {
-        StreamWriter {
-            writer: self.writer,
-            framer: self.framer,
-            builder: self.builder,
-            memory: self.memory,
-            start_offset: self.start_offset,
-            sync: Syncing::new(policy),
-            observer: self.observer,
+            poisoned: self.poisoned,
         }
     }
 
@@ -815,11 +924,15 @@ where
     ///
     /// Use it when the underlying writer is positioned over a nonzero region of
     /// a file (e.g. appending to an existing journal) and you want receipts to
-    /// carry absolute file offsets. Defaults to 0; set it before writing.
-    #[must_use]
-    pub fn with_start_offset(mut self, offset: u64) -> Self {
-        self.start_offset = offset;
-        self
+    /// carry absolute file offsets. Defaults to 0. This returns an error if any
+    /// stream I/O has already occurred, preventing a rebase from invalidating
+    /// existing receipts or durable watermarks.
+    pub fn with_start_offset(mut self, offset: u64) -> Result<Self> {
+        if self.poisoned {
+            return Err(Error::poisoned());
+        }
+        self.writer.set_start_offset(offset)?;
+        Ok(self)
     }
 }
 
@@ -829,6 +942,28 @@ where
     M: WriterMemoryBackend<'a, A>,
     O: PostWriteObserver,
 {
+    /// Installs a statically dispatched durability policy.
+    ///
+    /// Policy installation is available only on the default [`NoSync`] state,
+    /// so it cannot silently replace a live policy or discard an established
+    /// durable watermark. Frame-, byte-, and interval-based policies compose
+    /// statically through [`crate::SyncPolicyExt::or`].
+    #[must_use]
+    pub fn with_sync_policy<P: SyncPolicy>(
+        self,
+        policy: P,
+    ) -> StreamWriter<'a, W, F, A, Syncing<P>, M, O> {
+        StreamWriter {
+            writer: self.writer,
+            framer: self.framer,
+            builder: self.builder,
+            memory: self.memory,
+            sync: Syncing::new(policy),
+            observer: self.observer,
+            poisoned: self.poisoned,
+        }
+    }
+
     /// Flushes buffered bytes and synchronizes file contents.
     ///
     /// Returns the durable watermark. Retain it if you need to test receipts
@@ -843,6 +978,9 @@ where
     }
 
     fn manual_sync_without_policy(&mut self, mode: SyncMode) -> Result<u64> {
+        if self.poisoned {
+            return Err(Error::poisoned());
+        }
         let attempted_watermark = self.bytes_written();
         let result = match mode {
             SyncMode::Data => self.writer.get_mut().sync_data(),
@@ -879,6 +1017,9 @@ where
     }
 
     fn manual_sync(&mut self, mode: SyncMode) -> Result<u64> {
+        if self.poisoned {
+            return Err(Error::poisoned());
+        }
         let attempted_watermark = self.bytes_written();
         self.sync
             .checkpoint(self.writer.get_mut(), mode, attempted_watermark, None)
@@ -1035,12 +1176,87 @@ mod tests {
         // A writer positioned over a nonzero file region reports absolute
         // offsets when told its start offset.
         let mut wire = Vec::new();
-        let mut writer =
-            StreamWriter::new(Cursor::new(&mut wire), DefaultFramer).with_start_offset(1000);
+        let mut writer = StreamWriter::new(Cursor::new(&mut wire), DefaultFramer)
+            .with_start_offset(1000)
+            .unwrap();
         assert_eq!(writer.bytes_written(), 1000);
         let r = writer.write_with_receipt(&"shifted").unwrap();
         assert_eq!(r.frame_start, 1000);
         assert_eq!(writer.bytes_written(), 1000 + r.wire_len);
+    }
+
+    #[test]
+    fn invalid_external_receipt_coordinates_saturate_instead_of_wrapping() {
+        let receipt = FrameReceipt {
+            frame_start: u64::MAX,
+            wire_len: 1,
+        };
+        assert_eq!(receipt.checked_end(), None);
+        assert_eq!(receipt.end(), u64::MAX);
+        assert_eq!(receipt.range(), u64::MAX..u64::MAX);
+    }
+
+    /// A sink whose first write fails outright (zero bytes accepted) and then
+    /// behaves normally — the transient-device shape the fail-stop contract
+    /// distinguishes from a torn frame.
+    struct FailFirstWrite {
+        written: Vec<u8>,
+        failed_once: bool,
+    }
+
+    impl Write for FailFirstWrite {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if !self.failed_once {
+                self.failed_once = true;
+                return Err(std::io::Error::other("transient device error"));
+            }
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn zero_byte_failure_does_not_poison_and_the_write_retries() {
+        // The other half of the fail-stop contract: an error that accepted
+        // zero bytes leaves the stream at a frame boundary, so the writer
+        // stays usable and the same write succeeds on retry.
+        let mut writer = StreamWriter::new(
+            FailFirstWrite {
+                written: Vec::new(),
+                failed_once: false,
+            },
+            DefaultFramer,
+        );
+        assert!(!writer.is_poisoned());
+
+        let error = writer
+            .write(&"retry me")
+            .expect_err("first write must fail");
+        assert!(matches!(error.kind(), crate::error::ErrorKind::Io(_)));
+        assert!(!writer.is_poisoned(), "zero accepted bytes must not poison");
+        assert_eq!(writer.bytes_written(), 0);
+
+        let receipt = writer.write_with_receipt(&"retry me").unwrap();
+        assert_eq!(receipt.frame_start, 0);
+        assert_eq!(writer.bytes_written(), receipt.wire_len);
+        assert_eq!(writer.into_inner().written.len() as u64, receipt.wire_len);
+    }
+
+    #[test]
+    fn start_offset_cannot_rebase_an_active_writer() {
+        let mut writer = StreamWriter::new(Vec::new(), DefaultFramer);
+        writer.write(&"already written").unwrap();
+        let error = match writer.with_start_offset(1_000) {
+            Ok(_) => panic!("rebasing after accepted bytes must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error.kind(),
+            crate::error::ErrorKind::InvalidFrame { .. }
+        ));
     }
 
     #[cfg(feature = "xxhash")]

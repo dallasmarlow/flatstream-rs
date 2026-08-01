@@ -1,13 +1,14 @@
 # Library critique: technical merit and blind spots
 
-**Date:** 2026-07-24
-**Against:** `flatstream` 0.2.8 (including A1/E1/E3/B1/B2/C3/C4)
+**Date:** 2026-07-24 (updated 2026-07-30)
+**Against:** `flatstream` 0.2.8 release candidate after final durability,
+position-accounting, and fail-stop hardening
 **Lens:** the stated destination — this crate becoming the storage substrate for
 a graph database.
 
-> **Benchmark status:** A1/E1 isolated raw runs and required surprising-result
-> rechecks are committed. This critique uses only the qualified conclusions in
-> those findings documents.
+> **Benchmark status:** historical findings remain committed, but all exact
+> writer timings predate final fail-stop hardening and are not
+> release-candidate performance claims.
 
 This is a working engineer's review, not a marketing document. Section 1 is what
 I think is genuinely well built and should not be traded away. Section 2 is what
@@ -153,22 +154,17 @@ boundary, and direct source/sink access is no longer exposed. The default
 cadence explicit and report checkpoint failures without pretending the
 triggering frame was unwritten.
 
-### 2.4 Concurrency is entirely unspecified
+### 2.4 The concurrency boundary is now documented
 
-There is no documented story for:
+The supported model is one writer per stream. A seekable live-file follower uses
+`read_frame_at` with a `RetrySafeDeframer`: `UnexpectedEof` inside the current
+frame means “wait for more bytes and retry the same absolute offset,” while
+`Ok(None)` means “caught up for now.” Recovery interprets the same partial-tail
+condition as truncatable only after writing has stopped.
 
-- more than one writer against a stream (presumably unsupported — but unstated);
-- a reader tailing a stream while a writer appends to it.
-
-The second is the interesting one. `recover_stream` handles a torn tail *after a
-crash*, but a live reader that catches up to a partially-written frame hits the
-same byte pattern with completely different correct behavior: it should wait,
-not truncate. A graph database will want live followers. Right now a consumer
-building that has no guidance and would likely reach for the recovery path,
-which would be wrong.
-
-This needs a documented position more than it needs code. Even "single writer,
-readers must not tail a live stream" would be an improvement over silence.
+A sequential `StreamReader` that consumed part of a failed frame is now
+fail-stop and cannot continue from the middle. The remaining non-goal is
+multi-writer coordination, which belongs above this framing library.
 
 ### 2.5 The gate is excellent and nothing enforces it
 
@@ -276,7 +272,7 @@ attribution that culture can establish without pretending it transfers to the
 | 1 | Application-owned format manifest (§2.1) | Core preamble declined; durable consumers must pin framing/checksum/schema generation out of band and reject unknown versions. |
 | 2 | Explicit durability API (§2.3) — **resolved in v0.2.8** | Static policies and durable watermarks now encode group commit without `get_mut()`. |
 | 3 | `read_frame_at` with caller-supplied scratch (§2.2) — **resolved in v0.2.8** | Forward and random reads now return exact receipts without per-lookup frame-buffer allocation. |
-| 4 | A written position on concurrency (§2.4) | Live tailing and crash recovery see the same bytes and need opposite behavior. |
+| 4 | Concurrency/live-tail contract (§2.4) — **resolved in v0.2.8** | Single writer; retry-safe positioned followers wait, finalized recovery may truncate. |
 | 5 | Some mechanism keeping committed state gate-green (§2.5) | Not necessarily CI. A stale lockfile once made a fresh checkout gate-red; that instance is fixed, but it remained invisible until the next contributor ran the gate. |
 
 Items 2 and 3 plus `FrameReceipt::end()` received maintainer sign-off and are

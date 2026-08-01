@@ -28,8 +28,8 @@ bumpalo = { version = "3.14", optional = true }
 
 [features]
 default = []
-xxhash = ["xxhash-rust"]
-crc32 = ["crc32fast"]
+xxhash = ["dep:xxhash-rust"]
+crc32 = ["dep:crc32fast"]
 crc16 = ["dep:crc16"]
 # Build the real flatc-generated example (requires you to run flatc to generate code under examples/generated)
 flatc_example = []

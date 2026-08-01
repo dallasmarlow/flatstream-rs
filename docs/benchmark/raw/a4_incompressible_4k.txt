@@ -2,7 +2,7 @@
 # date:    2026-07-29T01:26:53Z
 # rustc:   rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)
 # host:    Darwin 25.5.0 arm64
-# command: cargo bench --locked --bench compression_feasibility -- 
+# command: cargo bench --locked --bench compression_feasibility --
 
     Finished `bench` profile [optimized] target(s) in 0.15s
      Running benches/compression_feasibility.rs (/var/folders/xl/1fczg0dj587531k6p0rfw9k40000gn/T/cursor-sandbox-cache/e8f9bd7bf4c13889e99c8aa3662cbd6f/cargo-target/release/deps/compression_feasibility-dfcd6becd686f1e8)

@@ -117,6 +117,11 @@ fn write_remainder<W: Write>(
 ///
 /// Purpose: Separate wire-format concerns (headers/checksums) from I/O and serialization.
 /// Implementations are small strategy objects composed into `StreamWriter`.
+///
+/// A successful call must write exactly one complete frame. An implementation
+/// must not perform additional fallible work after the complete frame has been
+/// accepted: `StreamWriter` treats any error after accepted bytes as a partial
+/// frame, poisons the writer, and requires recovery before further appends.
 pub trait Framer {
     fn frame_and_write<W: Write>(&self, writer: &mut W, payload: &[u8]) -> Result<()>;
 }
@@ -124,6 +129,7 @@ pub trait Framer {
 /// The default framing strategy: `[4-byte length | payload]`
 ///
 /// When to use: Highest throughput baseline when you don't need integrity checks.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultFramer;
 
 impl Framer for DefaultFramer {
@@ -154,6 +160,9 @@ impl Framer for DefaultFramer {
 /// 2 for CRC-16), not a fixed 8 bytes.
 ///
 /// When to use: Integrity validation at read-time and/or independent message corruption detection.
+// No derived `Default`: construction must flow through `new()` so the const
+// checksum-width assertion is always evaluated.
+#[derive(Debug, Clone, Copy)]
 pub struct ChecksumFramer<C: Checksum> {
     checksum_alg: C,
 }
@@ -282,6 +291,8 @@ fn read_payload<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, payload_len: usiz
 /// Implementations must consume exactly one frame per successful call and
 /// must not read ahead into the next frame. `recover()` relies on this
 /// contract to report the exact end offset of the last intact frame.
+/// `Ok(None)` is valid only when the call consumed zero bytes at a clean frame
+/// boundary.
 pub trait Deframer {
     /// Reads one frame. Returns `Ok(Some(n))` with the payload length on
     /// success (payload in `buffer[..n]`), `Ok(None)` on clean EOF at a frame
@@ -316,6 +327,16 @@ pub trait Deframer {
     ) -> Result<Option<usize>>;
 }
 
+/// Marker for deframers whose failed reads may be retried from the same source
+/// offset with the same instance.
+///
+/// Implementations must not retain or advance internal decode state when a call
+/// reaches `UnexpectedEof` before completing the frame. The built-in deframers
+/// and their adapters satisfy this contract. Custom stateful/dictionary/nonce
+/// deframers opt in only when rewinding the source is sufficient to restore the
+/// decode state after that partial-frame failure.
+pub trait RetrySafeDeframer: Deframer {}
+
 /// The default deframing strategy for `[4-byte length | payload]` streams.
 ///
 /// When to use: The general-purpose parser for almost all cases. By default it
@@ -325,7 +346,7 @@ pub trait Deframer {
 /// [`with_max_frame_len`](Self::with_max_frame_len) so a corrupt header can't
 /// demand a huge allocation; raw non-FlatBuffer framing may raise it up to
 /// [`MAX_WIRE_FRAME_LEN`].
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct DefaultDeframer {
     max_frame_len: usize,
 }
@@ -376,13 +397,17 @@ impl Deframer for DefaultDeframer {
     }
 }
 
+impl RetrySafeDeframer for DefaultDeframer {}
+
 /// A deframing strategy that verifies a checksum.
 ///
 /// When to use: Reads streams written with a matching `ChecksumFramer<C>`.
 /// Applies the same length policy as [`DefaultDeframer`]: the FlatBuffers
 /// maximum ([`DEFAULT_MAX_FRAME_LEN`], 2 GiB) by default, tightened for
 /// untrusted input with [`with_max_frame_len`](Self::with_max_frame_len).
-#[derive(Clone, Copy)]
+// No derived `Default`: it would zero `max_frame_len`; `new()` applies the
+// real default bound and the const checksum-width assertion.
+#[derive(Debug, Clone, Copy)]
 pub struct ChecksumDeframer<C: Checksum> {
     checksum_alg: C,
     max_frame_len: usize,
@@ -462,9 +487,12 @@ impl<C: Checksum> Deframer for ChecksumDeframer<C> {
     }
 }
 
+impl<C: Checksum> RetrySafeDeframer for ChecksumDeframer<C> {}
+
 /// A composable adapter that enforces a maximum payload length for any framer.
 ///
 /// Failure semantics: Returns `ErrorKind::InvalidFrame` with context (payload len/limit) when exceeded.
+#[derive(Debug, Clone, Copy)]
 pub struct BoundedFramer<F: Framer> {
     inner: F,
     max_len: usize,
@@ -493,7 +521,7 @@ impl<F: Framer> Framer for BoundedFramer<F> {
 //--- Validation Adapters ---
 
 /// A composable adapter that adds validation to any `Framer`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ValidatingFramer<F: Framer, V: Validator> {
     inner: F,
     validator: V,
@@ -516,7 +544,7 @@ impl<F: Framer, V: Validator> Framer for ValidatingFramer<F, V> {
 }
 
 /// A composable adapter that adds validation to any `Deframer`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ValidatingDeframer<D: Deframer, V: Validator> {
     inner: D,
     validator: V,
@@ -562,6 +590,8 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
     }
 }
 
+impl<D: RetrySafeDeframer, V: Validator> RetrySafeDeframer for ValidatingDeframer<D, V> {}
+
 //--- Observer Adapters ---
 
 /// An adapter that allows observing payloads on the write path without copying or mutating.
@@ -571,6 +601,9 @@ impl<D: Deframer, V: Validator> Deframer for ValidatingDeframer<D, V> {
 /// I/O success, receipts, latency, or durability. Use
 /// [`StreamWriter::with_post_write_observer`](crate::StreamWriter::with_post_write_observer)
 /// for post-operation outcomes.
+// The derives apply when the callback itself is `Debug`/`Clone`/`Copy`
+// (a fn pointer is all three; a capturing closure usually is not).
+#[derive(Debug, Clone, Copy)]
 pub struct ObserverFramer<F: Framer, C: Fn(&[u8])> {
     inner: F,
     callback: C,
@@ -592,6 +625,8 @@ impl<F: Framer, C: Fn(&[u8])> Framer for ObserverFramer<F, C> {
 /// An adapter that allows observing payloads on the read path without copying or mutating.
 ///
 /// Callback timing: Invoked exactly once per frame, after inner deframing succeeds.
+// Same conditional derives as `ObserverFramer`: usable with fn-pointer callbacks.
+#[derive(Debug, Clone, Copy)]
 pub struct ObserverDeframer<D: Deframer, C: Fn(&[u8])> {
     inner: D,
     callback: C,
@@ -633,6 +668,8 @@ impl<D: Deframer, C: Fn(&[u8])> Deframer for ObserverDeframer<D, C> {
         }
     }
 }
+
+impl<D: RetrySafeDeframer, C: Fn(&[u8])> RetrySafeDeframer for ObserverDeframer<D, C> {}
 
 //--- Fluent Extension Traits ---
 
@@ -1037,5 +1074,52 @@ mod vectored_tests {
         };
         DefaultFramer.frame_and_write(&mut sink, b"").unwrap();
         assert_eq!(sink.written, vec![0, 0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod strategy_trait_tests {
+    use super::*;
+    use crate::validation::NoValidator;
+
+    /// Strategy types are plain values: callers hold them in config structs,
+    /// hand copies to multiple writers/readers, and print them in diagnostics.
+    /// Pin `Debug + Clone + Copy` so an added field cannot silently drop them.
+    /// (Observer adapters qualify whenever the callback itself does — a fn
+    /// pointer here; capturing closures usually are not `Copy`.)
+    #[test]
+    fn strategy_types_are_debug_clone_copy() {
+        fn assert_common<T: std::fmt::Debug + Clone + Copy>(_: &T) {}
+        fn observe(_: &[u8]) {}
+
+        assert_common(&DefaultFramer);
+        assert_common(&DefaultDeframer::new().with_max_frame_len(1024));
+        assert_common(&BoundedFramer::new(DefaultFramer, 1024));
+        assert_common(&ValidatingFramer::new(DefaultFramer, NoValidator));
+        assert_common(&ValidatingDeframer::new(
+            DefaultDeframer::new(),
+            NoValidator,
+        ));
+        assert_common(&ObserverFramer::new(DefaultFramer, observe as fn(&[u8])));
+        assert_common(&ObserverDeframer::new(
+            DefaultDeframer::new(),
+            observe as fn(&[u8]),
+        ));
+
+        #[cfg(feature = "xxhash")]
+        {
+            assert_common(&ChecksumFramer::new(crate::XxHash64::new()));
+            assert_common(&ChecksumDeframer::new(crate::XxHash64::new()));
+        }
+        #[cfg(feature = "crc32")]
+        {
+            assert_common(&ChecksumFramer::new(crate::Crc32::new()));
+            assert_common(&ChecksumDeframer::new(crate::Crc32::new()));
+        }
+        #[cfg(feature = "crc16")]
+        {
+            assert_common(&ChecksumFramer::new(crate::Crc16::new()));
+            assert_common(&ChecksumDeframer::new(crate::Crc16::new()));
+        }
     }
 }

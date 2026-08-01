@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile (and run) the README's Rust snippets as doctests.
+# Compile (and run) the README and onboarding Rust snippets as doctests.
 #
 # Why this exists: rustdoc only tests snippets inside `src/`. The README is the
 # first thing a consumer copies from, and until this script it was the one body
@@ -34,7 +34,10 @@ if [[ ${#FLATBUFFERS_RLIB[@]} -ne 1 ]]; then
     exit 1
 fi
 
-exec rustdoc --edition 2021 --test README.md \
-    -L "dependency=$README_TARGET_DIR/debug/deps" \
-    --extern flatstream="$README_TARGET_DIR/debug/libflatstream.rlib" \
-    --extern flatbuffers="${FLATBUFFERS_RLIB[0]}"
+for doc in README.md ONBOARDING.md; do
+    echo "== $doc snippets"
+    rustdoc --edition 2021 --test "$doc" \
+        -L "dependency=$README_TARGET_DIR/debug/deps" \
+        --extern flatstream="$README_TARGET_DIR/debug/libflatstream.rlib" \
+        --extern flatbuffers="${FLATBUFFERS_RLIB[0]}"
+done

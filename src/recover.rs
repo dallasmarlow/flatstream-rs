@@ -48,7 +48,7 @@ pub enum RecoveryEnd {
 }
 
 /// Outcome of scanning a stream with [`recover`] or [`recover_file`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecoveryReport {
     /// Number of intact frames before the scan stopped.
     pub frames: u64,

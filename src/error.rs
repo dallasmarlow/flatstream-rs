@@ -69,6 +69,18 @@ pub enum ErrorKind {
     #[error("Unexpected end of file while reading stream")]
     UnexpectedEof,
 
+    /// A poisoned writer or reader rejected the operation.
+    ///
+    /// An earlier failure left part of a frame on the stream, so its current
+    /// position is no longer a known frame boundary. This is a state
+    /// rejection, not a new I/O failure: the rejected operation moved no
+    /// bytes. Check for the state without provoking it via
+    /// `StreamWriter::is_poisoned` / `StreamReader::is_poisoned`; recover by
+    /// consuming the stream (`into_inner`), truncating/recovering the torn
+    /// tail, and constructing a replacement at a verified offset.
+    #[error("stream is poisoned by a failed partial frame; consume, recover, and reconstruct it")]
+    Poisoned,
+
     /// A frame was accepted by the sink, but its durability checkpoint failed.
     ///
     /// `attempted_watermark` includes every complete frame accepted before the
@@ -201,6 +213,12 @@ impl Error {
     #[cold]
     pub fn unexpected_eof() -> Self {
         ErrorKind::UnexpectedEof.into()
+    }
+
+    /// Creates the fail-stop rejection a poisoned writer/reader returns.
+    #[cold]
+    pub(crate) fn poisoned() -> Self {
+        ErrorKind::Poisoned.into()
     }
 
     /// Creates an error for a failed durability checkpoint.
@@ -374,6 +392,16 @@ mod tests {
                 ..
             } if source.kind() == std::io::ErrorKind::PermissionDenied
         ));
+    }
+
+    #[test]
+    fn poisoned_rejection_is_typed_and_converts_to_invalid_data() {
+        // Callers distinguish "the stream is fail-stopped" from a fresh frame
+        // error by kind, never by message text.
+        let flat = Error::poisoned();
+        assert!(matches!(flat.kind(), ErrorKind::Poisoned));
+        let io: std::io::Error = flat.into();
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

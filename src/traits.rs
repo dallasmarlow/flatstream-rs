@@ -30,7 +30,6 @@ pub trait StreamSerialize {
 }
 
 // A simple implementation for strings to facilitate testing and examples.
-// This addresses Lesson 5 and 9 by starting with simple, reliable data.
 impl StreamSerialize for &str {
     fn serialize<A: flatbuffers::Allocator>(
         &self,

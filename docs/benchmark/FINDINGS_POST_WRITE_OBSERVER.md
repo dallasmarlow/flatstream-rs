@@ -2,8 +2,10 @@
 
 **Author:** maintainer-directed B3 follow-up
 **Date:** 2026-07-29
-**Status:** complete — raw output at
-`docs/benchmark/raw/b3_post_write_observer.txt`
+**Status:** historical pre-final-writer measurement — raw output at
+`docs/benchmark/raw/b3_post_write_observer.txt`. The final fail-stop writer adds
+the same poison-state gate to both arms, but this exact delta has not been
+recollected on the release candidate.
 
 ## Hypothesis
 

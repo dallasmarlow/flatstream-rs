@@ -1,7 +1,14 @@
 # Design Document: flatstream-rs v3.0 - Schema-Aware Streaming
 
+> **SUPERSEDED BASELINE / NOT ACTIVE PLANNING.** This proposal assumes a core
+> `FBST` preamble and per-frame schema metadata. The owner declined that format
+> direction on 2026-07-25: flatstream remains headerless, and persistent
+> applications own framing/checksum/schema generation manifests. Typed
+> validation also shipped in v0.2.7. Retain this document only as historical
+> exploration until its non-wire ideas are re-evaluated against current APIs.
+
 Version: 1.0  
-Status: Proposed  
+Status: Superseded
 Author: [Implementation Team]  
 
 ## 1. Intent and Motivation

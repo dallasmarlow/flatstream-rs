@@ -31,8 +31,9 @@ fn default_stream(values: &[&str]) -> (Vec<u8>, Vec<Vec<u8>>, Vec<FrameReceipt>)
 fn forward_receipts_tile_the_stream_from_a_start_offset() {
     let (wire, expected, original) = default_stream(&["first", "second", "third"]);
     let base = 10_000;
-    let mut reader =
-        StreamReader::new(Cursor::new(&wire), DefaultDeframer::new()).with_start_offset(base);
+    let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new())
+        .with_start_offset(base)
+        .unwrap();
 
     let mut seen = Vec::new();
     reader

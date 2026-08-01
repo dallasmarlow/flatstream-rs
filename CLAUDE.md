@@ -22,8 +22,9 @@ the quality bar, gate, findings format, and currently assignable work.
 - `Error` → `io::Error` preserves underlying I/O kinds and `UnexpectedEof`;
   other library/protocol failures map to `InvalidData` with the original error
   retained as the inner payload.
-- Static frame/byte durability policies and durable watermarks; time-based
-  checkpoints are application-scheduled manual syncs, not per-frame clock reads.
+- Static frame/byte/interval durability policies and durable watermarks;
+  interval policies opt into one monotonic-clock check per accepted frame, while
+  application timers may trigger manual syncs instead.
 - Static memory policies; `NoSync` and `NoMemoryPolicy` are zero-sized defaults.
 - Statically dispatched `PostWriteObserver` with a zero-sized default and
   explicit success/write-failure/durability-failure outcomes.
@@ -32,6 +33,9 @@ the quality bar, gate, findings format, and currently assignable work.
   with the correct offset.
 - Strict torn-tail recovery: only `UnexpectedEof` authorizes truncation after
   writing has stopped.
+- A failed write that accepted frame bytes poisons the writer; consume,
+  recover/truncate, and reconstruct before appending again. Writer and reader
+  expose `is_poisoned()`; poisoned rejections are `ErrorKind::Poisoned`.
 
 `UnexpectedEof` describes the current read attempt, not permanent source
 finality. A seekable live-file follower retries `read_frame_at` from the same

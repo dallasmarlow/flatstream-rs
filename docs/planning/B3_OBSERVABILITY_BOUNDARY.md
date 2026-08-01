@@ -3,8 +3,9 @@
 > **Status: implemented after maintainer sign-off (2026-07-29).**
 > `PostWriteObserver` is a statically dispatched `StreamWriter` hook;
 > `examples/observability_boundary.rs` and `tests/post_write_observer.rs` pin
-> its semantics. Installed overhead is measured in
-> `docs/benchmark/FINDINGS_POST_WRITE_OBSERVER.md`.
+> its semantics. `docs/benchmark/FINDINGS_POST_WRITE_OBSERVER.md` records the
+> pre-final-writer timing; recollect before publishing a release-candidate
+> overhead.
 
 ## 1. The structural problem
 
@@ -53,7 +54,11 @@ pub struct PostWriteEvent<'a> {
 pub enum PostWriteOutcome<'a> {
     Succeeded(FrameReceipt),
     SerializationFailed(&'a Error),
-    WriteFailed(&'a Error),
+    WriteFailed {
+        frame_start: u64,
+        bytes_accepted: u64,
+        error: &'a Error,
+    },
     DurabilityFailed {
         receipt: FrameReceipt,
         error: &'a Error,
@@ -84,8 +89,10 @@ Exactly one event is emitted:
 
 1. **`SerializationFailed`** — no payload was completed and no framing I/O was
    attempted; `payload_len` is `None`.
-2. **`WriteFailed`** — serialization succeeded, but framing/sink I/O did not
-   accept a complete frame. No receipt is fabricated.
+2. **`WriteFailed`** — framing/sink I/O failed. The event reports the attempted
+   frame start and exact accepted-byte count; no complete receipt is fabricated.
+   A nonzero accepted count poisons the writer, which rejects later writes and
+   checkpoints until the sink is consumed, recovered, and reconstructed.
 3. **`DurabilityFailed`** — the complete frame was accepted and its receipt is
    supplied, but the automatic checkpoint failed. The caller must not re-emit
    the frame.

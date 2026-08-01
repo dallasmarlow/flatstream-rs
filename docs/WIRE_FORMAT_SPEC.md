@@ -110,7 +110,8 @@ stateDiagram-v2
 `UnexpectedEof` describes the bytes available to the current read attempt; it
 does not assert that a source is permanently finalized. Recovery interprets it
 as a torn tail once writing has stopped. A seekable live-file follower may wait
-for more data and retry `read_frame_at` from the same absolute frame offset.
+for more data and retry `read_frame_at` from the same absolute frame offset when
+using a `RetrySafeDeframer`.
 
 ## 8. Interoperability Requirements
 

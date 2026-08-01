@@ -6,11 +6,13 @@
 //! changes the writer's concrete type, so the default [`NoSync`] path remains a
 //! zero-sized, branch-free specialization.
 
+use crate::policy::{Clock, MonotonicClock};
 use crate::writer::FrameReceipt;
 use crate::{Error, Result};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 /// A write sink that can push accepted bytes toward stable storage.
 ///
@@ -19,10 +21,12 @@ use std::num::NonZeroU64;
 /// `io::Sink`: reporting a successful durability checkpoint for an in-memory
 /// sink would be a lie.
 ///
-/// On macOS, the standard library's `File::sync_all` maps to `fsync`, not
-/// `F_FULLFSYNC`; it therefore has the same drive-write-cache caveat as
-/// [`File::sync_all`]. Flatstream preserves the portable standard-library
-/// semantics rather than introducing a platform-specific unsafe path.
+/// Flatstream delegates checkpoints to the standard library
+/// (`File::sync_data` / `File::sync_all`) and adds no platform-specific path
+/// of its own. As of Rust 1.97.1, both calls issue `fcntl(F_FULLFSYNC)` on
+/// Apple platforms — a full drive-write-cache flush, which also makes
+/// [`SyncMode::Data`] and [`SyncMode::All`] equal in strength there — while
+/// Linux distinguishes them as `fdatasync` / `fsync`.
 pub trait Durable: Write {
     /// Synchronizes file contents (the `File::sync_data` / `fdatasync` shape).
     fn sync_data(&mut self) -> io::Result<()>;
@@ -97,14 +101,16 @@ pub struct SyncInfo {
 ///
 /// `observe` is called after each successfully written frame. State is reset
 /// only through `on_synced`, after the requested durability operation succeeds;
-/// a failed checkpoint therefore remains due.
+/// a failed checkpoint therefore remains due. `on_synced` receives the mode
+/// that actually completed so a weaker [`SyncMode::Data`] checkpoint cannot
+/// accidentally satisfy or reset a pending [`SyncMode::All`] requirement.
 pub trait SyncPolicy: Send {
     /// Observes an accepted frame and optionally requests a checkpoint.
     fn observe(&mut self, info: SyncInfo) -> Option<SyncMode>;
 
     /// Called after a manual or automatic checkpoint succeeds.
     #[inline(always)]
-    fn on_synced(&mut self, _durable_watermark: u64) {}
+    fn on_synced(&mut self, _mode: SyncMode, _durable_watermark: u64) {}
 }
 
 /// The zero-sized default policy. It never requests a checkpoint.
@@ -166,8 +172,10 @@ impl SyncPolicy for SyncEveryNFrames {
     }
 
     #[inline]
-    fn on_synced(&mut self, _durable_watermark: u64) {
-        self.pending = 0;
+    fn on_synced(&mut self, mode: SyncMode, _durable_watermark: u64) {
+        if mode >= self.mode {
+            self.pending = 0;
+        }
     }
 }
 
@@ -199,16 +207,81 @@ impl SyncPolicy for SyncEveryBytes {
     }
 
     #[inline]
-    fn on_synced(&mut self, _durable_watermark: u64) {
-        self.pending = 0;
+    fn on_synced(&mut self, mode: SyncMode, _durable_watermark: u64) {
+        if mode >= self.mode {
+            self.pending = 0;
+        }
+    }
+}
+
+/// Requests a checkpoint once a monotonic interval has elapsed.
+///
+/// This is the storage-owned time policy: it checks its clock after every
+/// accepted frame and therefore gives the interval meaning even when the
+/// application has no scheduler or timer integration. Applications that do
+/// have an external timer may still call
+/// [`StreamWriter::sync_data`](crate::StreamWriter::sync_data) or
+/// [`StreamWriter::sync_all`](crate::StreamWriter::sync_all) directly.
+///
+/// The policy is statically composable with frame- and byte-based policies
+/// through [`SyncPolicyExt::or`]. The default [`NoSync`] writer performs no
+/// clock reads.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncEveryInterval<C: Clock = MonotonicClock> {
+    interval: Duration,
+    last_sync: Duration,
+    clock: C,
+    mode: SyncMode,
+}
+
+impl SyncEveryInterval {
+    /// Creates an interval policy using the production monotonic clock.
+    pub fn new(interval: Duration, mode: SyncMode) -> Self {
+        let clock = MonotonicClock::new();
+        let last_sync = clock.now();
+        Self {
+            interval,
+            last_sync,
+            clock,
+            mode,
+        }
+    }
+}
+
+impl<C: Clock> SyncEveryInterval<C> {
+    /// Creates an interval policy with an injected deterministic clock.
+    pub fn with_clock(interval: Duration, mode: SyncMode, clock: C) -> Self {
+        let last_sync = clock.now();
+        Self {
+            interval,
+            last_sync,
+            clock,
+            mode,
+        }
+    }
+}
+
+impl<C: Clock> SyncPolicy for SyncEveryInterval<C> {
+    #[inline]
+    fn observe(&mut self, _info: SyncInfo) -> Option<SyncMode> {
+        (self.clock.now().saturating_sub(self.last_sync) >= self.interval).then_some(self.mode)
+    }
+
+    #[inline]
+    fn on_synced(&mut self, mode: SyncMode, _durable_watermark: u64) {
+        if mode >= self.mode {
+            self.last_sync = self.clock.now();
+        }
     }
 }
 
 /// Static composition that checkpoints when either inner policy requests it.
 ///
 /// If both policies fire on the same frame, [`SyncMode::All`] wins over
-/// [`SyncMode::Data`]. A successful checkpoint resets both policies so their
-/// windows stay aligned to the same durable boundary.
+/// [`SyncMode::Data`]. A completed checkpoint is reported to both policies, but
+/// each policy resets only when that checkpoint is at least as strong as the
+/// mode it requested. This prevents frequent data-only checkpoints from
+/// starving a less frequent metadata checkpoint.
 #[derive(Debug, Clone, Copy)]
 pub struct AnySync<A, B> {
     first: A,
@@ -233,9 +306,9 @@ impl<A: SyncPolicy, B: SyncPolicy> SyncPolicy for AnySync<A, B> {
     }
 
     #[inline]
-    fn on_synced(&mut self, durable_watermark: u64) {
-        self.first.on_synced(durable_watermark);
-        self.second.on_synced(durable_watermark);
+    fn on_synced(&mut self, mode: SyncMode, durable_watermark: u64) {
+        self.first.on_synced(mode, durable_watermark);
+        self.second.on_synced(mode, durable_watermark);
     }
 }
 
@@ -319,7 +392,7 @@ impl<P: SyncPolicy> Syncing<P> {
             ));
         }
         self.durable_watermark = Some(attempted_watermark);
-        self.policy.on_synced(attempted_watermark);
+        self.policy.on_synced(mode, attempted_watermark);
         Ok(attempted_watermark)
     }
 }

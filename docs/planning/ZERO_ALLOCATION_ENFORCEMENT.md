@@ -2,6 +2,9 @@
 
 **Status:** **Implemented** 2026-07-24 — `tests/allocation.rs`. This document is
 kept as the rationale; `CONTRIBUTING.md` §6 C4 records the outcome.
+The reader implementation later changed from replacing its `Vec` to deferred
+`clear` + `shrink_to`; the proposal's Item 6 analysis is historical and no
+longer describes a guaranteed reallocation.
 **Date:** 2026-07-24
 **Author:** contributor
 **Targets:** pre-3.0. Landed as `CONTRIBUTING.md` §6 **C4** (test and robustness

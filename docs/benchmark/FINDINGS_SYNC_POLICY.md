@@ -1,8 +1,11 @@
 # Findings: static durability-policy cost and checkpoint cadence
 
-**Author:** maintainer-directed E3 implementation  
-**Date:** 2026-07-24  
-**Status:** complete — Criterion and pinned instruction-count raw outputs committed
+**Author:** maintainer-directed E3 implementation
+**Date:** 2026-07-24
+**Status:** historical pre-final-writer measurements — Criterion and pinned
+instruction-count raw outputs committed. Final writer hardening and the restored
+interval policy are not characterized by these dispatch numbers; retain the
+cadence/storage findings, but recollect before publishing per-frame policy cost.
 
 ## Hypothesis
 
@@ -124,17 +127,17 @@ real durability latency is orders of magnitude larger and scales with
 checkpoint count. Every latency claim must name cadence, filesystem, device,
 OS, and sync mode.
 
-The 2026-07-29 pre-review correction removes `SyncEveryInterval`: its
-`observe` implementation read the monotonic clock on every frame, a cost this
-count-based benchmark did not measure. Time-based checkpoints are now scheduled
-by the application task that owns the writer and calls the manual sync methods.
-The frame/byte policy findings above are unchanged.
+`SyncEveryInterval` was restored by owner direction after this run. Its
+per-accepted-frame monotonic clock check is deliberately opt-in and is not
+measured here. Applications may alternatively schedule manual syncs externally.
 
 ## Threats to validity
 
 - A mock `Durable` sink measures policy instructions, not persistence.
-- macOS `File::sync_all` uses standard-library `fsync` semantics, not
-  `F_FULLFSYNC`.
+- Checkpoints delegate to the standard library, which on Apple platforms
+  issues `fcntl(F_FULLFSYNC)` for both sync modes (verified in the Rust 1.97.1
+  sources; this bullet previously claimed plain `fsync`). Measured sync
+  latencies therefore include a full drive-write-cache flush.
 - SSD/filesystem cache behavior can move absolute sync latency substantially.
 - A cadence measured at 16 or 100 records must not be extrapolated to every
   application batching policy.

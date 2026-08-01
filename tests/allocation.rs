@@ -22,8 +22,8 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
     read_frame_at, DefaultDeframer, DefaultFramer, DeframerExt, Durable, Framer, PostWriteEvent,
-    PostWriteOutcome, StreamReader, StreamSerialize, StreamWriter, SyncEveryNFrames, SyncMode,
-    TableRootValidator,
+    PostWriteOutcome, StreamReader, StreamSerialize, StreamWriter, SyncEveryInterval,
+    SyncEveryNFrames, SyncMode, TableRootValidator,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -31,6 +31,7 @@ use std::io::Cursor;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 // --- The counting allocator -------------------------------------------------
 
@@ -344,6 +345,33 @@ fn static_sync_policy_allocates_nothing_even_when_it_checkpoints() {
             reallocs: 0
         },
         "static sync policy"
+    );
+}
+
+#[test]
+fn interval_sync_policy_allocates_nothing_while_observing_frames() {
+    let mut builder = FlatBufferBuilder::with_capacity(MAX_PAYLOAD * 4);
+    build(&mut builder, MAX_PAYLOAD);
+    let policy = SyncEveryInterval::new(Duration::from_secs(60), SyncMode::Data);
+    let mut writer =
+        StreamWriter::new(FixedSink::new(1 << 20), DefaultFramer).with_sync_policy(policy);
+
+    for _ in 0..WARMUP {
+        writer.write_finished(&mut builder).unwrap();
+    }
+    let (counts, _) = measure(|| {
+        for _ in 0..MEASURED {
+            writer.write_finished(&mut builder).unwrap();
+        }
+    });
+
+    assert_eq!(
+        counts,
+        Counts {
+            allocs: 0,
+            reallocs: 0
+        },
+        "interval sync policy"
     );
 }
 

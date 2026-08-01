@@ -25,7 +25,7 @@
 
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    read_frame_at, DefaultDeframer, DefaultFramer, Deframer, ErrorKind, StreamWriter,
+    read_frame_at, DefaultDeframer, DefaultFramer, ErrorKind, RetrySafeDeframer, StreamWriter,
 };
 use std::fs::{File, OpenOptions};
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
@@ -67,7 +67,7 @@ fn wire_image<F: flatstream::Framer>(framer: F, values: &[&str]) -> (Vec<u8>, Ve
 /// point read at offset 0 must report [`ErrorKind::UnexpectedEof`]; after the
 /// remainder is appended through a *separate* writer handle, retrying the same
 /// offset must return the exact payload and a receipt naming the whole frame.
-fn assert_partial_frame_retry<D: Deframer>(wire: &[u8], expected: &[u8], deframer: &D) {
+fn assert_partial_frame_retry<D: RetrySafeDeframer>(wire: &[u8], expected: &[u8], deframer: &D) {
     // A prefix that stops strictly inside the frame — not at a boundary — is
     // the input the contract is about. Cover several cut points, including one
     // inside the header (offset 2, mid-length-prefix) and one mid-payload.

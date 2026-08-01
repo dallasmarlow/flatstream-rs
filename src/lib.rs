@@ -129,13 +129,14 @@ pub mod writer;
 // Re-export the main public API for user convenience.
 pub use checksum::NoChecksum;
 pub use durability::{
-    AnySync, Durable, NoSync, SyncEveryBytes, SyncEveryFrame, SyncEveryNFrames, SyncInfo, SyncMode,
-    SyncPolicy, SyncPolicyExt, Syncing,
+    AnySync, Durable, NoSync, SyncEveryBytes, SyncEveryFrame, SyncEveryInterval, SyncEveryNFrames,
+    SyncInfo, SyncMode, SyncPolicy, SyncPolicyExt, Syncing,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use framing::{
     BoundedFramer, DefaultDeframer, DefaultFramer, Deframer, DeframerExt, Framer, FramerExt,
-    ValidatingDeframer, ValidatingFramer, DEFAULT_MAX_FRAME_LEN, MAX_WIRE_FRAME_LEN,
+    ObserverDeframer, ObserverFramer, RetrySafeDeframer, ValidatingDeframer, ValidatingFramer,
+    DEFAULT_MAX_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{
     AdaptiveWatermarkPolicy, Clock, MemoryPolicy, MonotonicClock, NoMemoryPolicy, NoOpPolicy,

@@ -1,7 +1,7 @@
 # Findings: does frame-local compression pay for journal payloads?
 
-**Author:** contributor (A4, `CONTRIBUTING.md` §6)  
-**Date:** 2026-07-28  
+**Author:** contributor (A4, `CONTRIBUTING.md` §6)
+**Date:** 2026-07-28
 **Status:** complete — ten isolated raw snapshots committed under
 `docs/benchmark/raw/a4_*.txt`
 
@@ -44,13 +44,14 @@ not a power-loss-safe WAL.
 
 Three size classes are covered: 4 KiB, 64 KiB, and approximately 256 KiB.
 
-1. **Palimpsest:** committed FlatBuffers produced by Palimpsest's actual
-   `Frame { first_seq, rows, mean_ink }` encoder at consumer revision
-   `987b3b3df16059343e00225cb132d9e5f462fd65`. The deterministic source rows
-   model build/test output with row-unique crate names, paths, positions,
-   Unicode, color/style runs, wrapping, and occasional combining marks. They
-   are schema-exact modeled fixtures, not captured user data. The 4 KiB fixture
-   is a 16-row partial frame; the larger fixtures contain the normal 256 rows.
+1. **Palimpsest-shaped fixtures:** committed FlatBuffer payload bytes modeling
+   `Frame { first_seq, rows, mean_ink }` with build/test output, row-unique crate
+   names, paths, positions, Unicode, color/style runs, wrapping, and occasional
+   combining marks. The generator and a verifiable consumer revision were not
+   committed, so these results apply to the exact fingerprinted bytes below and
+   must not be presented as production or independently regenerable consumer
+   data. The 4 KiB fixture models a 16-row partial frame; the larger fixtures
+   model 256 rows.
 2. **Compressible control:** a repeated terminal test-result line.
 3. **Incompressible control:** deterministic xorshift bytes.
 
@@ -184,15 +185,15 @@ For the modeled journal data, a CPU-only break-even estimate
 `saved_bytes / encode_time` ranges from approximately 0.58–1.38 GiB/s for LZ4
 and 0.30–0.82 GiB/s for Zstd. A genuinely bandwidth-limited sink below those
 rates might repay encode CPU, but this experiment did not test such a sink.
-Palimpsest's current flush-to-page-cache path is far above those thresholds,
-so compression adds immediate worker latency even while reducing eventual
-writeback and disk occupancy.
+The benchmark's flush-to-page-cache path is far above those thresholds, so
+compression adds immediate worker latency in this payload-only model even while
+reducing eventual writeback and disk occupancy.
 
 ## Conclusion
 
-The hypothesis fails for Palimpsest's current write contract: **saved bytes do
-not repay codec CPU in the buffered, flush-only path.** Frame-local latency is
-bounded and storage savings are substantial on the modeled journal fixtures,
+The hypothesis fails for this payload-only buffered, flush-only model:
+**saved bytes do not repay codec CPU.** Frame-local latency is bounded and
+storage savings are substantial on the modeled journal fixtures,
 but neither LZ4 nor Zstandard level 1 improves end-to-end throughput. Even the
 best-case repeated-text control remains slower.
 

@@ -1,12 +1,13 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
-    AnySync, DefaultFramer, Durable, ErrorKind, NoOpPolicy, NoSync, StreamWriter, SyncEveryBytes,
-    SyncEveryFrame, SyncEveryNFrames, SyncMode, SyncPolicyExt,
+    AnySync, Clock, DefaultFramer, Durable, ErrorKind, NoOpPolicy, NoSync, StreamWriter,
+    SyncEveryBytes, SyncEveryFrame, SyncEveryInterval, SyncEveryNFrames, SyncMode, SyncPolicyExt,
 };
 use std::io::{self, BufWriter, Write};
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Default)]
 struct RecordingDurable {
@@ -124,6 +125,25 @@ fn composed_policies_choose_the_stronger_mode_once() {
 }
 
 #[test]
+fn data_checkpoints_do_not_starve_a_less_frequent_all_policy() {
+    let policy = SyncEveryFrame::new(SyncMode::Data).or(SyncEveryNFrames::new(
+        NonZeroU64::new(3).unwrap(),
+        SyncMode::All,
+    ));
+    let mut writer =
+        StreamWriter::new(RecordingDurable::default(), DefaultFramer).with_sync_policy(policy);
+
+    writer.write(&"one").unwrap();
+    writer.write(&"two").unwrap();
+    let third = writer.write_with_receipt(&"three").unwrap();
+
+    assert_eq!(writer.durable_watermark(), Some(third.end()));
+    let sink = writer.into_inner();
+    assert_eq!(sink.data_syncs, 2);
+    assert_eq!(sink.all_syncs, 1);
+}
+
+#[test]
 fn a_manual_checkpoint_resets_the_policy_window() {
     let policy = SyncEveryNFrames::new(NonZeroU64::new(2).unwrap(), SyncMode::Data);
     let mut writer =
@@ -198,12 +218,62 @@ fn start_offset_is_reflected_in_automatic_watermarks() {
 
     let mut writer = StreamWriter::new(RecordingDurable::default(), DefaultFramer)
         .with_start_offset(10_000)
+        .unwrap()
         .with_sync_policy(SyncEveryFrame::new(SyncMode::All));
     let receipt = writer.write_finished_with_receipt(&mut builder).unwrap();
 
     assert_eq!(receipt.frame_start, 10_000);
     assert_eq!(writer.durable_watermark(), Some(receipt.end()));
     assert_eq!(writer.into_inner().all_syncs, 1);
+}
+
+#[derive(Clone)]
+struct TestClock(Arc<AtomicU64>);
+
+impl Clock for TestClock {
+    fn now(&self) -> Duration {
+        Duration::from_nanos(self.0.load(Ordering::Relaxed))
+    }
+}
+
+#[test]
+fn interval_policy_uses_an_injected_monotonic_clock() {
+    let now = Arc::new(AtomicU64::new(0));
+    let policy = SyncEveryInterval::with_clock(
+        Duration::from_nanos(10),
+        SyncMode::Data,
+        TestClock(Arc::clone(&now)),
+    );
+    let mut writer =
+        StreamWriter::new(RecordingDurable::default(), DefaultFramer).with_sync_policy(policy);
+
+    writer.write(&"not due").unwrap();
+    assert_eq!(writer.durable_watermark(), None);
+    now.store(10, Ordering::Relaxed);
+    let due = writer.write_with_receipt(&"due").unwrap();
+    assert_eq!(writer.durable_watermark(), Some(due.end()));
+    assert_eq!(writer.into_inner().data_syncs, 1);
+}
+
+#[test]
+fn weaker_manual_sync_does_not_reset_a_stronger_interval() {
+    let now = Arc::new(AtomicU64::new(0));
+    let policy = SyncEveryInterval::with_clock(
+        Duration::from_nanos(10),
+        SyncMode::All,
+        TestClock(Arc::clone(&now)),
+    );
+    let mut writer =
+        StreamWriter::new(RecordingDurable::default(), DefaultFramer).with_sync_policy(policy);
+
+    now.store(9, Ordering::Relaxed);
+    writer.sync_data().unwrap();
+    now.store(10, Ordering::Relaxed);
+    writer.write(&"all is still due").unwrap();
+
+    let sink = writer.into_inner();
+    assert_eq!(sink.data_syncs, 1);
+    assert_eq!(sink.all_syncs, 1);
 }
 
 struct PartialVectoredSink {

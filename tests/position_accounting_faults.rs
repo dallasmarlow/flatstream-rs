@@ -35,7 +35,7 @@
 use flatbuffers::FlatBufferBuilder;
 use flatstream::{
     read_frame_at, DefaultDeframer, DefaultFramer, Deframer, Error, ErrorKind, FrameReceipt,
-    Result, SizeThresholdPolicy, StreamReader, StreamWriter,
+    Result, RetrySafeDeframer, SizeThresholdPolicy, StreamReader, StreamWriter,
 };
 use std::io::{self, Cursor, IoSliceMut, Read};
 
@@ -106,6 +106,8 @@ impl Deframer for VectoredDeframer {
     }
 }
 
+impl RetrySafeDeframer for VectoredDeframer {}
+
 #[test]
 fn vectored_custom_deframer_produces_exact_receipt_bounds() {
     let (wire, expected, receipts) = default_stream(&["alpha", "second frame", "three"]);
@@ -164,11 +166,16 @@ fn bytes_consumed_before_a_torn_tail_are_retained() {
     let first = reader.read_message_with_receipt().unwrap().unwrap();
     assert_eq!(first.receipt, receipts[0]);
     assert_eq!(reader.bytes_consumed(), boundary);
+    assert!(!reader.is_poisoned());
 
     let err = reader
         .read_message()
         .expect_err("a mid-frame truncation must surface as an error");
     assert!(matches!(err.kind(), ErrorKind::UnexpectedEof));
+    assert!(
+        reader.is_poisoned(),
+        "a failed read that consumed frame bytes must fail-stop the reader"
+    );
 
     // The counter reflects the header and payload bytes the failed attempt
     // did consume — it is not rolled back to the second frame's start.
@@ -181,6 +188,12 @@ fn bytes_consumed_before_a_torn_tail_are_retained() {
         trunc_len as u64,
         "every available byte of the torn frame was consumed and counted"
     );
+
+    let poisoned = reader
+        .read_message()
+        .expect_err("a sequential reader must not continue from the middle of a frame");
+    assert!(matches!(poisoned.kind(), ErrorKind::Poisoned));
+    assert_eq!(reader.bytes_consumed(), trunc_len as u64);
 }
 
 // --- (c) A device error counts only the bytes actually returned. ---
@@ -255,7 +268,8 @@ fn start_offset_composes_with_a_reclaiming_memory_policy() {
     // A large frame grows the internal buffer and arms the policy; a run of
     // small frames then triggers a reclamation that shrinks the buffer back to
     // the policy baseline. Receipts must stay base-relative and exact across
-    // that shrink.
+    // that shrink. `Vec::shrink_to` may retain allocator-specific excess
+    // capacity, so only the direction and minimum baseline are portable.
     let big = "b".repeat(2000);
     let values = [big.as_str(), "s1", "s2", "s3", "s4"];
     let (wire, expected, original) = default_stream(&values);
@@ -264,7 +278,8 @@ fn start_offset_composes_with_a_reclaiming_memory_policy() {
     let policy = SizeThresholdPolicy::new(100, 100, 2).with_baseline(64);
     let mut reader = StreamReader::new(Cursor::new(&wire), DefaultDeframer::new())
         .with_memory_policy(policy)
-        .with_start_offset(base);
+        .with_start_offset(base)
+        .unwrap();
 
     let mut caps = Vec::new();
     let mut idx = 0usize;
@@ -311,7 +326,7 @@ fn start_offset_composes_with_a_reclaiming_memory_policy() {
         "the buffer was reclaimed before the fourth read (caps: {caps:?})"
     );
     assert!(
-        caps[3] <= 64,
-        "reclamation shrank the buffer to the policy baseline (caps: {caps:?})"
+        caps[3] >= 64,
+        "Vec::shrink_to keeps at least the requested baseline (caps: {caps:?})"
     );
 }

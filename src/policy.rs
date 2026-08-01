@@ -47,12 +47,13 @@ pub enum ReclamationReason {
 
 /// Information about a reclamation event.
 ///
-/// `capacity_after` is the configured baseline the buffer is reclaimed *to*.
-/// On the writer the rebuild happens immediately; on the reader the shrink is
-/// scheduled and applied at the start of the next read (so the payload just
-/// returned is never invalidated) — i.e., on the reader this is the *scheduled*
-/// post-reclaim capacity.
-#[derive(Debug, Clone, Copy)]
+/// On the writer, `capacity_after` is the configured capacity supplied to the
+/// builder factory (FlatBufferBuilder exposes no capacity getter for a fresh,
+/// unfinished builder). On the reader it is the actual capacity observed after
+/// `Vec::shrink_to`, which may retain allocator-specific excess above the
+/// configured baseline. Reader reclamation and this callback are deferred to
+/// the start of the next read so the payload just returned is never invalidated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReclamationInfo {
     pub reason: ReclamationReason,
     pub last_message_size: usize,
@@ -186,7 +187,7 @@ impl Clock for MonotonicClock {
 /// 3. **Stability**: It requires this signal to persist for `messages_to_wait` consecutive
 ///    writes (or a time duration) before triggering a reset. This ensures we don't
 ///    shrink immediately after a large message, only to grow again for the next one.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct AdaptiveWatermarkPolicy<C: Clock = MonotonicClock> {
     /// Trigger when `current_capacity >= last_message_size * size_ratio_threshold`.
     pub size_ratio_threshold: usize,

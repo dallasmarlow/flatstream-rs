@@ -2,9 +2,12 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use flatbuffers::FlatBufferBuilder;
-use flatstream::{DefaultFramer, Durable, StreamWriter, SyncEveryNFrames, SyncMode};
+use flatstream::{
+    DefaultFramer, Durable, StreamWriter, SyncEveryInterval, SyncEveryNFrames, SyncMode,
+};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 const DISPATCH_RECORDS: usize = 1_000;
 const FILE_RECORDS: usize = 100;
@@ -85,6 +88,19 @@ fn sync_policy_dispatch(c: &mut Criterion) {
                 NonZeroU64::new((DISPATCH_RECORDS + 1) as u64).unwrap(),
                 SyncMode::Data,
             );
+            let mut writer = StreamWriter::new(sink, DefaultFramer).with_sync_policy(policy);
+            for _ in 0..DISPATCH_RECORDS {
+                writer.write_finished(&mut builder).unwrap();
+            }
+            let sink = writer.into_inner();
+            black_box((sink.bytes.len(), sink.syncs));
+        });
+    });
+
+    group.bench_function("static_interval_not_due", |b| {
+        b.iter(|| {
+            let sink = DurableVec::with_capacity(DISPATCH_RECORDS * 128);
+            let policy = SyncEveryInterval::new(Duration::from_secs(60), SyncMode::Data);
             let mut writer = StreamWriter::new(sink, DefaultFramer).with_sync_policy(policy);
             for _ in 0..DISPATCH_RECORDS {
                 writer.write_finished(&mut builder).unwrap();

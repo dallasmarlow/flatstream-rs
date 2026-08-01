@@ -114,9 +114,9 @@ is the contract. It runs, and a change is not done until it is green:
   catches `#[cfg]` gaps, plus the opt-in `unsafe_typed` integration test
 - every maintained example, **executed** (`scripts/examples.sh`) — compiling them
   proves nothing about the assertions §1 requires them to make
-- the README's Rust snippets, compiled and run (`scripts/readme_doctests.sh`) —
-  rustdoc only tests snippets under `src/`, so this is the one body of example
-  code nothing else covers
+- the README and ONBOARDING Rust snippets, compiled and run
+  (`scripts/readme_doctests.sh`) — rustdoc only tests snippets under `src/`, so
+  these consumer-facing recipes need an explicit gate
 - `rustdoc -D warnings` (broken intra-doc links are errors)
 - bench and fuzz **compile-checks** (targets must not bit-rot)
 - an MSRV check of the active toolchain against the `Cargo.toml` floor
@@ -264,11 +264,11 @@ only when the task explicitly separates implementation from evidence.
 
 **A2 — Position-accounting instruction-count characterization** — **DONE**,
 `docs/benchmark/FINDINGS_POSITION_ACCOUNTING.md`
-- **Outcome:** discarded writer receipts cost 1.03–2.24 instructions/frame;
-  consumed writer receipts cost 5.28–6.10. Reader position accounting costs
-  53.91–96.16 instructions/frame, while explicitly consuming each read receipt
-  adds only 3.08–4.06. Wall-clock tests resolve no forward-read regression, so
-  no API split or optimization follows.
+- **Outcome:** the original reader characterization remained stable
+  (53.91–96.16 instructions/frame, plus 3.08–4.06 when consuming receipts).
+  Final writer hardening changed codegen enough to invalidate the original
+  writer deltas; do not quote the old 1–6 instruction figures without a new
+  same-revision isolation design.
 - **Goal:** Nail the per-frame cost of writer receipts and reader position
   tracking across default and checksummed framing.
 - **Why:** v0.2.8's wall-clock runs resolve no forward-read regression, but
@@ -383,11 +383,11 @@ only when the task explicitly separates implementation from evidence.
 - **Outcome:** `ObserverFramer`/`ObserverDeframer` remain payload inspectors.
   `StreamWriter::with_post_write_observer` installs a concrete,
   statically-dispatched callback after the complete write operation resolves.
-  Events distinguish serialization failure, framing/I/O failure, success with
-  exact receipt, and durability failure with the accepted receipt. The
-  zero-sized default performs no clock read/callback; an installed receipt +
-  latency observer costs 31.632 ns/frame in the isolated M4 in-memory harness
-  and zero steady-state allocations.
+  Events distinguish serialization failure, framing/I/O failure (including
+  exact partially accepted bytes), success with exact receipt, and durability
+  failure with the accepted receipt. The zero-sized default performs no clock
+  read/callback; installed observers remain zero-allocation in steady state.
+  The committed timing predates final writer poisoning and is historical.
 - **Goal:** Give applications one standard, dependency-free pattern for timing
   frame writes, reads, batches, and durability checkpoints, while keeping OTEL
   and metrics crates out of flatstream.
@@ -547,8 +547,8 @@ ONBOARDING §6
 **E1 — Single-`writev` framing (vectored write)** — **DONE**,
 `docs/benchmark/FINDINGS_VECTORED_FRAMING.md`
 - **Outcome:** adopted as the default in `DefaultFramer`/`ChecksumFramer`, not
-  gated. Every raw-File/TCP pair improved (1.63–3.65× on this machine; one
-  surprising arm rechecked at 2.12×). CRC-32/64 B through `BufWriter` repeatedly
+  gated. Every raw-File/TCP pair improved; the stable isolated range was
+  1.63–2.12× on this machine. CRC-32/64 B through `BufWriter` repeatedly
   cost ~7% / 1.3 ns more; the default/64 B and both 4 KiB buffered arms were
   inconsistent and are reported as inconclusive. `CountingWriter::write_vectored`
   shipped with it; see the findings doc §F3.
@@ -577,11 +577,10 @@ ONBOARDING §6
     picks up the rest, and a non-vectoring sink therefore costs the same two
     calls it did before. `vectored_tests` pins that.
   - **Frame-receipt interaction — do not miss this:** the internal `CountingWriter`
-    (v0.2.8, `src/writer.rs`) overrides `write`/`write_all`/`flush` but **not**
-    `write_vectored`. A framer that starts calling `write_vectored` MUST also get a
-    `CountingWriter::write_vectored` that delegates to the inner writer and adds
-    the bytes written — otherwise `FrameReceipt`/`bytes_written` silently
-    undercount. Prove it with a test.
+    must override `write_vectored` to delegate native vectoring to the inner
+    sink. Without that override, Rust's fallback still routes through the
+    wrapper's counted `write`, so receipts remain correct, but the one-call
+    syscall win silently disappears. Test both byte counts and call shape.
 - **Adopt as the default where it wins.** Breaking changes are fine (§1), so if the
   numbers show a clear win it can become the default framing path rather than a
   gated opt-in; gate only if it helps some sinks and hurts others. Measure first
@@ -626,7 +625,8 @@ ONBOARDING §6
   rather than application folklore, while keeping the default write path
   branch-free and statically dispatched.
 - **Shape:** `Durable` sinks; zero-sized `NoSync`; frame-, byte-, and
-  count-based `SyncPolicy` implementations; static `or` composition;
+  interval-based `SyncPolicy` implementations; strength-aware static `or`
+  composition;
   automatic and manual `sync_data`/`sync_all`; durable watermarks expressed in
   the same coordinate system as `FrameReceipt::end()`.
 - **Failure contract:** a policy checkpoint runs after a complete frame is
@@ -636,11 +636,10 @@ ONBOARDING §6
 - **Invariants:** no implementation for in-memory sinks; no unsafe or runtime
   dependency; the default state is zero-sized; policy-enabled simple/expert
   loops remain zero-allocation in steady state.
-- **Measured outcome:** the default `NoSync` specialization remains the
-  zero-overhead baseline. Installing a non-triggering static policy costs
-  ~0.281 ns / 30.1 instructions per frame in the mock-sink workloads and zero
-  steady-state allocations. Real file elapsed time scales with checkpoint count;
-  see the findings for explicit cadences and portability limits.
+- **Measured outcome:** policy-enabled loops remain zero-allocation in steady
+  state, and real file elapsed time scales with checkpoint count. The committed
+  dispatch numbers predate final writer hardening and do not characterize the
+  interval policy; recollect before publishing a final per-frame overhead.
 
 **E4 — Static memory-policy dispatch** — **DONE**,
 `docs/benchmark/FINDINGS_STATIC_MEMORY_POLICY.md`
@@ -649,10 +648,10 @@ ONBOARDING §6
 - **Shape:** zero-sized `NoMemoryPolicy` defaults; concrete
   `WriterMemoryPolicy<P, F>` / `ReaderMemoryPolicy<P>` states; generic builder
   factories; memory and sync policies compose in either installation order.
-- **Measured outcome:** the default writer drops 8.21 instructions/frame versus
-  the old optional-box carrier. A static gate-open no-op has no resolvable
-  writer wall-clock delta and costs 18.14 instructions/frame for the real
-  capacity/gate/decision work. Reader rechecks show no regression.
+- **Measured outcome:** the static refactor removed the optional box and kept
+  policy-enabled loops zero-allocation. Its committed instruction deltas
+  predate final writer fail-stop hardening; recollect before publishing final
+  per-frame costs.
 
 ---
 

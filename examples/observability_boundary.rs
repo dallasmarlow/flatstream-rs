@@ -50,7 +50,7 @@ impl WriteTelemetry {
                 self.bytes_ok += receipt.wire_len;
                 self.ranges.push(receipt.range());
             }
-            PostWriteOutcome::SerializationFailed(_) | PostWriteOutcome::WriteFailed(_) => {
+            PostWriteOutcome::SerializationFailed(_) | PostWriteOutcome::WriteFailed { .. } => {
                 self.frames_failed += 1;
             }
             PostWriteOutcome::DurabilityFailed { error, .. } => {

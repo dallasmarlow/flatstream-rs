@@ -35,23 +35,54 @@ FILTER=${3:-}
 shift $(( $# < 3 ? $# : 3 ))
 if [ "${1:-}" = "--" ]; then shift; fi
 CARGO_ARGS=("$@")
+HAS_LOCKED=0
+for arg in "${CARGO_ARGS[@]}"; do
+    if [[ "$arg" == "--locked" ]]; then HAS_LOCKED=1; fi
+done
+if [[ "$HAS_LOCKED" == "0" ]]; then
+    CARGO_ARGS=(--locked "${CARGO_ARGS[@]}")
+fi
 
 OUT_DIR=docs/benchmark/raw
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/$SLUG.txt"
+
+CMD=(cargo bench "${CARGO_ARGS[@]}" --bench "$BENCH")
+if [[ -n "$FILTER" ]]; then
+    CMD+=(-- "$FILTER")
+fi
+
+CPU=unknown
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    CPU=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)
+elif [[ -r /proc/cpuinfo ]]; then
+    CPU=$(awk -F: '/model name|Hardware/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }' /proc/cpuinfo)
+    CPU=${CPU:-unknown}
+fi
 
 {
     echo "# $SLUG"
     echo "# date:    $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "# rustc:   $(rustc --version)"
     echo "# host:    $(uname -srm)"
-    echo "# command: cargo bench ${CARGO_ARGS[*]} --bench $BENCH -- $FILTER"
+    echo "# cpu:     $CPU"
+    echo "# git:     $(git rev-parse HEAD)"
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "# dirty:   yes"
+    else
+        echo "# dirty:   no"
+    fi
+    echo "# lock:    $(python3 -c 'import hashlib; print(hashlib.sha256(open("Cargo.lock", "rb").read()).hexdigest())')"
+    echo "# selector: A4_CASE=${A4_CASE:-} POSITIONED_READS_CASE=${POSITIONED_READS_CASE:-}"
+    printf '# command:'
+    printf ' %q' "${CMD[@]}"
+    printf '\n'
     echo
 } >"$OUT"
 
 echo "== $SLUG -> $OUT"
 echo "   Close other work first; this measurement is only as good as the machine is idle."
-cargo bench "${CARGO_ARGS[@]}" --bench "$BENCH" -- $FILTER 2>&1 | tee -a "$OUT"
+"${CMD[@]}" 2>&1 | tee -a "$OUT"
 
 # Criterion separates benchmark groups with blank lines. Keep the raw snapshot
 # newline-terminated without trailing blank records so `git diff --check` stays

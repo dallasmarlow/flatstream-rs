@@ -1,8 +1,10 @@
 # Findings: static memory-policy dispatch
 
-**Author:** maintainer-directed memory-policy refactor  
-**Date:** 2026-07-25  
-**Status:** complete
+**Author:** maintainer-directed memory-policy refactor
+**Date:** 2026-07-25
+**Status:** historical pre-final-writer measurement — static-dispatch and
+allocation conclusions remain, but exact writer instruction/time deltas predate
+the final fail-stop gate and should be recollected before publication
 
 ## Hypothesis
 

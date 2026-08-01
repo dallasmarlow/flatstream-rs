@@ -42,7 +42,7 @@ fn records() -> Vec<String> {
 }
 
 /// Reads exactly one frame whose first byte is at `offset`.
-fn read_frame_at_path<D: flatstream::Deframer>(
+fn read_frame_at_path<D: flatstream::RetrySafeDeframer>(
     path: &std::path::Path,
     offset: u64,
     deframer: D,
@@ -261,7 +261,8 @@ fn with_start_offset_yields_absolute_offsets_when_appending() {
         // `recover_file` leaves the cursor at the append point; tell the
         // writer where that is so its receipts stay absolute.
         let mut writer = StreamWriter::new(BufWriter::new(file), DefaultFramer)
-            .with_start_offset(report.last_good_offset);
+            .with_start_offset(report.last_good_offset)
+            .unwrap();
         assert_eq!(writer.bytes_written(), after_session_1);
         for r in ["delta", "epsilon"] {
             expected.push(finish(&mut builder, r));

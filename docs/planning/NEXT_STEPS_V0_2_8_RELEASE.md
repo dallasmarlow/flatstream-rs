@@ -43,9 +43,9 @@ external format manifest.
 3. On the reference machine, run Docker/MSRV, Miri, or fuzz only when the final
    diff changes those boundaries; report exactly what was run.
 4. Verify Palimpsest against the final pinned revision and update its manifest/
-   migration notes for any incompatible application format change. Its current
-   module/ADR policy lists still name the removed `SyncEveryInterval`; delete
-   those references when repinning (runtime code does not use it).
+   migration notes for any incompatible application format change. Interval,
+   frame, and byte durability policies are available but remain application
+   opt-ins; Palimpsest's current runtime continues to use explicit flushes.
 5. Peer review should focus on:
    - receipt and byte-position semantics after partial I/O;
    - live-file retry versus finalized recovery;

@@ -69,7 +69,7 @@ const fn width_mask(size: usize) -> u64 {
 
 /// Provides an implementation of the XXH3 64-bit hash algorithm.
 #[cfg(feature = "xxhash")]
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct XxHash64;
 
 #[cfg(feature = "xxhash")]
@@ -98,7 +98,7 @@ impl Checksum for XxHash64 {
 /// pins it. If Castagnoli (hardware `crc32c` instructions) is ever wanted,
 /// it must be a new algorithm, not a silent swap: the bytes differ.
 #[cfg(feature = "crc32")]
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Crc32;
 
 #[cfg(feature = "crc32")]
@@ -125,7 +125,7 @@ impl Checksum for Crc32 {
 /// (init 0xFFFF, KAT 0x29B1) — the two share a polynomial and are often
 /// conflated. Ideal for extremely small packets where every byte counts.
 #[cfg(feature = "crc16")]
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Crc16;
 
 #[cfg(feature = "crc16")]
@@ -148,7 +148,7 @@ impl Checksum for Crc16 {
 
 // For backward compatibility, we can provide a "None" checksum implementation
 /// A no-op checksum implementation for when checksums are not needed.
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct NoChecksum;
 
 impl NoChecksum {

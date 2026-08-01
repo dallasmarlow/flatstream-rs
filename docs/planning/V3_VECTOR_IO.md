@@ -20,8 +20,9 @@ idea with invalid or obsolete claims:
 - No `VectoredFramer`, `VectoredChecksumFramer`, `FlatBufferFramer`, vectored
   reader, or batch-writer API was added. `DefaultFramer` and `ChecksumFramer`
   use the existing `Framer` trait.
-- The original syscall prices and projected speedups were unsupported. Only the
-  in-progress E1 findings may be used, and their exact figures are not final.
+- The original syscall prices and projected speedups were unsupported. The
+  completed E1 findings document is the historical evidence record; its stable
+  unbuffered range excludes the initial maximum that failed to reproduce.
 
 Keeping this retired marker in `docs/planning/` is an explicit no-rename
 compromise. It prevents the old proposal from appearing to be future work while

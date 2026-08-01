@@ -1,7 +1,7 @@
 # Findings: caller-scratch positioned reads
 
-**Author:** maintainer-directed positioned-read implementation  
-**Date:** 2026-07-25  
+**Author:** maintainer-directed positioned-read implementation
+**Date:** 2026-07-25
 **Status:** complete; read-counted point-lookup correction added 2026-07-29
 
 ## Hypothesis

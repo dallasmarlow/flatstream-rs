@@ -74,12 +74,12 @@ are no compatibility shims; read release notes when bumping.
 ## 3. Writing
 
 ```rust
-use flatstream::{ChecksumFramer, Crc32, StreamWriter, Result};
+use flatstream::{ChecksumFramer, Crc32, OwnedStreamWriter, Result, StreamWriter};
 use std::io::BufWriter;
 
 fn create_new_journal(
     path: &str,
-) -> Result<StreamWriter<BufWriter<std::fs::File>, ChecksumFramer<Crc32>>> {
+) -> Result<OwnedStreamWriter<BufWriter<std::fs::File>, ChecksumFramer<Crc32>>> {
     let file = std::fs::OpenOptions::new()
         .create_new(true)
         .read(true)
@@ -109,13 +109,34 @@ fsync. For explicit transaction boundaries, `writer.sync_data()` /
 `writer.sync_all()` flush and synchronize a `Durable` sink and return the
 durable byte watermark. For automatic group commit, install a static policy:
 
-```rust
-use flatstream::{SyncEveryNFrames, SyncMode};
+```rust,no_run
+use flatstream::{
+    DefaultFramer, Result, StreamWriter, SyncEveryBytes, SyncEveryInterval,
+    SyncEveryNFrames, SyncMode, SyncPolicyExt,
+};
+use std::io::BufWriter;
 use std::num::NonZeroU64;
+use std::time::Duration;
 
-let policy =
-    SyncEveryNFrames::new(NonZeroU64::new(1_000).unwrap(), SyncMode::Data);
-let mut writer = writer.with_sync_policy(policy);
+fn write_with_group_commit(file: std::fs::File) -> Result<()> {
+    let policy = SyncEveryNFrames::new(
+        NonZeroU64::new(1_000).unwrap(),
+        SyncMode::Data,
+    )
+    .or(SyncEveryBytes::new(
+        NonZeroU64::new(16 * 1024 * 1024).unwrap(),
+        SyncMode::Data,
+    ))
+    .or(SyncEveryInterval::new(
+        Duration::from_secs(1),
+        SyncMode::Data,
+    ));
+    let mut writer =
+        StreamWriter::new(BufWriter::new(file), DefaultFramer)
+            .with_sync_policy(policy);
+    writer.write(&"event")?;
+    Ok(())
+}
 ```
 
 The default `NoSync` state is zero-sized and branch-free. A policy-enabled
@@ -124,6 +145,13 @@ learn which frames a successful checkpoint covers. If automatic sync fails,
 `DurabilityFailed` reports that the triggering frame was already accepted, so
 do not blindly retry the write. One writer per stream — there is no multi-writer
 coordination, by design.
+
+Interval policies read a monotonic clock after each accepted frame. That cost is
+opt-in and buys storage-owned time bounds without requiring an application
+scheduler. Applications that already have a timer may instead call
+`sync_data()`/`sync_all()` externally. Policies compose statically; a successful
+`SyncMode::All` checkpoint satisfies data-only policies, while a weaker
+`SyncMode::Data` checkpoint does not reset a pending `All` requirement.
 
 **Palimpsest's boundary is a completed harvest, not an arbitrary frame count.**
 Its worker writes roughly 256-row frames, flushes once after the whole harvested
@@ -141,17 +169,28 @@ If the product contract is strengthened, choose the checkpoint deliberately:
 - `sync_data()` at the end of every `append()` is the stronger promise: no
   harvested row is evicted from RAM before its frame is checkpointed.
 
-```rust
-let durable_through = writer.sync_data()?;
-debug_assert_eq!(durable_through, writer.bytes_written());
-// Under the stronger contract, only now may the engine evict harvested rows.
+```rust,no_run
+use flatstream::{DefaultFramer, OwnedStreamWriter, Result};
+use std::io::BufWriter;
+
+fn checkpoint(
+    mut writer: OwnedStreamWriter<BufWriter<std::fs::File>, DefaultFramer>,
+) -> Result<()> {
+    let durable_through = writer.sync_data()?;
+    assert_eq!(durable_through, writer.bytes_written());
+    // Under the stronger contract, only now may the engine evict harvested rows.
+    Ok(())
+}
 ```
 
 Use `sync_all()` when sealing a segment if file-length/metadata persistence is
 part of the deployment contract. Directory-entry and manifest durability
-require application-level filesystem handling beyond flatstream. On macOS,
-`sync_all()` has `std::fs::File::sync_all` semantics (`fsync`, not
-`F_FULLFSYNC`).
+require application-level filesystem handling beyond flatstream. Checkpoint
+strength is the standard library's, and on macOS it is stronger than commonly
+assumed: as of Rust 1.97.1, both `sync_data()` and `sync_all()` issue
+`fcntl(F_FULLFSYNC)` — a genuine drive-write-cache flush — so a strengthened
+contract buys real power-loss protection there. Linux distinguishes
+`fdatasync`/`fsync`.
 
 ## 4. Reading
 
@@ -178,8 +217,10 @@ fn replay(file: std::fs::File) -> Result<u64> {
 - `read_message()` — one frame at a time.
 - `read_message_with_receipt()` — one frame plus its exact wire range;
   `bytes_consumed()` is the next frame boundary after success.
-- `read_frame_at(&mut source, &deframer, offset, &mut scratch)` — stateless
+- `read_frame_at(&mut source, &deframer, offset, &mut scratch)` — retry-safe
   indexed lookup. Reuse `scratch` across calls for zero-allocation steady state.
+  Built-ins satisfy `RetrySafeDeframer`; custom stateful deframers must
+  explicitly implement that marker only when rewind restores all decode state.
 - **Typed reads:** implement `StreamDeserialize` for your root type and use
   `reader.process_typed::<T, _>(|root| ...)` — the payload passes your
   schema's verifier before your callback sees the root. (The
@@ -199,17 +240,28 @@ fn replay(file: std::fs::File) -> Result<u64> {
 A journal that stopped mid-append ends in a torn frame. On every reopen:
 
 ```rust
-use flatstream::{recover_file, ChecksumDeframer, Crc32, RecoveryEnd, Result};
+use flatstream::{
+    recover_file, ChecksumDeframer, ChecksumFramer, Crc32, OwnedStreamWriter,
+    RecoveryEnd, Result, StreamWriter,
+};
+use std::io::BufWriter;
 
-fn reopen(path: &str) -> Result<std::fs::File> {
+fn reopen(
+    path: &str,
+) -> Result<OwnedStreamWriter<BufWriter<std::fs::File>, ChecksumFramer<Crc32>>> {
     let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
     let deframer = ChecksumDeframer::new(Crc32::new()).with_max_frame_len(1 << 20);
     let report = recover_file(&mut file, deframer)?;
     if report.end == RecoveryEnd::TornTail {
         file.set_len(report.last_good_offset)?; // drop the torn tail
     }
-    // cursor is already at last_good_offset — hand the file to a StreamWriter
-    Ok(file)
+    // The cursor and receipt coordinate system must agree at the append point.
+    let writer = StreamWriter::new(
+        BufWriter::new(file),
+        ChecksumFramer::new(Crc32::new()),
+    )
+    .with_start_offset(report.last_good_offset)?;
+    Ok(writer)
 }
 ```
 
@@ -283,7 +335,7 @@ Internalize the boundary the contract draws:
 - **Any other `Err` is a real fault** (a device error, a checksum mismatch on a
   complete frame, an oversized length) and must not be retried as if bytes were
   merely missing.
-- **Only `read_frame_at` is safe to retry.** A sequential `StreamReader` that
+- **Only `read_frame_at` with a `RetrySafeDeframer` is safe to retry.** A sequential `StreamReader` that
   hit a short read has already consumed the partial bytes through its internal
   counter; it cannot simply continue. Use the stateless point read for tailing,
   or reopen and `recover_file` once the writer has stopped.

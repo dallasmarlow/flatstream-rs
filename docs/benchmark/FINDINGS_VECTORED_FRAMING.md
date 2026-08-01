@@ -149,19 +149,15 @@ the two-element `IoSlice` array, and one comparison — plus the fact that
 `BufWriter::write_vectored` cannot use the specialized single-buffer path a plain
 `write_all` takes. At 4096 B the workstation cannot resolve a repeatable result.
 
-### F3. A silent-corruption bug this experiment exposed
+### F3. The counting wrapper must preserve native vectoring
 
-`FrameReceipt` offsets are produced by `CountingWriter`, which counted bytes by
-overriding `write` and `flush`. `Write::write_vectored`'s default implementation
-forwards to `write`, so the counter kept working by accident — but only until
-something in the stack implemented `write_vectored` natively, which `File`,
-`TcpStream`, and `BufWriter` all do.
+`FrameReceipt` offsets are produced by `CountingWriter`. Without its
+`write_vectored` override, Rust's provided method would call the wrapper's own
+counted `write`, so receipt accounting would remain correct. The regression
+would be performance, not corruption: native `File`/`TcpStream` vectoring would
+be hidden behind scalar fallback calls.
 
-Had E1 shipped without touching `CountingWriter`, every vectored byte would have
-bypassed `self.count`. `bytes_written()` would have returned near-zero, and every
-`FrameReceipt` handed to an external index would have pointed at the wrong
-offset — with no error, no panic, and no test failure, because no test then
-compared receipt offsets against real frame boundaries. The fix is four lines:
+The override both delegates vectoring and counts what the inner sink accepts:
 
 ```rust
 fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
@@ -171,11 +167,9 @@ fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<u
 }
 ```
 
-The generalizable lesson: **`CountingWriter` must override every `Write` method
-that can move bytes**, and must not be allowed to stay correct by relying on a
-default trait method. `tests/external_index.rs` (B1) now asserts receipt offsets
-against actual frame boundaries, so this class of failure fails a test instead
-of shipping.
+`tests/external_index.rs` pins receipt offsets, while
+`receipts_are_correct_for_a_vectoring_sink` separately pins that the sink sees
+one vectored call rather than scalar fallback.
 
 Note for future work: `Write::is_write_vectored` is still unstable on the MSRV
 (`can_vector`, issue #69941), so `CountingWriter` cannot forward it. Nothing in
@@ -185,8 +179,9 @@ silently lose the vectored path rather than misbehave.
 
 ## Conclusion
 
-Single-`writev` framing reduces every measured unbuffered pair by **1.63–3.65×**,
-with the 3.65× arm rechecking at 2.12×.
+Single-`writev` framing reduced every measured unbuffered pair. The stable
+same-run range is **1.63–2.12×**; the initial 3.65× maximum did not reproduce
+and is retained only in the raw/history table above.
 For the production-shaped CRC-32/64 B pair it saves about **0.91 µs/frame** on a
 raw file and **1.47 µs/frame** on loopback TCP, while costing **1.29–1.36
 ns/frame** through `BufWriter`.
@@ -237,7 +232,7 @@ short acceptance; readers must continue to handle arbitrary stream chunking.
   reported as inconclusive rather than averaged away.
 - **T2 — Single machine, single OS.** Apple M4 / macOS. `writev` cost relative to
   `write` differs on Linux. The *direction* on the measured unbuffered sinks is
-  structural; the 1.63–3.65× magnitude is not portable.
+  structural; the stable 1.63–2.12× magnitude is not portable.
 - **T3 — Loopback TCP is not a network.** Absolute values include local
   scheduling against a draining reader thread and say nothing about real link
   behavior.

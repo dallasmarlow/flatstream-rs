@@ -1,6 +1,7 @@
 # Planning: source clarity and structure
 
-**Status:** Proposed
+**Status:** Needs re-audit — source line references predate the final v0.2.8
+hardening pass; do not assign tasks from this snapshot without rechecking them
 **Date:** 2026-07-24
 **Author:** contributor
 **Targets:** pre-3.0, incremental
@@ -394,11 +395,9 @@ extraction so each move is reviewable in isolation.
 
 ## 6. Why this is worth doing before 3.0
 
-The 3.0 line adds a stream preamble, schema awareness, and a wire-format change —
-work that will touch `framing.rs` hardest, which is the module with the two
-cohesion seams, the 12-byte header invariant spread across 40 lines, and nine
-undocumented public functions including the `Framer` trait's only method. Every
-one of those is a place where a 3.0 contributor can be wrong without the code
-telling them.
+The owner has declined a core stream preamble; persistent consumers retain an
+application-owned manifest. Future schema/container work may still touch
+`framing.rs`, but this document's preamble assumption and exact source-line
+inventory are no longer planning inputs until the audit is rerun.
 
 Doing this after 3.0 means doing it to a larger, less familiar `framing.rs`.
