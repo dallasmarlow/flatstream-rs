@@ -8,8 +8,8 @@ nothing
 
 This is an addendum rather than an edit because the original is a research record
 with real value — in particular it preserves a failed `unsafe` bridge attempt and
-prices it, which is exactly the kind of negative result `CONTRIBUTING.md` §4 says
-to commit. Nothing below asks to delete any of it. The proposals are: add a
+prices it, which is exactly the kind of negative result the project evidence
+standard says to commit. Nothing below asks to delete any of it. The proposals are: add a
 banner, fold in two decisions made elsewhere, and re-scope the open question
 using a measurement that did not exist when the document was written.
 
@@ -120,8 +120,8 @@ figures are specific to the 64 B workload and this machine.
 Even as an upper bound, the measured cadence is informative. **With
 one `sync_data()` per 1000-record batch, a project that fully meets its own 15%
 bar would move the record by about a tenth of one percent on this run** — below
-the −24%/+57% noise band `CONTRIBUTING.md` §4 documents. The effect would be
-unresolvable on the machine that produced the run.
+the measured −24%/+57% noise band. The effect would be unresolvable on the
+machine that produced the run.
 
 In a profile with no durability call, the same calculation gives an upper
 bound near 9%.
@@ -146,9 +146,9 @@ the decision can now be made against the committed A1 evidence.
 "At least 15% performance improvement" does not say measured how. Given §4, a 15%
 win on the build stage in isolation and a 15% win on an end-to-end record are
 different claims, and the once-per-1000-record profile leaves little
-room for the second. Per `CONTRIBUTING.md` §4, the bar should
-name the benchmark, the profile, and whether it is wall-clock or instruction
-counts — and given the size of the effect being chased, instruction counts
+room for the second. The bar should name the benchmark, the profile, and
+whether it is wall-clock or instruction counts — and given the size of the
+effect being chased, instruction counts
 (A2's instrument) are the only honest choice for the isolated-stage version.
 
 ---

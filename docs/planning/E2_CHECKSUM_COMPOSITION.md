@@ -1,8 +1,8 @@
 # E2 — Checksum framer/deframer inner composition: decision memo
 
-> **Status: decision memo only — DECLINED, with rationale.** Per
-> `docs/CONTRIBUTING.md` §6 (task E2), the semantic question is resolved *before*
-> any code. The outcome the backlog explicitly admits as valid — "a documented
+> **Status: decision memo only — DECLINED, with rationale.** For task E2, the
+> semantic question is resolved *before* any code. The outcome the backlog
+> explicitly admits as valid — "a documented
 > *declined, with rationale*" — is the outcome here. No public API changes; no
 > wire change. Revisit only under the trigger in §5.
 

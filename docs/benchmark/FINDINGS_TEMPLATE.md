@@ -5,8 +5,8 @@
 > below must be reproducible from the Methodology section alone, by someone who is
 > not you, on a fresh checkout. Delete these `>` guidance blocks as you go.
 >
-> See `docs/benchmark/BENCHMARK_COMPARISON.md` for a worked example, and
-> `CONTRIBUTING.md` §1/§4 for why the bar is what it is.
+> See `docs/benchmark/BENCHMARK_COMPARISON.md` for a worked example and the
+> README's benchmark guidance for the current evidence workflow.
 
 **Author:** <name>
 **Date:** <YYYY-MM-DD>

@@ -13,8 +13,8 @@
 #               anything if they actually execute; the corpus-mutating lobster
 #               example is compile-checked by default and runs only when
 #               explicitly enabled; see scripts/examples.sh
-#   docs        README/ONBOARDING Rust snippets are the code consumers copy
-#               first, and rustdoc only tests snippets under src/ — see
+#   docs        README Rust snippets are the code consumers copy first, and
+#               rustdoc only tests snippets under src/ — see
 #               scripts/readme_doctests.sh
 #   rustdoc     broken intra-doc links and doc warnings, as errors
 #   bench check benches are compile-checked so they can't bit-rot between runs
@@ -65,7 +65,7 @@ cargo test --locked --features all_checksums,unsafe_typed --test stream_deserial
 echo "== examples: run non-mutating examples; compile-check lobster"
 ./scripts/examples.sh
 
-echo "== README and ONBOARDING snippets compile and run"
+echo "== README snippets compile and run"
 ./scripts/readme_doctests.sh
 
 echo "== rustdoc (-D warnings)"

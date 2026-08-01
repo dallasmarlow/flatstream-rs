@@ -16,9 +16,8 @@ accepts or the source returns, `bytes_written`/`bytes_consumed` arithmetic, and
 the construction of a `FrameReceipt`/`ReadFrame` per frame. v0.2.8's wall-clock
 runs resolved *no* forward-read regression from this (see
 `FINDINGS_POSITIONED_READS.md`), but wall-clock cannot resolve a per-frame cost
-of a few instructions — it sits inside the −24%/+57% drift band documented in
-`CONTRIBUTING.md` §4. This experiment upgrades that null result to a *counted*
-one.
+of a few instructions — it sits inside the documented −24%/+57% drift band.
+This experiment upgrades that null result to a *counted* one.
 
 The claims to prove or falsify, per frame, in the pinned environment:
 
@@ -73,9 +72,9 @@ Both schemes covered: **default** (`write_direct`/`write_accounted`/
 CRC-32 is used for the checksummed scheme rather than XXH3-64 so the accounting
 delta is read against a checksum whose own per-frame cost is well characterized
 elsewhere; the `write_xxhash64`/`read_xxhash64` arms are retained unchanged as
-the E3/E4 continuity baseline. Per `CONTRIBUTING.md` §1, CRC-32 is
-hardware-assisted only where SSE4.2/PCLMULQDQ is available (scalar fallback
-otherwise); the pinned container's fingerprint determines which path ran.
+the E3/E4 continuity baseline. CRC-32 is hardware-assisted only where
+SSE4.2/PCLMULQDQ is available (scalar fallback otherwise); the pinned
+container's fingerprint determines which path ran.
 
 All arms serialize the same 100 `TelemetryEvent` frames (24-byte payloads,
 stack-staged so no allocation lands inside the measured loop) and reuse one
@@ -106,7 +105,7 @@ tuple, preventing LLVM from erasing either payload reads or receipt arithmetic.
 
 ```bash
 # One pinned run produces every arm; the paired deltas come from a single run,
-# never across runs (CONTRIBUTING.md §4).
+# never across runs.
 scripts/instruction_counts.sh | tee docs/benchmark/raw/a2_position_accounting.txt
 ```
 

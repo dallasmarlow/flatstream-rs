@@ -1,8 +1,6 @@
 # v0.2.8 release handoff and next steps
 
 **Updated:** 2026-07-30
-**Source of truth for task acceptance:** `docs/CONTRIBUTING.md`
-
 ## Current state
 
 The v0.2.8 implementation now includes writer/reader receipts, positioned point
@@ -18,9 +16,9 @@ Latest completed contributor work:
   gate.
 - **A3:** the generic `Read` copy-cost baseline is complete, with the benchmark,
   isolated raw snapshots, and findings recorded under `docs/benchmark/`.
-- **A4:** compression feasibility — schema-exact modeled Palimpsest fixtures
-  saved substantial bytes, but LZ4/Zstandard level 1 slowed the current
-  buffered, flush-only file path; no production adapter follows.
+- **A4:** compression feasibility — fingerprinted Palimpsest-shaped modeled
+  payloads saved substantial bytes, but LZ4/Zstandard level 1 slowed the
+  current buffered, flush-only file path; no production adapter follows.
 - **C6:** position-accounting fault semantics — four self-asserting tests
   (`tests/position_accounting_faults.rs`) over a custom `read_vectored` deframer,
   retained bytes before `UnexpectedEof`, device errors counting only returned

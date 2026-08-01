@@ -249,7 +249,7 @@ flatstream error remains the I/O error's inner payload in every case.
   - No. It’s a framing layer for FlatBuffers payloads. RPC/routing/etc. are out of scope.
 
 - **Does `flush()` make a file durable?**
-  - No. `StreamWriter::flush()` delegates to `Write::flush()`. If durable storage is required, flush any buffering and apply the platform-appropriate durability operation (for example `File::sync_data`/`sync_all`) at the application’s chosen group-commit boundary. FlatStream deliberately does not choose that policy.
+  - No. `StreamWriter::flush()` delegates to `Write::flush()`. For a `Durable` sink, call `StreamWriter::sync_data()`/`sync_all()` at an application-owned boundary or install a static `SyncPolicy`; both paths flush buffering before the standard-library durability operation.
 
 ## Why FlatStream?
 
@@ -429,8 +429,8 @@ are stable within one recorded compiler/dependency/target/tool environment.
 Counts from different environments are not comparable. Criterion baselines
 (`--save-baseline` / `--baseline`) remain useful for local regression triage and
 live in machine-local `target/criterion`, but published wall-clock claims use
-A/B arms from one isolated `scripts/bench_isolated.sh` run; see
-`docs/CONTRIBUTING.md` §4.
+A/B arms from one isolated `scripts/bench_isolated.sh` run; committed findings
+and raw snapshots under `docs/benchmark/` record the evidence.
 
 ### Running the gate in a clean container
 

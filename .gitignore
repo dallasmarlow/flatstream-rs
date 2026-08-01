@@ -1,4 +1,9 @@
 /target
+/CLAUDE.md
+/CONTRIBUTING.md
+/CRITIQUE.md
+/ONBOARDING.md
+bench_results*.txt
 *.bin
 # A4's three deterministic benchmark inputs only; keep other binary output ignored.
 !benches/a4_palimpsest_*.bin

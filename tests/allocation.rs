@@ -5,8 +5,8 @@
 //! in the design docs and observed in benchmarks, but until now nothing failed
 //! when it broke — and a wall-clock benchmark is the wrong instrument for it.
 //! One extra allocation per frame costs tens of nanoseconds, well inside the
-//! −24%/+57% run-to-run drift `CONTRIBUTING.md` §4 documents. A regression
-//! would be indistinguishable from a noisy machine.
+//! documented −24%/+57% run-to-run benchmark drift. A regression would be
+//! indistinguishable from a noisy machine.
 //!
 //! It is also easy to introduce and innocent-looking in review: a `format!` on
 //! a path that turns out to be hot, a `.to_vec()` where a slice would do, a
@@ -168,6 +168,20 @@ impl std::io::Write for FixedSink {
         self.buf.extend_from_slice(buf);
         Ok(buf.len())
     }
+
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let len: usize = bufs.iter().map(|buf| buf.len()).sum();
+        assert!(
+            self.buf.len() + len <= self.cap,
+            "FixedSink overflow: the test under-reserved, so its own growth \
+             would be counted as the library's"
+        );
+        for buf in bufs {
+            self.buf.extend_from_slice(buf);
+        }
+        Ok(len)
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }

@@ -6,7 +6,7 @@
 //! fraction of the per-record cost is flatstream's?** A consumer observed a
 //! large end-to-end throughput drop and attributed it to their own
 //! serialization and bookkeeping rather than to the library. That attribution
-//! is plausible but was never measured, and `docs/CONTRIBUTING.md` §1 forbids
+//! is plausible but was never measured; the project evidence rule forbids
 //! publishing it unmeasured. This bench measures it.
 //!
 //! # Design: a cumulative ladder, not seven isolated micro-benches
@@ -62,7 +62,7 @@ const DURABILITY_RECORDS: usize = 16;
 /// a screen repaint or a burst of program output.
 const CHUNK_SIZES: [usize; 2] = [64, 4096];
 
-// vtable slot offsets for the TerminalChunk table (see ONBOARDING.md §7):
+// vtable slot offsets for the modeled TerminalChunk table:
 // field i lives at slot offset 4 + 2*i.
 const V_SEQUENCE: u16 = 4;
 const V_TIMESTAMP: u16 = 6;

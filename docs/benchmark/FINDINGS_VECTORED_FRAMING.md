@@ -1,6 +1,6 @@
 # Findings: does collapsing a frame's two writes into one `writev` pay?
 
-**Author:** contributor (E1, `CONTRIBUTING.md` §6)
+**Author:** contributor (E1)
 **Date:** 2026-07-24
 **Status:** complete — isolated raw `File`, TCP, and `BufWriter` outputs committed
 
@@ -29,9 +29,9 @@ halves per-frame cost on unbuffered sinks, and is free on buffered ones.**
 
 The second half of that sentence is where the hypothesis can fail, and is the
 reason the experiment is worth running. `BufWriter` is the sink this library
-recommends (README, `ONBOARDING.md` §4), so a `writev` win that costs the
-recommended path anything is a bad trade. E1 is therefore as much a regression
-check on `BufWriter` as it is a win-measurement on raw sinks.
+recommends in the README, so a `writev` win that costs the recommended path
+anything is a bad trade. E1 is therefore as much a regression check on
+`BufWriter` as it is a win-measurement on raw sinks.
 
 ## Methodology
 
@@ -186,16 +186,11 @@ For the production-shaped CRC-32/64 B pair it saves about **0.91 µs/frame** on 
 raw file and **1.47 µs/frame** on loopback TCP, while costing **1.29–1.36
 ns/frame** through `BufWriter`.
 
-Against A1's isolated 63.011 ns non-durable 64 B record, that buffered CRC-32
-cost is roughly **2.0–2.2 %**. With one sync per 1,000 records it is about
-0.03 % of total elapsed time. These percentages are specific to the paired
-workloads, not portable constants.
-
 **Adopted as the default** in `DefaultFramer` and `ChecksumFramer`, not gated
-behind a feature or a sink probe. `CONTRIBUTING.md` §6 E1 permits gating "only if
-it helps some sinks and hurts others"; the observed small buffered cost against
-the large unbuffered improvement did not meet that bar. A gate would also add a
-branch to the path it was meant to protect.
+behind a feature or a sink probe. The E1 acceptance rule permitted gating only
+if the path helped some sinks and hurt others; the observed small buffered cost
+against the large unbuffered improvement did not meet that bar. A gate would
+also add a branch to the path it was meant to protect.
 
 On TCP this is only a call-count optimization. TCP is a byte stream:
 `writev` does not guarantee all-or-nothing acceptance, segment boundaries, or
@@ -211,8 +206,8 @@ short acceptance; readers must continue to handle arbitrary stream chunking.
   which is what licenses the "no wire change" claim in
   `docs/WIRE_FORMAT_SPEC.md`.
 - `docs/DESIGN_v2_8.md` §5 documents the change and the receipt interaction.
-- `CONTRIBUTING.md` §6 E1's claim that `IoSlice::advance_slices` is unstable on
-  the MSRV was wrong (it stabilized in 1.81); corrected there. Only
+- The original E1 task brief's claim that `IoSlice::advance_slices` is unstable
+  on the MSRV was wrong (it stabilized in 1.81). Only
   `Write::write_all_vectored` remains unstable.
 
 ## Threats to validity

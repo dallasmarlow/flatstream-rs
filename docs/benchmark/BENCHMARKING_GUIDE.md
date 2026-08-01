@@ -1,14 +1,21 @@
-# FlatStream-RS Benchmarking Guide
+# FlatStream-RS Benchmarking Guide (historical v2.x material)
 
-> **Current evidence rule (2026-07-24):** use `scripts/bench_isolated.sh` and
-> compare A/B arms collected inside the same isolated run, as specified by
-> `docs/CONTRIBUTING.md` §4. Saved cross-run Criterion baselines described in
-> historical sections below remain useful for local regression triage, but are
-> not sufficient provenance for a published performance claim.
+> **Historical quarantine.** The figures, acceptance thresholds, branch names,
+> saved-baseline workflows, and CI sketches below predate the v0.2.8 evidence
+> standard. They are retained for design history and local regression-triage
+> ideas, not as current results or release requirements. Do not quote them or
+> use them to accept/reject a change.
+>
+> **Current workflow (2026-08-01):** follow the README's "Benchmarking and
+> updating performance figures" section. Use
+> `scripts/bench_isolated.sh`, compare A/B arms collected inside the same
+> isolated run, and commit a stamped raw snapshot plus a completed findings
+> document. Cross-run Criterion baselines are local triage only.
 
 ## Overview
 
-This guide covers the comprehensive benchmarking strategy for `flatstream-rs`, including performance regression detection, comparative analysis against other serialization libraries, and detailed performance analysis methodologies.
+The remainder of this document records the older comprehensive benchmarking
+strategy; the banner above governs every section below.
 
 ## **v2.5 Benchmarking Strategy Update**
 

@@ -259,6 +259,10 @@ fn a_device_error_counts_only_bytes_actually_returned() {
         budget as u64,
         "the counter equals bytes actually returned before the error"
     );
+    assert!(
+        reader.is_poisoned(),
+        "a device error after partial-frame consumption must fail-stop the reader"
+    );
 }
 
 // --- (d) A nonzero start offset composes with a static memory policy. ---

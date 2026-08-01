@@ -414,9 +414,10 @@ pub type OwnedStreamWriter<W, F, S = NoSync, M = NoMemoryPolicy, O = NoPostWrite
 /// `frame_start` is the offset of the frame's first byte; `wire_len` is the
 /// total bytes the frame occupies on the wire (length prefix + optional
 /// checksum + payload). The next frame begins at `frame_start + wire_len`.
-/// Offsets are relative to the writer's start offset (0 by default, or the value
-/// given to [`StreamWriter::with_start_offset`] for a writer positioned over a
-/// nonzero region of a file), so they can be recorded in an external index and
+/// Offsets use the writer's configured coordinate system: they start at 0 by
+/// default, or at the absolute value given to
+/// [`StreamWriter::with_start_offset`] for a writer positioned over a nonzero
+/// region of a file. They can therefore be recorded in an external index and
 /// used to seek a reader — no `8 + payload_len` wire arithmetic in caller code.
 ///
 /// Receipts are plain values: hashable for index keys, and ordered by

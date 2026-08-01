@@ -11,8 +11,8 @@
 > conversation.
 >
 > Current, reproducible measurements live in `docs/benchmark/`, each with its
-> machine, toolchain, command, and threats-to-validity recorded
-> (`CONTRIBUTING.md` §4). Releases from v2.8 onward are documented in
+> machine, toolchain, command, and threats-to-validity recorded. Releases from
+> v2.8 onward are documented in
 > `docs/DESIGN_v2_8.md` and its successors rather than here.
 
 ## Overview

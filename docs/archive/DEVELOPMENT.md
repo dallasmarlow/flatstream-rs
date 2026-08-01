@@ -646,7 +646,6 @@ flatstream-rs/
 ### Support
 - **Issues**: GitHub Issues for bug reports
 - **Discussions**: GitHub Discussions for questions
-- **Contributing**: See CONTRIBUTING.md for development guidelines
 
 ---
 

@@ -1,12 +1,14 @@
 # Raw benchmark output
 
-Committed Criterion output backing the `FINDINGS_*.md` docs. `CONTRIBUTING.md`
-§4 and `FINDINGS_TEMPLATE.md` ask findings docs to cite a committed snapshot
-rather than a hand-summarized table, and this is where those snapshots live.
+Committed Criterion output backing the `FINDINGS_*.md` docs. The project
+evidence standard and `FINDINGS_TEMPLATE.md` ask findings docs to cite a
+committed snapshot rather than a hand-summarized table, and this is where those
+snapshots live.
 
 Produce them with `scripts/bench_isolated.sh`, which runs **one benchmark group
-at a time** and stamps each file with the date, `rustc --version`, host, and the
-exact command:
+at a time** and stamps each new file with the date, toolchain, host/CPU, git
+revision and dirty state, `Cargo.lock` digest, selector variables, and exact
+command:
 
 ```bash
 scripts/bench_isolated.sh e1_file          vectored_framing 'file/' -- --features crc32 --locked
@@ -42,6 +44,13 @@ otherwise idle.
 Overwriting a file when re-collecting on different hardware is expected — the
 header records which machine produced it, so `git log` carries the history.
 
+Snapshots collected before the current stamping format do not contain every
+field above. In particular, a legacy header without git/dirty/lock metadata
+cannot prove the exact source revision on its own. Keep those files as the raw
+historical record, apply the limitations stated in their findings document, and
+do not promote them into a new or final-hardened performance claim without a
+same-revision recollection.
+
 ## Current snapshots
 
 | Snapshot | Cited by | State |
@@ -67,6 +76,12 @@ header records which machine produced it, so `git log` carries the history.
 | `a3_read_copy_default.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; Apple M4 Pro |
 | `a3_read_copy_crc32.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; Apple M4 Pro |
 | `a3_read_copy_crc32_recheck.txt` | `FINDINGS_READ_PATH_COPY.md` | complete; required CRC-32 256 KiB recheck |
+| `b3_post_write_observer.txt` | `FINDINGS_POST_WRITE_OBSERVER.md` | historical pre-final-writer Criterion snapshot |
+| `b3_instruction_counts.txt` | `FINDINGS_POST_WRITE_OBSERVER.md` | historical pre-final-writer instruction snapshot |
+| `d_point_read_counted.txt` | `FINDINGS_POSITIONED_READS.md` | corrected counted point-read snapshot |
+| `a4_palimpsest_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three modeled payload sizes |
+| `a4_compressible_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three sizes plus required 64 KiB recheck |
+| `a4_incompressible_*.txt` | `FINDINGS_COMPRESSION_FEASIBILITY.md` | complete; three deterministic control sizes |
 
 Criterion snapshots above were collected one group at a time on the same Apple
 M4 / macOS / Rust 1.97.1 environment stamped in each file. Instruction counts

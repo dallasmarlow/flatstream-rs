@@ -1,16 +1,16 @@
 # Findings: what fraction of an end-to-end write is flatstream?
 
-**Author:** contributor (A1, `CONTRIBUTING.md` §6)
+**Author:** contributor (A1)
 **Date:** 2026-07-24
 **Status:** complete — isolated raw output committed at
 `docs/benchmark/raw/a1_write_pipeline.txt`
 
 ## Hypothesis
 
-A consumer (the terminal scrollback journal of `ONBOARDING.md` §7) observed a
+A consumer (a terminal scrollback journal) observed a
 large end-to-end write throughput drop and attributed it to **their own**
-serialization and bookkeeping rather than to flatstream. `CONTRIBUTING.md` §1
-forbids publishing that attribution until it is measured.
+serialization and bookkeeping rather than to flatstream. The project evidence
+rule forbids publishing that attribution until it is measured.
 
 The hypothesis under test, stated so it can fail: **in a realistic journaling
 write, flatstream's framing is a small single-digit share of per-record cost,
@@ -38,9 +38,9 @@ share to every possible sync cadence or storage device.
 - Baseline compared against: N/A — this is an absolute decomposition, not an
   A/B. Each rung is compared against the rung below it, within one run.
 
-**Instrument choice.** Wall clock only. Per `CONTRIBUTING.md` §4 this is the
-right instrument for throughput *shares* and the wrong one for sub-nanosecond
-deltas — see Findings §F3, which is precisely why backlog item A2 exists.
+**Instrument choice.** Wall clock only. This is the right instrument for
+throughput *shares* and the wrong one for sub-nanosecond deltas — see Findings
+§F3, which is precisely why backlog item A2 exists.
 
 ### Steps
 
@@ -72,8 +72,8 @@ the delta between two adjacent rungs measured *in situ*.
 | `s6_index` | + external offset index built from `FrameReceipt` | application |
 | `s7_fsync` | + `flush()` + `sync_data()` once per 1000-record batch | durability |
 
-The workload is the `ONBOARDING.md` §7 terminal-journaling profile: a
-`TerminalChunk` table (`sequence`, `monotonic_timestamp`, `channel`,
+The workload models that terminal journal: a `TerminalChunk` table
+(`sequence`, `monotonic_timestamp`, `channel`,
 `data:[ubyte]`) framed with `ChecksumFramer::new(Crc32::new())`. The timestamp
 is a real `Instant::elapsed()`, not a constant — a journal that cannot order its
 records is not a journal, so that cost belongs to the workload.
@@ -177,8 +177,8 @@ flatstream's framing-plus-CRC share of total elapsed time is approximately
 SSE4.2/PCLMULQDQ on x86-64, the CRC32 instructions on aarch64 — and falls back to
 a scalar table-driven implementation otherwise. The ≈11.6 GB/s measured at 4 KiB
 in §F2 is an accelerated aarch64 path and must not be quoted as a portable
-figure. Per `CONTRIBUTING.md` §6 A1, phrase this as *hardware-assisted where
-available, scalar fallback otherwise* — never as universally accelerated.
+figure. Phrase this as *hardware-assisted where available, scalar fallback
+otherwise* — never as universally accelerated.
 
 ## Conclusion
 

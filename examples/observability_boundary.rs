@@ -192,7 +192,8 @@ fn happy_path_write_then_read() -> Result<()> {
 /// This is exactly what an `ObserverFramer` callback (which fires *before* I/O)
 /// cannot guarantee.
 fn failure_is_never_counted_as_success() -> Result<()> {
-    // Accept the first frame, then refuse — the second write fails mid-frame.
+    // Accept the first frame plus one byte of the second, then refuse — the
+    // second write fails mid-frame and poisons the writer.
     // Measure the first frame's exact wire length with a trial write, so the
     // sink's byte limit admits exactly one frame regardless of how FlatBuffers
     // sizes the payload.
@@ -203,7 +204,7 @@ fn failure_is_never_counted_as_success() -> Result<()> {
     };
     let sink = FailingSink {
         written: 0,
-        fail_after: first_frame_len,
+        fail_after: first_frame_len + 1,
     };
 
     let mut tel = WriteTelemetry::default();
@@ -219,6 +220,10 @@ fn failure_is_never_counted_as_success() -> Result<()> {
         error = writer
             .write_with_receipt(&"this-frame-cannot-be-written")
             .expect_err("second frame must be refused");
+        assert!(
+            writer.is_poisoned(),
+            "accepting part of the second frame must poison the writer"
+        );
     }
     assert!(
         matches!(error.kind(), ErrorKind::Io(_)),

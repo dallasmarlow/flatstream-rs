@@ -1,14 +1,13 @@
 # Planning: make the zero-allocation claim a test
 
 **Status:** **Implemented** 2026-07-24 — `tests/allocation.rs`. This document is
-kept as the rationale; `CONTRIBUTING.md` §6 C4 records the outcome.
+kept as the rationale and records the C4 outcome.
 The reader implementation later changed from replacing its `Vec` to deferred
 `clear` + `shrink_to`; the proposal's Item 6 analysis is historical and no
 longer describes a guaranteed reallocation.
 **Date:** 2026-07-24
 **Author:** contributor
-**Targets:** pre-3.0. Landed as `CONTRIBUTING.md` §6 **C4** (test and robustness
-hardening).
+**Targets:** pre-3.0. Landed as **C4** test and robustness hardening.
 **Wire format:** unchanged. **Public API:** unchanged — this is test-only
 infrastructure.
 
@@ -25,9 +24,9 @@ Nothing fails when it breaks.
 
 That is the whole problem. The claim is currently defended by wall-clock
 benchmarks, and a wall-clock benchmark is the wrong instrument for it. A single
-small allocation per frame costs on the order of tens of nanoseconds — comfortably
-inside the noise band that `CONTRIBUTING.md` §4 now documents at **−24% to +57%**
-between full-suite runs on unchanged code. A regression that adds one `Vec`
+small allocation per frame costs on the order of tens of nanoseconds —
+comfortably inside the measured **−24% to +57%** noise band between full-suite
+runs on unchanged code. A regression that adds one `Vec`
 allocation to the hot path would not merely be hard to see; it would be
 indistinguishable from the machine having a bad afternoon.
 
@@ -82,8 +81,10 @@ listed because each has a way of going wrong silently.
 - **Arm and disarm explicitly.** Setup — building the writer, warming the builder,
   reserving the sink — allocates by design. Only the region inside `measure` is
   counted.
-- **Everything that formats must sit outside the armed region.** `Instant::now`,
-  `format!`, and assertion machinery allocate. Collect counts first, assert after.
+- **Everything that formats must sit outside the armed region.** `format!` and
+  assertion machinery may allocate. `Instant::now()` does not allocate, but it
+  belongs inside the region only when the test intentionally covers an
+  observer or interval policy. Collect counts first, assert after.
 - **Warm to the true high-water mark.** The steady state is only reached once the
   builder and the reader's buffer have grown to the largest payload the loop will
   use. A warmup that uses smaller payloads than the measured loop will show
@@ -177,9 +178,8 @@ behind a `Box` by deliberate design, so that the hot path stays pointer-sized.
   produce a number worth publishing. The four zero-assertions are a test, not an
   experiment, and do not need one.
 - A note in the README or `DESIGN_EVOLUTION.md` changing "zero-allocation steady
-  state" from an assertion into a reference to the test that proves it. Per
-  `CONTRIBUTING.md` §1, a claim backed by a self-asserting test is exactly the
-  form the project wants its claims to take.
+  state" from an assertion into a reference to the self-asserting test that
+  proves it.
 
 ## 6a. What implementation actually found
 

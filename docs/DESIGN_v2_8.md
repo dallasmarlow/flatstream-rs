@@ -9,8 +9,8 @@
 ## 1. Overview
 
 v2.8 is a pre-1.0 release cut in response to
-the first real consumer of the library (a terminal scrollback journal built on the
-`ONBOARDING.md` §7 profile). It changes no wire bytes. The pre-review correction
+the first real consumer of the library (a terminal scrollback journal). It
+changes no wire bytes. The pre-review correction
 round removes mutable source/sink access, makes failed partial writes fail-stop,
 and keeps every optional policy/observer layer in a concrete generic writer
 type. The vectored path changes sink call shape:
@@ -289,6 +289,12 @@ have a timer may instead call `sync_data`/`sync_all` externally.
 parameter. Existing type spellings continue to compile; the concrete return
 type of `with_post_write_observer` includes the installed observer.
 
+The receipt/position APIs are new in v0.2.8, so their final branch-only
+hardening does not break the v0.2.7 surface: `with_start_offset` is fallible and
+rejects rebasing after I/O, while `read_frame_at` requires a
+`RetrySafeDeframer` so same-offset retries cannot silently reuse stateful decode
+state.
+
 The `#[must_use]` additions in §8 can produce **new warnings** in downstream code
 that discards a builder's result. Every such warning is a latent bug — the call
 was already a no-op — so this is intended, and it is a warning, not an error.
@@ -484,8 +490,10 @@ interprets the same condition as a torn tail after writing has stopped.
 A closing review pass over the complete branch, read/write hot paths first.
 It found no correctness, zero-copy, or steady-state-allocation defect;
 everything below is a documentation-accuracy correction, additive API surface,
-or code hygiene. The wire format and every existing signature are unchanged,
-and the full gate is green on the exact MSRV after the round.
+or code hygiene. The wire format and the v0.2.7 constructor surface are
+unchanged; §9 records the exhaustive-enum break and the final shape of APIs
+introduced on this unreleased branch. The full gate is green on the exact MSRV
+after the round.
 
 ### 11.1 The macOS durability claim was wrong — corrected everywhere
 
@@ -526,11 +534,11 @@ Strategy and value types now carry the traits a caller needs to hold them in
 config structs, hand copies to several writers/readers, key external indexes,
 and print diagnostics:
 
-- `DefaultFramer` derives `Debug, Clone, Copy, Default`; `ChecksumFramer`,
-  `ChecksumDeframer`, `BoundedFramer`, the validating adapters, and the
-  observer adapters derive `Debug, Clone, Copy`, conditionally on their type
-  parameters (a fn-pointer observer callback qualifies; a capturing closure
-  generally is not `Copy`).
+- `DefaultFramer` derives `Debug, Clone, Copy, Default`; `DefaultDeframer`,
+  `ChecksumFramer`, `ChecksumDeframer`, `BoundedFramer`, the validating
+  adapters, and the observer adapters derive `Debug, Clone, Copy`,
+  conditionally on their type parameters (a fn-pointer observer callback
+  qualifies; a capturing closure generally is not `Copy`).
 - The checksum algorithms and `NoValidator` add `Debug`. `TypedValidator` adds
   `Clone` plus a manual `Debug` printing its registered diagnostic name;
   `CompositeValidator` (boxed inners, underivable) gets a manual `Debug`
@@ -540,7 +548,8 @@ and print diagnostics:
   from one stream. `ReclamationInfo` adds `PartialEq, Eq` (matching
   `SyncInfo`); `RecoveryReport` adds `Copy`; `SyncEveryInterval` and
   `AdaptiveWatermarkPolicy` add `Copy` (matching the sibling policies); the
-  writer/reader memory-policy state types add conditional `Debug, Clone`.
+  writer/reader memory-policy state types add conditional `Debug, Clone`; and
+  `DefaultBuilderFactory` adds `Debug, Clone, Copy`.
 
 The omissions are deliberate and documented in place. No derived `Default` on
 `ChecksumFramer` — construction must flow through `new()` so the const

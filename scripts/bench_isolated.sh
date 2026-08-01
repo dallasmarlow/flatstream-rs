@@ -11,7 +11,7 @@
 # The rule that follows: only A-vs-B pairs collected inside a single isolated
 # run are admissible, and a surprising delta gets re-collected before it is
 # written down. This script makes the isolated run the easy path and drops the
-# raw output where a findings doc can cite it (CONTRIBUTING.md §4 asks for a
+# raw output where a findings doc can cite it (the evidence standard requires a
 # committed snapshot, not a hand-summary).
 #
 # Usage:

@@ -354,7 +354,7 @@ Suggested order, most to least clear-cut:
 
 *Done when:* every `pub` path is unchanged (re-export from the old location if
 needed) and the gate is green. **A move that changes a public path is a breaking
-change and needs sign-off first (§5 of `CONTRIBUTING.md`).**
+change and needs sign-off first.**
 
 ---
 

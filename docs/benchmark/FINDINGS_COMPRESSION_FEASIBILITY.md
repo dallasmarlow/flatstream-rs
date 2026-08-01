@@ -1,6 +1,6 @@
 # Findings: does frame-local compression pay for journal payloads?
 
-**Author:** contributor (A4, `CONTRIBUTING.md` §6)
+**Author:** contributor (A4)
 **Date:** 2026-07-28
 **Status:** complete — ten isolated raw snapshots committed under
 `docs/benchmark/raw/a4_*.txt`
@@ -214,11 +214,13 @@ semantics, and a manifest generation bump.
 
 ## Threats to validity
 
-- **T1 — Modeled consumer frames, not production captures.** The fixtures use
-  Palimpsest's exact schema and encoder but deterministic build/test rows.
-  They avoid private user data and are reproducible, but their 23–55% ratios
-  must not be presented as a production distribution. Real anonymized traces
-  are the next evidence step before any format work.
+- **T1 — Modeled consumer-shaped frames, not regenerable production
+  captures.** The committed fixtures are byte-exact and fingerprinted, but the
+  generator and consumer revision are unavailable (§Inputs), so their schema
+  provenance cannot be independently verified or regenerated. Their 23–55%
+  ratios apply only to these modeled bytes and must not be presented as a
+  production distribution. Real anonymized traces are the next evidence step
+  before any format work.
 - **T2 — Page cache, not storage media.** The file arm rewrites a warm tempfile
   and calls `flush`, not `sync_data`. It measures the current process-crash
   contract and immediate worker cost. It does not measure physical SSD

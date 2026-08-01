@@ -11,10 +11,9 @@ nothing
 > external format manifests. Header-dependent analysis below is retained only
 > to explain which older proposals no longer apply.
 
-The 3.0 line is maintainer-directed and out of scope for contributor work
-(`CONTRIBUTING.md` §7), so this is deliberately short. It records two things a
-contributor reading `docs/planning/` needs to know and cannot currently learn
-there.
+The 3.0 line is maintainer-directed and out of scope for contributor work, so
+this is deliberately short. It records two things a contributor reading
+`docs/planning/` needs to know and cannot currently learn there.
 
 ---
 

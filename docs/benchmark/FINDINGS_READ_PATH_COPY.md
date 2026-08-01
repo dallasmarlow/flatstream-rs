@@ -94,7 +94,7 @@ Stamped into each raw file by `scripts/bench_isolated.sh`:
 ### Steps
 
 ```bash
-# One group at a time, machine otherwise idle (CONTRIBUTING.md §4). Filter by
+# One group at a time, machine otherwise idle. Filter by
 # framing so default and CRC-32 are separate isolated collections.
 scripts/bench_isolated.sh a3_read_copy_default read_path_copy 'default/' -- --features crc32 --locked
 scripts/bench_isolated.sh a3_read_copy_crc32   read_path_copy 'crc32/'   -- --features crc32 --locked

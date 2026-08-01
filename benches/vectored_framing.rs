@@ -19,8 +19,8 @@
 //! Running both arms in a single binary means one build, one machine, one
 //! thermal state — strictly better evidence than comparing two Criterion
 //! baselines across a code change, and immune to the "baselines are
-//! machine-local and die with `cargo clean`" caveat in
-//! `docs/CONTRIBUTING.md` §4.
+//! machine-local and die with `cargo clean`" caveat in the project benchmark
+//! evidence rules.
 //!
 //! Both arms go through `StreamWriter`, so the vectored arm also pays for
 //! `CountingWriter::write_vectored` — the receipt accounting is inside the
