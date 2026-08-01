@@ -166,13 +166,14 @@ quietly lose the vectored path rather than misbehave.
   The consumer report did not ask for a builder; the `FramerExt`/`DeframerExt`
   extension methods already provide the useful, fluent portion.
 - **Checksum framer/deframer inner composition (E2) — declined**
-  (`docs/planning/E2_CHECKSUM_COMPOSITION.md`). Every payload-level adapter
+  (`docs/archive/V2_8_E2_CHECKSUM_COMPOSITION.md`). Every payload-level adapter
   already composes around a terminal `ChecksumFramer` with identical checksum
   coverage; the only capability inner-composition would add is a change to what
   the checksum covers, which is a normative wire-format decision reserved for
   3.0. Keep the checksum framers terminal.
 - **Observability post-operation hook (B3) — implemented after sign-off**
-  (`docs/planning/B3_OBSERVABILITY_BOUNDARY.md`). `PostWriteObserver` runs after
+  (`docs/archive/V2_8_B3_OBSERVABILITY_BOUNDARY.md`). `PostWriteObserver` runs
+  after
   the complete writer operation resolves and distinguishes serialization,
   framing/I/O, durability-failure, and exact-receipt success outcomes. The
   zero-sized default performs no timing/callback work; installed overhead is

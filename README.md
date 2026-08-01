@@ -1098,6 +1098,37 @@ Where N is:
 - 4 bytes for CRC32 (u32)
 - 2 bytes for CRC16 (u16)
 
+### Wire-format goldens (corpus)
+
+The exact bytes of both formats are pinned by golden files committed under
+`tests/corpus/` (`default_small.hex`, `xxhash64_medium.hex`, …). Each file
+holds one frame, hex-encoded as text so the repository stays free of binary
+files and changes diff legibly in review; the files are deliberately small.
+The corpus covers `DefaultFramer` and each feature-gated `ChecksumFramer`
+variant (`XxHash64`, `Crc32`, `Crc16`), each framing three canonical payloads:
+`empty` (0 bytes), `small` (`"abc"`), and `medium` (a deterministic
+FlatBuffers-serialized 1 KiB byte vector).
+
+They exist to catch accidental wire-format changes: `tests/wire_format_corpus.rs`
+asserts per file that framing the canonical payload today reproduces the
+committed bytes exactly, and that the committed bytes still roundtrip through
+today's deframer — an unintended change to the length field, checksum
+placement, or payload bytes fails immediately. It also pins the
+mismatched-strategy behavior described under Data Integrity: reading a
+checksummed golden with the plain `DefaultDeframer` yields a structurally valid
+frame of the declared length with the wrong bytes, not an error. A missing
+golden file is a test failure, not a skip, so the guard cannot silently lapse.
+Beyond that, the goldens double as byte-exact reference vectors for
+implementations in other languages and as known-good seed frames for fuzzing.
+
+Regenerate them only when intentionally changing the wire format — an ordinary
+test run never rewrites them — then commit the new bytes and call the change
+out in review:
+
+```bash
+GENERATE_CORPUS=1 cargo test --features all_checksums --test generate_corpus
+```
+
 ## Performance Considerations
 
 While FlatStream is optimized for high performance, achieving the lowest latency requires correct integration into your application architecture.

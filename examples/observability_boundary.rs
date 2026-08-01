@@ -2,7 +2,7 @@
 // payload-inspection adapter that fires before I/O; `PostWriteObserver` is the
 // operation boundary that reports final success/failure, receipt bounds, and
 // latency after framing and automatic durability resolve. See
-// `docs/planning/B3_OBSERVABILITY_BOUNDARY.md`.
+// `docs/archive/V2_8_B3_OBSERVABILITY_BOUNDARY.md`.
 //
 //! Dependency-free post-operation observation with static dispatch. No OTEL or
 //! metrics crate: a concrete callback translates `PostWriteEvent`s into local

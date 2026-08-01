@@ -13,7 +13,8 @@
 //! `Box::new` per frame inside a new adapter.
 //!
 //! This is a categorical property — the count is zero or it is not — so it is
-//! counted rather than timed. See `docs/planning/ZERO_ALLOCATION_ENFORCEMENT.md`
+//! counted rather than timed. See
+//! `docs/archive/V2_8_ZERO_ALLOCATION_ENFORCEMENT.md`
 //! for the full rationale, including what this deliberately does *not* prove:
 //! allocations and copies are different properties, and a `memcpy` into an
 //! already-allocated buffer reports a clean zero here. This pins the

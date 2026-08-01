@@ -78,8 +78,8 @@ The *only* composition inner-checksum would newly enable is a checksum computed
 over **transformed** bytes rather than the raw payload — e.g. checksum the
 *compressed* or *encrypted* output, or checksum the pre-transform input while
 framing the post-transform bytes. That is precisely a choice about **what the
-checksum covers**, which §5/§8 of the wire spec make normative and which §7 of
-CONTRIBUTING assigns to the 3.0 format work. It cannot be introduced as an
+checksum covers**, which §5/§8 of the wire spec make normative and which the
+backlog reserves for the 3.0 format work. It cannot be introduced as an
 incidental composability convenience on the 0.2 line.
 
 No payload-transforming adapter exists in the crate today (compression is the

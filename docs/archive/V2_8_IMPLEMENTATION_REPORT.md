@@ -409,8 +409,8 @@ The most important rationale remains available in:
 
 - `docs/DESIGN_v2_8.md` — implemented API and release design;
 - `docs/WIRE_FORMAT_SPEC.md` — normative bytes and checksum semantics;
-- `docs/planning/E2_CHECKSUM_COMPOSITION.md` — checksum composition decline;
-- `docs/planning/B3_OBSERVABILITY_BOUNDARY.md` — writer observation boundary;
+- `docs/archive/V2_8_E2_CHECKSUM_COMPOSITION.md` — checksum composition decline;
+- `docs/archive/V2_8_B3_OBSERVABILITY_BOUNDARY.md` — writer observation boundary;
 - `docs/benchmark/FINDINGS_VECTORED_FRAMING.md` — vectored I/O trade-off;
 - `docs/benchmark/FINDINGS_SYNC_POLICY.md` — durability cadence and caveats;
 - `docs/benchmark/FINDINGS_STATIC_MEMORY_POLICY.md` — static memory state;
